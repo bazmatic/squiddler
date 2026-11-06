@@ -58,8 +58,8 @@ controller into one command list. Both need to become per-player.
 - If **both** players run out of power, the level fails and is replayed.
 - Enemies, hazards and pickups treat both ships alike. Enemies go for the nearest living ship.
   Either ship can pick up a powerup; it applies to that ship.
-- Ships **collide**: they bounce off each other, like a ship bouncing off rock, but with no
-  penalty to either ship's power. (Bounce with no penalty is my call.)
+- Ships **collide**: they bounce off each other exactly like a ship bouncing off rock, and each
+  ship takes the normal wall-collision penalty to its own power.
 - Ships can't shoot each other. (My call.)
 - The level's mission and exit policy are shared: kills by either player count towards opening
   the exit.
