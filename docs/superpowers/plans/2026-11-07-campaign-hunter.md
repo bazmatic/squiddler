@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Demo only: normal play, the summonable allied hunter, enemy Vibers and `assets/neural/hunter.npz` behave exactly as before.
+- Demo only: normal play, the summonable allied hunter, enemy Vibers and `assets/neural/hunter.npz` behave exactly as before. The Campaign Hunter replaces the old parked-ship Demo entirely (no fallback to it).
 - The level's normal exit rules apply; nothing shuts the exit for the pilot.
 - Score-out (potential score reaching 0) is live for the piloted ship in training and in Demo.
 - Reward pays the ship's **own** kills only (`source == 'player'`); the clear-before-exit bonus counts kills by anyone.
@@ -25,7 +25,7 @@
 
 ## Review Focus
 
-1. **No campaign policy installed** → Demo behaves exactly as today (parked ship, hunter summoned, old end rules). Test in Task 4.
+1. **No trained campaign policy installed yet** → Demo still flies the ship, using the shipped hunter pilot migrated in memory to the campaign layout. The old parked-ship Demo is removed. Test in Task 4.
 2. **Demo must not write the person's profile**: a Demo level completing or scoring out must not record level results, stars or high scores to `profile_manager`. Test in Task 4.
 3. **Keyboard during Demo** must not steer the piloted ship (keys still do whatever they did in Demo before, e.g. leave Demo). Test in Task 1.
 4. **Ally beacon in Demo** → the ordinary hunter is summoned beside it, sees the piloted ship as its friend, and does not end the level when it dies. Test in Task 4.
@@ -156,13 +156,13 @@ def test_a_migrated_hunter_pilot_flies_the_same_with_campaign_senses(tmp_path):
 - Consumes: `ShipCommand`, `Game.ship_pilot`, `CampaignSenses`, `ShipBody`, `CampaignSurroundings`, `hunter.neural.controller.NeuralController(policy, decision_frames, greedy=True, rng=None)` and its `tick(senses_factory)`, `to_action`.
 - Produces:
   - `class CampaignPilot` — `__init__(self, policy, decision_frames, greedy=True, rng=None)`; `decide(self, game) -> ShipCommand`; `on_observed(self, listener)` where `listener(senses: np.ndarray, last_controls: tuple)` is called once per decision (used by the recorder in Task 5); `reset()` at each level start.
-  - `load_campaign_policy(path=None) -> Optional[NeuralPolicy]` — default `assets/neural/campaign_hunter.npz`, loaded with `CAMPAIGN_FEATURE_NAMES`; `None` (one warning) when missing or invalid.
-  - `AutoplayDirector.start_level(enemy_count, hunter_present=True, piloted=False)`; when `piloted`: no `'hunter_dead'` and no `'cleared'` ending; `'no_kill'` only while `enemies_left > 0`; `'time'` unchanged; new reasons `'exited'` and `'scored_out'` reported by the game.
+  - `load_campaign_policy(path=None) -> Optional[NeuralPolicy]` — default `assets/neural/campaign_hunter.npz`, loaded with `CAMPAIGN_FEATURE_NAMES`; when that file is missing, the shipped hunter pilot migrated in memory to the campaign layout (zero weights on the new inputs); `None` (one warning) only when neither loads.
+  - `AutoplayDirector` end rules for the piloted Demo (the only Demo): no `'hunter_dead'` or `'cleared'` ending; `'no_kill'` only while `enemies_left > 0`; `'time'` unchanged; the game reports `'exited'` and `'scored_out'`.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```python
-def test_demo_without_a_campaign_policy_is_unchanged(make_game, monkeypatch)       # Review Focus 1
+def test_demo_flies_the_ship_even_before_a_campaign_policy_is_shipped(make_game, monkeypatch)  # Review Focus 1
 def test_demo_flies_the_ship_with_the_campaign_pilot(make_game, monkeypatch)
     # stub policy installed → game.ship_pilot is a CampaignPilot, no hunter at level start, ship drawn
 def test_reaching_the_exit_in_demo_moves_on_to_the_next_level_once(make_game)      # Review Focus 5
@@ -173,7 +173,7 @@ def test_the_no_kill_skip_waits_while_the_ship_heads_for_the_exit()
 ```
 
 - [ ] **Step 2: Run** `python -m pytest tests/test_campaign_demo.py -v` — expect FAIL.
-- [ ] **Step 3: Implement.** `_begin_autoplay_level`: if `load_campaign_policy()` returns a policy, set `self.ship_pilot = CampaignPilot(policy, SETTINGS.game.neuralDecisionFrames)` (greedy), don't summon the hunter, and start the director with `piloted=True`; otherwise today's path with `ship_pilot = None`. `_hunter_sees_player` is True when piloted. When piloted, the ship is drawn as normal and `complete_level` in Demo skips profile recording and, instead of showing level-complete, hands `'exited'`/`'scored_out'` to `_autoplay_level_over`, which advances exactly once.
+- [ ] **Step 3: Implement.** The Campaign Hunter replaces the old Demo: `_begin_autoplay_level` sets `self.ship_pilot = CampaignPilot(load_campaign_policy(), SETTINGS.game.neuralDecisionFrames)` (greedy), doesn't summon the hunter, and starts the director with `piloted=True`. Remove the parked-ship Demo path and the `hidePlayer` hiding it relied on (and its tests), and the director rules only it used (`'hunter_dead'`, `'cleared'`). `_hunter_sees_player` is True when piloted. When piloted, the ship is drawn as normal and `complete_level` in Demo skips profile recording and, instead of showing level-complete, hands `'exited'`/`'scored_out'` to `_autoplay_level_over`, which advances exactly once.
 - [ ] **Step 4: Run** the tests plus `python -m pytest -q tests/test_autoplay.py` — expect PASS.
 - [ ] **Step 5: Commit** `git commit -m "Demo: the Campaign Hunter flies the player ship when its pilot is installed"`
 
