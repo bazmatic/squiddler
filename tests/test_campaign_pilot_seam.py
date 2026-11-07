@@ -50,6 +50,7 @@ def test_a_ship_pilot_flies_the_ship_and_the_keyboard_does_not(game, monkeypatch
     monkeypatch.setattr(pygame.key, 'get_pressed',
                         lambda: type('K', (), {'__getitem__': lambda s, k: k == pygame.K_LEFT})())
     game.ship_pilot = Pilot(ShipCommand(turn=1, thrust=True, fire=False))
+    game.keys_pressed_at_start = {pygame.K_LEFT}  # a key held since level start filters a player's input
     ship = game.ship
     angle, x, y = ship.angle, ship.x, ship.y
     game.update(1.0)
@@ -84,3 +85,19 @@ def test_a_piloted_ship_scores_out_in_demo(game):
     game.fake_now += 100000.0
     game.update(1.0)
     assert game.game_frozen
+
+
+def test_a_scored_out_game_ends_on_the_game_clock(game):
+    game.ship_pilot = Pilot(ShipCommand(turn=0, thrust=False, fire=False))
+    game.fake_now += 100000.0
+    game.update(1.0)
+    assert game.game_frozen
+    started = game.fake_now
+    duration = (game.game_over_death_duration + game.game_over_fade_duration
+                + game.game_over_text_duration)
+    game.update(1.0)
+    assert game.game_over_active  # real time passing is nothing; the game clock has not moved
+    game.fake_now = started + duration + 1.0
+    game.update(1.0)
+    assert not game.game_over_active
+    assert game.completion_time_seconds == pytest.approx(game.fake_now - 1000.0, abs=1e-6)

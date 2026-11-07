@@ -919,7 +919,7 @@ class Game:
         if self.game_over_active:
             if self.ship is not None and self.ship.is_dying:
                 self.ship.update_death(dt)
-            elapsed = time.time() - self.game_over_start_time
+            elapsed = self.clock() - self.game_over_start_time
             if elapsed >= self.game_over_death_duration + self.game_over_fade_duration + self.game_over_text_duration:
                 self.complete_level(success=False)
             return
@@ -1032,7 +1032,7 @@ class Game:
 
         # Filter out ALL movement commands if we should ignore input
         # This prevents keys pressed at menu from affecting gameplay
-        if should_filter_commands:
+        if should_filter_commands and self.ship_pilot is None:
             # Filter out all movement commands (thrust, rotate)
             commands = [cmd for cmd in commands if cmd not in (
                 CommandType.APPLY_THRUST,
@@ -1269,7 +1269,7 @@ class Game:
                      False if level failed (score reached zero)
         """
         self._close_hunter()
-        current_time = time.time()
+        current_time = self.clock()
         completion_time = self.scoring.get_current_time(current_time)
         self.sound_manager.stop_critical_warning()
         self.critical_warning_active = False
@@ -1458,7 +1458,7 @@ class Game:
         
         # Draw UI (hide during exit explosion)
         if not self.exit_explosion_active:
-            current_time = time.time()
+            current_time = self.clock()
             potential = self.scoring.calculate_current_potential_score(
                 current_time,
                 self.ship.fuel,
@@ -1507,7 +1507,7 @@ class Game:
 
     def _draw_game_over_sequence(self) -> None:
         """Draw game over sequence: fade to black and GAME OVER text."""
-        current_time = time.time()
+        current_time = self.clock()
         elapsed = max(0.0, current_time - self.game_over_start_time - self.game_over_death_duration)
         
         # Calculate fade progress (0.0 to 1.0)
