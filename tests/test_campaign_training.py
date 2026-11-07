@@ -106,3 +106,21 @@ def test_scoring_out_ends_the_episode_with_its_penalty(spec, monkeypatch):
     r = fly_campaign(1, 300, spec, horizon=5.0, pilot=ScriptedPilot())
     assert r['result'].end == 'scored_out' and r['result'].elapsed < 1.0
     assert r['rewards'][-1] == pytest.approx(SHAPING.score_out)
+
+
+def test_a_fetched_beacon_summons_the_neural_ally_whatever_the_setting(spec, monkeypatch):
+    # Jev's pilot reads wall time and calls out: an episode must not depend on it.
+    from config import SETTINGS
+    from entities.jev_beacon import JevBeacon
+    monkeypatch.setattr(SETTINGS.game, 'hunterPilot', 'jev')
+    allies = []
+
+    def fetch_beacon(game, decision):
+        if decision == 1:
+            game.powerup_crystals.append(JevBeacon((game.ship.x, game.ship.y)))
+        if decision == 120 and game.hunter_flight is not None:      # a beacon forms for 72 frames first
+            allies.append(getattr(game.hunter_flight.controller, 'kind', 'worker'))
+
+    r = fly_campaign(13, 300, spec, horizon=2.5, pilot=ScriptedPilot(fetch_beacon))
+    assert r['result'].beacon and allies == ['neural']
+    assert SETTINGS.game.hunterPilot == 'jev'

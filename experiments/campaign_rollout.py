@@ -163,8 +163,10 @@ def fly_campaign(level, seed, spec, horizon=180.0, shaping=CampaignShaping(), gr
         pilot = CampaignPilot(policy, spec.decision_frames, greedy=greedy,
                               rng=None if greedy else np.random.default_rng(spec.sample_seed))
     now = [START_TIME]
-    previous_graphics = config.SETTINGS.game.lowGraphics
+    previous_graphics, previous_ally = config.SETTINGS.game.lowGraphics, config.SETTINGS.game.hunterPilot
     config.SETTINGS.game.lowGraphics = True          # tentacle physics: nothing the pilot senses reads it
+    # A beacon summons the ally with the configured pilot; Jev's reads wall time and calls out, so it is pinned.
+    config.SETTINGS.game.hunterPilot = 'neural'
     try:
         _setup(game, level, seed, now)
         recorder = _Recorder(pilot, game)
@@ -205,5 +207,6 @@ def fly_campaign(level, seed, spec, horizon=180.0, shaping=CampaignShaping(), gr
     finally:
         _restore(game)
         config.SETTINGS.game.lowGraphics = previous_graphics
+        config.SETTINGS.game.hunterPilot = previous_ally
     return {'senses': senses, 'controls': controls, 'rewards': rewards, 'temperatures': temperatures,
             'result': result}
