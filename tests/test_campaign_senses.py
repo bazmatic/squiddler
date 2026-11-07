@@ -86,3 +86,18 @@ def test_the_campaign_vector_of_a_live_level_is_finite(game):  # noqa: F811
     vector = CampaignSenses(HunterSettings()).perceive(body, CampaignSurroundings(game), IDLE, game.clock())
     assert np.isfinite(vector).all() and value(vector, 'exit_compass_present') == 1.0
     assert value(vector, 'fwd_speed') == 0.0 and value(vector, 'cooldown') == 0.0
+
+
+def test_a_migrated_hunter_pilot_flies_the_same_with_campaign_senses(tmp_path):
+    from hunter.neural.policy import NeuralPolicy
+    from tools.migrate_policy import migrate
+    migrate('assets/neural/hunter.npz', tmp_path / 'c.npz', CAMPAIGN_FEATURE_NAMES)
+    hunter = NeuralPolicy.load('assets/neural/hunter.npz')
+    campaign = NeuralPolicy.load(tmp_path / 'c.npz', CAMPAIGN_FEATURE_NAMES)
+    rng = np.random.default_rng(1)
+    senses = rng.normal(size=len(FEATURE_NAMES)).astype(np.float32)
+    extra = np.full(len(CAMPAIGN_FEATURE_NAMES) - len(FEATURE_NAMES), 9.0, np.float32)
+    a, _ = hunter.step(senses, hunter.initial_state())
+    b, _ = campaign.step(np.concatenate([senses, extra]), campaign.initial_state())
+    for head in a:
+        assert np.allclose(a[head], b[head], atol=1e-5)
