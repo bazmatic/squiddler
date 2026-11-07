@@ -478,6 +478,7 @@ class QuitConfirmStateHandler(StateHandler):
 
     def _apply_quit_selection(self, game: 'Game') -> bool:
         if game.quit_confirmation_selection == 0:
+            game.stop_autoplay()
             game.state = config.STATE_MENU
             game.reset_scoring_to_profile_state()
         else:

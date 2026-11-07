@@ -60,6 +60,7 @@ from utils.math_utils import get_angle_to_point
 
 from creatures.creature import Creature
 from hunter.build import PilotSetup, make_hunter
+from hunter.campaign_pilot import CampaignPilot, load_campaign_policy
 from hunter.flight import HunterFlight, NeuralPilot, WorkerPilot
 from hunter.neural.loader import load_neural_policy
 from hunter.settings_for import hunter_settings_for
@@ -241,37 +242,39 @@ class Game:
             self._start_autoplay()
 
     def _start_autoplay(self) -> None:
-        """Run unattended: skip the menus and let the hunter fly level after level."""
+        """Run unattended (Demo): skip the menus and let the Campaign Hunter fly the ship level after level."""
         settings = config.SETTINGS.autoplay
         self.autoplay = AutoplayDirector(
             settings.firstLevel, settings.lastLevel, settings.timeLimitSeconds,
             no_kill_seconds=settings.noKillSeconds)
+        self.ship_pilot = CampaignPilot(load_campaign_policy(), config.SETTINGS.game.neuralDecisionFrames)
         self._begin_autoplay_level()
 
+    def stop_autoplay(self) -> None:
+        """Leave Demo: the ship is the player's again."""
+        self.autoplay = None
+        self.ship_pilot = None
+
     def _begin_autoplay_level(self) -> None:
-        """Start the director's level with the player parked and a hunter beside it."""
+        """Start the director's level with the Campaign Hunter at the controls."""
         self.level = self.autoplay.level
         self.state = config.STATE_PLAYING
         self.start_level()
         # No first move will come from a person: open the level the way one would.
         self.player_has_moved = True
         self.ship.game_started = True
-        self._summon_hunter((self.ship.x, self.ship.y))
-        self.autoplay.start_level(
-            len(self.roster.alive()),
-            hunter_present=self.hunter is not None)
+        self.ship_pilot.reset()
+        self.autoplay.start_level(len(self.roster.alive()))
 
     def _hunter_sees_player(self) -> bool:
-        """Whether the hunter may perceive the player: not when autoplay hides the parked one."""
-        if self.ship is not None and self.ship.observer:
-            return False
-        return not (self.autoplay is not None and config.SETTINGS.autoplay.hidePlayer)
+        """Whether the hunter may perceive the player: not when the ship is only an observer."""
+        return not (self.ship is not None and self.ship.observer)
 
-    def _autoplay_level_over(self) -> bool:
-        """Move on to the next level when the director says this one is over."""
-        reason = self.autoplay.end_reason(
-            enemies_left=len(self.roster.alive()),
-            hunter_alive=self.hunter is not None and self.hunter.active)
+    def _autoplay_level_over(self, reason: Optional[str] = None) -> bool:
+        """Move on to the next level when this one is over: the ship left it (`reason` 'exited' or 'scored_out'),
+        or the director's safety nets say so."""
+        if reason is None:
+            reason = self.autoplay.end_reason(enemies_left=len(self.roster.alive()))
         if reason is None:
             return False
         logging.getLogger(__name__).info('Autoplay level %d over (%s)', self.level, reason)
@@ -935,7 +938,7 @@ class Game:
         
         if not self.ship or not self.maze:
             return
-        if self.autoplay is not None and self._autoplay_level_over():
+        if self.autoplay is not None and not self.exit_explosion_active and self._autoplay_level_over():
             return
         
         self.maze.update(dt)
@@ -1027,8 +1030,6 @@ class Game:
                 commands.append(CommandType.ROTATE_RIGHT)
             if pilot_command.thrust:
                 commands.append(CommandType.APPLY_THRUST)
-        elif self.autoplay is not None:
-            commands = []  # Nobody is flying the player: it stays parked
 
         # Filter out ALL movement commands if we should ignore input
         # This prevents keys pressed at menu from affecting gameplay
@@ -1194,7 +1195,7 @@ class Game:
         self._update_powerup_crystals(dt)
         
         # Check exit reached
-        if (self.autoplay is None or self.ship_pilot is not None) and self.maze.check_exit_reached((self.ship.x, self.ship.y), self.ship.radius):
+        if self.maze.check_exit_reached((self.ship.x, self.ship.y), self.ship.radius):
             if not self.exit_explosion_active:
                 # Start exit explosion; nothing after this changes the stars
                 self.finish_tally = self.star_tally()
@@ -1224,8 +1225,7 @@ class Game:
         self.ship.low_power = potential['score_percentage'] <= LOW_POWER_THRESHOLD
 
         # When score reaches zero, freeze all action and start fade
-        if potential_score <= 0 and not self.game_frozen \
-                and (self.autoplay is None or self.ship_pilot is not None):
+        if potential_score <= 0 and not self.game_frozen:
             self.game_frozen = True
             self._start_game_over_sequence(current_time)
         
@@ -1268,6 +1268,10 @@ class Game:
             success: True if level was completed successfully (reached exit),
                      False if level failed (score reached zero)
         """
+        if self.autoplay is not None:
+            # Demo records nothing: the next level follows.
+            self._autoplay_level_over('exited' if success else 'scored_out')
+            return
         self._close_hunter()
         current_time = self.clock()
         completion_time = self.scoring.get_current_time(current_time)
@@ -1448,9 +1452,8 @@ class Game:
         for projectile in self.projectiles:
             projectile.draw(self.screen)
         
-        # Hide the parked player in autoplay; an observer otherwise shows faintly.
-        hide_player = self.autoplay is not None and config.SETTINGS.autoplay.hidePlayer
-        if not self.exit_explosion_active and not hide_player:
+        # An observer shows faintly.
+        if not self.exit_explosion_active:
             if self.ship.observer:
                 self.ship.draw_as_observer(self.screen)
             else:

@@ -388,14 +388,12 @@ class GameSettings:
 
 @dataclass
 class AutoplaySettings:
-    # Unattended runs (AUTOPLAY=1): the player is parked and the hunter flies each level.
+    # Unattended runs (AUTOPLAY=1, or Demo): the Campaign Hunter flies the player ship through each level.
     firstLevel: int = 13
     lastLevel: int = 30
+    # Safety nets for a level the ship never leaves: the most time it gets, and how long it may go without a kill
+    # while enemies remain (0 turns that off).
     timeLimitSeconds: float = 120.0
-    # Keep the parked player out of the hunter's view, so it explores and meets enemies
-    # instead of sitting beside the player.
-    hidePlayer: bool = True
-    # End a level when the hunter has killed nothing for this long (0 turns it off).
     noKillSeconds: float = 20.0
 
 

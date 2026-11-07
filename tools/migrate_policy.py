@@ -3,6 +3,7 @@
 The old layout must be a prefix of the target one (--layout hunter, the default, or campaign) (new senses are only ever added at the end). The new inputs
 get zero weights, so the migrated pilot flies exactly as the old one did until training teaches it to use them.
 """
+import io
 import sys
 import numpy as np
 from hunter.senses import FEATURE_NAMES
@@ -10,6 +11,22 @@ from hunter.neural.policy import NeuralPolicy
 
 
 def migrate(old_path, new_path, feature_names=FEATURE_NAMES):
+    data, added = _carried_over(old_path, feature_names)
+    np.savez(new_path, **data)
+    NeuralPolicy.load(new_path, feature_names)              # raises InvalidPolicy if the result does not fit
+    return added
+
+
+def migrated(old_path, feature_names=FEATURE_NAMES):
+    """The policy in `old_path` carried over to `feature_names` in memory, with no file written."""
+    data, _ = _carried_over(old_path, feature_names)
+    buffer = io.BytesIO()
+    np.savez(buffer, **data)
+    buffer.seek(0)
+    return NeuralPolicy.load(buffer, feature_names)
+
+
+def _carried_over(old_path, feature_names):
     data = dict(np.load(old_path, allow_pickle=False))
     old_names = tuple(str(n) for n in data['feature_names'])
     if old_names != feature_names[:len(old_names)]:
@@ -21,9 +38,7 @@ def migrate(old_path, new_path, feature_names=FEATURE_NAMES):
         data['mean'] = np.concatenate([data['mean'], np.zeros(added, data['mean'].dtype)])
         data['scale'] = np.concatenate([data['scale'], np.ones(added, data['scale'].dtype)])
     data['feature_names'] = np.array(feature_names)
-    np.savez(new_path, **data)
-    NeuralPolicy.load(new_path, feature_names)              # raises InvalidPolicy if the result does not fit
-    return added
+    return data, added
 
 
 def _layout(name):

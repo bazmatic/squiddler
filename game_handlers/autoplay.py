@@ -10,30 +10,24 @@ class AutoplayDirector:
         self.time_limit, self.clock, self.no_kill_seconds = time_limit, clock, no_kill_seconds
         self.level = first_level
         self._started_at = clock()
-        self._enemies_at_start = 0
-        self._hunter_present = False
         self._enemies_seen = 0
         self._last_kill = self._started_at
 
-    def start_level(self, enemy_count, hunter_present=True):
+    def start_level(self, enemy_count):
         self._started_at = self._last_kill = self.clock()
-        self._enemies_at_start = self._enemies_seen = enemy_count
-        self._hunter_present = hunter_present
+        self._enemies_seen = enemy_count
 
-    def end_reason(self, enemies_left, hunter_alive):
-        """Why the level is over ('hunter_dead', 'cleared', 'no_kill' or 'time'), or None.
+    def end_reason(self, enemies_left):
+        """Why the level is over ('no_kill' or 'time'), or None: the safety nets for a ship that never leaves.
 
-        A kill is the live enemy count falling. The player is parked, so that is the hunter's.
+        The ship leaving the level, through the exit or by scoring out, is the game's to report. A kill is the live
+        enemy count falling. With none left the ship is on its way to the exit, so the no-kill rule waits.
         """
-        if self._hunter_present and not hunter_alive:
-            return 'hunter_dead'
-        if self._enemies_at_start and not enemies_left:
-            return 'cleared'
         now = self.clock()
         if enemies_left < self._enemies_seen:
             self._last_kill = now
         self._enemies_seen = enemies_left
-        if self.no_kill_seconds and now - self._last_kill > self.no_kill_seconds:
+        if self.no_kill_seconds and enemies_left and now - self._last_kill > self.no_kill_seconds:
             return 'no_kill'
         if now - self._started_at >= self.time_limit:
             return 'time'

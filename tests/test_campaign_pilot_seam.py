@@ -35,7 +35,9 @@ def game(tmp_path, monkeypatch):
     monkeypatch.setattr(level_config, 'level_has_hunter', lambda _: False)
     game = Game(screen)
     game.autoplay = object()  # Demo: nobody at the keyboard
-    monkeypatch.setattr(game, '_autoplay_level_over', lambda: False)
+    game.levels_ended = []   # what the game hands Demo when the ship leaves a level
+    monkeypatch.setattr(game, '_autoplay_level_over',
+                        lambda reason=None: reason is not None and (game.levels_ended.append(reason) or True))
     game.clock = lambda: game.fake_now
     game.clock_ms = lambda: int(game.fake_now * 1000)
     game.fake_now = 1000.0
@@ -97,7 +99,7 @@ def test_a_scored_out_game_ends_on_the_game_clock(game):
                 + game.game_over_text_duration)
     game.update(1.0)
     assert game.game_over_active  # real time passing is nothing; the game clock has not moved
+    assert game.levels_ended == []
     game.fake_now = started + duration + 1.0
     game.update(1.0)
-    assert not game.game_over_active
-    assert game.completion_time_seconds == pytest.approx(game.fake_now - 1000.0, abs=1e-6)
+    assert game.levels_ended == ['scored_out']
