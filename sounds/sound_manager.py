@@ -16,6 +16,8 @@ import os
 from typing import Optional, Dict, Tuple, Any
 
 
+HUNTER_SHOT_CHANNEL = 8
+
 # The player's sound setting; shared by every SoundManager
 _muted = False
 
@@ -47,7 +49,7 @@ class SoundManager:
             self.thruster_sound: Optional[pygame.mixer.Sound] = None
             self.shoot_sound: Optional[pygame.mixer.Sound] = None
             self.enemy_destroy_sound: Optional[pygame.mixer.Sound] = None
-            self.powerup_sound: Optional[pygame.mixer.Sound] = None
+            self.powerup_sounds: Dict[str, pygame.mixer.Sound] = {}
             self.thruster_channel: Optional[pygame.mixer.Channel] = None
             return
         
@@ -66,13 +68,16 @@ class SoundManager:
         self.enemy_destroy_sound = None  # Generated on-demand with pitch variation
         self.exit_warble_sound: Optional[pygame.mixer.Sound] = None  # Generated on first use
         self.upgraded_shoot_sound: Optional[pygame.mixer.Sound] = None  # Generated on first use
-        self.powerup_sound: Optional[pygame.mixer.Sound] = None  # Generated on first use
+        self.powerup_sounds: Dict[str, pygame.mixer.Sound] = {}  # Pickup motifs by kind, generated on first use
         self.portal_power_up_sound: Optional[pygame.mixer.Sound] = None  # Generated on first use
         self.portal_power_down_sound: Optional[pygame.mixer.Sound] = None  # Generated on first use
         self.tinkling_sound_cache: Dict[float, Optional[pygame.mixer.Sound]] = {}  # Cache tinkling sounds by pitch
         self.critical_warning_sound: Optional[pygame.mixer.Sound] = None
         self.critical_warning_channel: Optional[pygame.mixer.Channel] = None
         
+        # One channel past the eight the other sounds share, so the hunter's shots never cut off the player's
+        pygame.mixer.set_num_channels(max(pygame.mixer.get_num_channels(), HUNTER_SHOT_CHANNEL + 1))
+
         # Set up dedicated channel for thruster (continuous sound)
         self.thruster_channel = pygame.mixer.Channel(0)
         self.thruster_channel.set_volume(config.THRUSTER_SOUND_VOLUME)
@@ -285,51 +290,6 @@ class SoundManager:
             sound.set_volume(config.SHOOT_SOUND_VOLUME * 1.1)  # Slightly louder
         return sound
     
-    def _generate_powerup_phase(self) -> Optional[pygame.mixer.Sound]:
-        """Generate a short phasing tone for powerup pickup feedback."""
-        if not config.SOUND_ENABLED:
-            return None
-        
-        sample_rate = config.SOUND_SAMPLE_RATE
-        duration = 0.35  # Quick and punchy
-        num_samples = int(sample_rate * duration)
-        t_array = np.arange(num_samples, dtype=np.float32) / sample_rate
-        progress = t_array / duration
-        
-        # Upward sweep with gentle curve
-        start_freq = 320.0
-        end_freq = 780.0
-        sweep = start_freq + (end_freq - start_freq) * np.power(progress, 0.7)
-        
-        # Layered LFOs for phase/chorus motion
-        lfo_primary = 0.24 * np.sin(2 * math.pi * 7.5 * t_array)
-        lfo_secondary = 0.14 * np.sin(2 * math.pi * 13.0 * t_array + 0.6)
-        instantaneous_freq = sweep * (1.0 + lfo_primary + lfo_secondary * 0.6)
-        
-        # Integrate frequency to phase
-        phase = np.cumsum(instantaneous_freq) / sample_rate * 2 * math.pi
-        
-        # Detuned voices plus shimmer
-        voice_a = np.sin(phase)
-        voice_b = np.sin(phase * 0.97 + 0.4)
-        shimmer = np.sin(phase * 1.9) * 0.28
-        signal = voice_a * 0.6 + voice_b * 0.35 + shimmer
-        
-        # Fast attack, quick decay envelope
-        attack = np.clip(progress / 0.05, 0.0, 1.0)
-        decay = np.exp(-progress * 4.2)
-        envelope = attack * decay
-        
-        # Subtle amplitude wobble to reinforce motion
-        wobble = 0.2 * np.sin(2 * math.pi * 5.0 * t_array)
-        samples = np.clip(signal * envelope * (1.0 + wobble), -1.0, 1.0)
-        
-        # Slight stereo movement
-        right = samples * (0.9 + 0.1 * np.sin(2 * math.pi * 3.0 * t_array))
-        stereo = np.stack([samples, right], axis=1)
-        stereo_int16 = (stereo * 16383).astype(np.int16)
-        return pygame.sndarray.make_sound(stereo_int16)
-    
     def _generate_sputter(self) -> pygame.mixer.Sound:
         """The thruster running out of fuel: its noise cuts out and coughs back in at irregular moments."""
         rate, _, channels = pygame.mixer.get_init()
@@ -405,23 +365,31 @@ class SoundManager:
             if self.shoot_sound:
                 shoot_channel.play(self.shoot_sound)
     
-    def play_powerup_activation(self) -> None:
-        """Play quick phasing tone when a powerup is collected."""
+    def play_hunter_shot(self, weapon_id: Optional[str]) -> None:
+        """The allied hunter's shot, on its own channel: its pickup weapon's sound, or the plain gun's click."""
         if not _audible():
             return
-        
-        if self.powerup_sound is None:
-            self.powerup_sound = self._generate_powerup_phase()
-            if self.powerup_sound:
-                self.powerup_sound.set_volume(config.POWERUP_ACTIVATION_SOUND_VOLUME)
-        
-        if not self.powerup_sound:
-            return
-        
-        powerup_channel = pygame.mixer.Channel(4)
-        powerup_channel.play(self.powerup_sound)
+        if weapon_id is not None:
+            self.play_weapon_fire(weapon_id, HUNTER_SHOT_CHANNEL)
+        elif self.shoot_sound:
+            pygame.mixer.Channel(HUNTER_SHOT_CHANNEL).play(self.shoot_sound)
 
-    def play_weapon_fire(self, weapon_id):
+    def play_powerup_activation(self, kind: str = 'upgrade') -> None:
+        """Play the Lydian motif for a collected powerup: a weapon id, 'shield', 'beacon', or 'upgrade' for a plain boost."""
+        if not _audible():
+            return
+        if kind not in self.powerup_sounds:
+            rate, _, channels = pygame.mixer.get_init()
+            from sounds.powerup_pickup import samples
+            pcm = (samples(kind, rate) * 32767).astype(np.int16)
+            if channels == 1:
+                pcm = pcm.mean(axis=1).astype(np.int16)
+            sound = pygame.sndarray.make_sound(pcm)
+            sound.set_volume(config.POWERUP_ACTIVATION_SOUND_VOLUME)
+            self.powerup_sounds[kind] = sound
+        pygame.mixer.Channel(4).play(self.powerup_sounds[kind])
+
+    def play_weapon_fire(self, weapon_id, channel=1):
         """Distinct deterministic tones, cached without consuming simulation randomness."""
         if not _audible():
             return
@@ -440,7 +408,7 @@ class SoundManager:
             elif pcm.ndim == 2 and channels == 1:
                 pcm = pcm.mean(axis=1).astype(np.int16)
             cache[weapon_id] = pygame.sndarray.make_sound(pcm)
-        pygame.mixer.Channel(1).play(cache[weapon_id])
+        pygame.mixer.Channel(channel).play(cache[weapon_id])
 
     def play_inflation(self) -> None:
         """A rubbery rising swell when a creature balloons in size."""

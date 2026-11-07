@@ -517,6 +517,12 @@ class Game:
             pilot = WorkerPilot(self.hunter_worker)
         self.hunter_flight = make_hunter(pos, world=self, setup=PilotSetup(
             hunter_settings_for(mode), pilot, self.hunter_surroundings))
+        self.hunter_flight.on_event(self._sound_hunter_event)
+
+    def _sound_hunter_event(self, creature, name) -> None:
+        """The hunter's shots are heard."""
+        if name == 'fired':
+            self.sound_manager.play_hunter_shot(creature.fired_weapon_id)
 
     def _hunter_energy_reading(self):
         """(energy, most energy) of the hunter flying now, or None when there is none (or it has been destroyed)."""
@@ -597,7 +603,7 @@ class Game:
         beacon = next((c for c in self.powerup_crystals if isinstance(c, JevBeacon) and c.active), None)
         if beacon is not None:
             beacon.die()
-            self.sound_manager.play_powerup_activation()
+            self.sound_manager.play_powerup_activation('beacon')
             self._summon_hunter(beacon.get_pos())
         else:
             self._summon_hunter((self.ship.x, self.ship.y))
@@ -1380,7 +1386,7 @@ class Game:
                     crystal.update(dt, nearest_friendly_pos(crystal, self.ship, self.hunter))
                 if isinstance(crystal, JevBeacon):
                     if crystal.check_circle_collision((self.ship.x, self.ship.y), self.ship.radius):
-                        self.sound_manager.play_powerup_activation()
+                        self.sound_manager.play_powerup_activation('beacon')
                         self._summon_hunter(crystal.get_pos())
                 else:
                     self.collision_handler.handle_ship_crystal_collision(self.ship, crystal, self.scoring)

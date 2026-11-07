@@ -158,10 +158,13 @@ class Senses:
         out[_INDEX['cooldown']] = min(1.0, hunter.fire_remaining / max(hunter.fire_interval, 1e-6))
         out[_INDEX['burst']] = hunter.burst_remaining / max(self.settings.burst_size, 1)
         out[_INDEX['upgrade']] = min(1.0, hunter.gun_upgrade_level / UPGRADE_CAP)
-        out[_INDEX['power_boost']] = float(hunter.gun_upgrade_level > 0)
+        # A pickup weapon is a boost too, lasting as long as its ammo
+        from weapons.state import held_weapon  # here, not at the top: the weapons package loads pygame
+        weapon = held_weapon(hunter)
+        out[_INDEX['power_boost']] = float(hunter.gun_upgrade_level > 0 or weapon is not None)
         import config
-        out[_INDEX['power_boost_remaining']] = min(1.0, max(0.0,
-            getattr(hunter, 'upgrade_remaining', 0) / config.POWERUP_DURATION_SECONDS))
+        out[_INDEX['power_boost_remaining']] = (weapon.view.ammo_fraction if weapon is not None else min(1.0, max(0.0,
+            getattr(hunter, 'upgrade_remaining', 0) / config.POWERUP_DURATION_SECONDS)))
         out[_INDEX['enemies_present']] = 1.0 if any(e.active for e in enemies) else 0.0
 
         rays = ray_distances(origin, hunter.angle, starts, ends, reach) / reach

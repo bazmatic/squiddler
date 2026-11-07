@@ -170,7 +170,7 @@ def test_normal_game_enables_shared_weapons_and_pickups(game):
     assert game.ship.weapon.view.id == 'basic'
 
 
-def test_hunter_pickups_give_one_generic_boost_and_refresh_timer():
+def test_a_hunter_fires_the_weapon_it_picks_up_until_the_ammo_runs_out():
     import creatures
     from hunter.build import PilotSetup
     from hunter.model import HunterSettings
@@ -181,26 +181,39 @@ def test_hunter_pickups_give_one_generic_boost_and_refresh_timer():
     hunter.traits=tuple(t for t in hunter.traits if t.NAME != 'pilot')
     enc=encounter(hunter,world_=w)
     enc.ready()
-    gun=next(t for t in hunter.traits if t.NAME == 'gun')
     handler=CollisionHandler(Mock(),Mock(),Mock())
-    for weapon_id in CATALOG.drops:
-        pickup=PowerupCrystal(hunter.get_pos(),weapon_id)
-        assert handler.handle_hunter_crystal_collision(hunter,pickup)
-        assert hunter.gun_upgrade_level == 1
-        assert hunter.upgrade_remaining == config.POWERUP_DURATION_SECONDS
-        assert getattr(hunter,'weapon',None) is None
-        gun.on_frame(hunter,enc,config.FPS*2)
-        assert hunter.upgrade_remaining == config.POWERUP_DURATION_SECONDS-2
-    fire_round(hunter,enc)
-    assert len(w.projectiles) == 1 and w.projectiles[0].is_upgraded
-    assert not hasattr(w.projectiles[0],'weapon_id')
-    remaining=hunter.upgrade_remaining
-    gun.on_frame(hunter,enc,0)
-    assert hunter.upgrade_remaining == remaining
-    gun.on_frame(hunter,enc,remaining*config.FPS)
-    assert hunter.gun_upgrade_level == 0
-    assert hunter.fire_interval == hunter.base_fire_interval
-    assert handler.level_crystals_collected == len(CATALOG.drops)
+    assert handler.handle_hunter_crystal_collision(hunter,PowerupCrystal(hunter.get_pos(),'scattergun'))
+    volleys=[]
+    for _ in range(5000):
+        shots=fire_round(hunter,enc)
+        if shots:
+            volleys.append(shots)
+        if hunter.weapon.weapon_id == 'basic':
+            break
+    assert len(volleys) == CATALOG['scattergun'].capacity
+    assert all(len(v) == 5 and all(s.weapon_id == 'scattergun' for s in v) for v in volleys)
+    # Out of ammo, it is back on its own gun
+    for _ in range(100):
+        shots=fire_round(hunter,enc)
+        if shots:
+            break
+    assert shots and not hasattr(shots[0],'weapon_id')
+
+
+def test_a_hunter_shield_pickup_makes_it_immune():
+    import creatures
+    from hunter.build import PilotSetup
+    from hunter.model import HunterSettings
+    from creatures.traits.energy import damage
+    from game_handlers.collision_handler import CollisionHandler
+    hunter=creatures.build('allied_hunter',(400,300),pilot_setup=PilotSetup(replace(HunterSettings(),indestructible=False),None,None))
+    hunter.traits=tuple(t for t in hunter.traits if t.NAME != 'pilot')
+    enc=encounter(hunter,world_=world(combat_ruleset=RULESET))
+    enc.ready()
+    health=hunter.health
+    assert CollisionHandler(Mock(),Mock(),Mock()).handle_hunter_crystal_collision(hunter,PowerupCrystal(hunter.get_pos(),'shield'))
+    damage(hunter,enc)
+    assert hunter.health == health
 
 
 def test_new_ruleset_episode_is_deterministic_with_recorded_tuning():
@@ -208,7 +221,7 @@ def test_new_ruleset_episode_is_deterministic_with_recorded_tuning():
     try:
         seen=[]
         first=harness.run_episode(1,7,horizon=2,combat_ruleset=RULESET,weapon_tuning=CATALOG.snapshot(),
-                                  trace=lambda t,g,h: seen.append(h.nonstacking_powerups))
+                                  trace=lambda t,g,h: seen.append(h.weapon_pickups))
         second=harness.run_episode(1,7,horizon=2,combat_ruleset=RULESET,weapon_tuning=CATALOG.snapshot())
         assert first == second
         assert seen and all(seen)

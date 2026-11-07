@@ -11,6 +11,7 @@ from entities.explosion import Blast
 from entities.projectile import Projectile
 from utils import circle_line_collision, get_angle_to_point
 from utils.math_utils import apply_wall_collision_physics
+from weapons.state import held_weapon
 
 
 class TakesHits(Trait):
@@ -107,7 +108,9 @@ class Gun(Trait):
     the projectile's. It keeps `gun_charge`, how far it is through reloading (0 to 1), for its Body to show, and
     `just_fired`, true on the frame it fires, for its neighbours. `cadence='burst'` takes its firing times from
     burstFire instead of reloading itself; `aimMode='nose'` emits a volley from the nose along the heading.
-    `upgrades` enables crystal upgrades and expiry, including spread volleys and their fire-rate adjustment.
+    `upgrades` enables crystal upgrades and expiry, including spread volleys and their fire-rate adjustment. Under
+    the weapon rules a crystal gives a weapon instead (`weapon_pickups`): while the creature holds one (`c.weapon`),
+    each round fires it, waiting on its own cooldown.
     `recoil` opts a gun into projectile momentum exchange while its body is unsupported."""
     NAME = 'gun'
 
@@ -145,8 +148,8 @@ class Gun(Trait):
         c.just_fired = False
         c.shots_fired = 0
         from weapons.catalog import PICKUP_RULESETS
-        c.nonstacking_powerups = (self.upgrades
-                                 and getattr(enc.world, 'combat_ruleset', 'legacy') in PICKUP_RULESETS)
+        c.weapon_pickups = (self.upgrades
+                            and getattr(enc.world, 'combat_ruleset', 'legacy') in PICKUP_RULESETS)
         if self.upgrades:
             c.gun_upgrade_level = 0
             c.upgrade_remaining = 0.0
@@ -166,6 +169,10 @@ class Gun(Trait):
             ready = controls.fire and c.gun_cooldown <= 0
         else:
             ready = c.burst_round_due
+        weapon = held_weapon(c)
+        if weapon is not None:
+            weapon.update(dt)
+            ready = ready and weapon.cooldown <= 1e-8
         c.just_fired = bool(ready and (self.aim_mode == 'nose' or controls.aim is not None))
         if c.just_fired:
             if getattr(c, 'flocker_aim_enabled', False):
@@ -188,16 +195,24 @@ class Gun(Trait):
                       and 'color' in c.kind.tuning else None)
             launch_velocity=(c.vx,c.vy)
             launch_spin=getattr(c,'wall_angular_velocity',0.)
-            for heading in angles:
-                shot = Projectile(pos, heading, is_enemy=c.allegiance == 'enemy',
-                                  source='enemy' if c.allegiance == 'enemy' else 'hunter',
-                                  strength=self.shot_strength, dynamic_color=colour, is_upgraded=level >= 1,
-                                  enhanced_size_multiplier=1.0 + extra * config.POWERUP_BEYOND_LEVEL_3_SIZE_INCREMENT,
-                                  enhanced_speed_multiplier=1.0 + extra * config.POWERUP_BEYOND_LEVEL_3_SPEED_INCREMENT,
-                                  **self.styling)
-                shot.vx *= self.shot_speed
-                shot.vy *= self.shot_speed
-                shot.lifetime *= self.shot_lifetime
+            source = 'enemy' if c.allegiance == 'enemy' else 'hunter'
+            # Which pickup weapon this volley came from (None: the creature's own gun), for listeners to sound
+            c.fired_weapon_id = weapon.weapon_id if weapon is not None else None
+            if weapon is not None:
+                shots = weapon.try_fire(pos, angle, source).projectiles
+            else:
+                shots = []
+                for heading in angles:
+                    shot = Projectile(pos, heading, is_enemy=c.allegiance == 'enemy', source=source,
+                                      strength=self.shot_strength, dynamic_color=colour, is_upgraded=level >= 1,
+                                      enhanced_size_multiplier=1.0 + extra * config.POWERUP_BEYOND_LEVEL_3_SIZE_INCREMENT,
+                                      enhanced_speed_multiplier=1.0 + extra * config.POWERUP_BEYOND_LEVEL_3_SPEED_INCREMENT,
+                                      **self.styling)
+                    shot.vx *= self.shot_speed
+                    shot.vy *= self.shot_speed
+                    shot.lifetime *= self.shot_lifetime
+                    shots.append(shot)
+            for shot in shots:
                 shot.aim_range = c.gun_range
                 shot.actor_id = getattr(c, 'agent_id', None)
                 if getattr(c, 'flocker_aim_enabled', False):
@@ -216,8 +231,8 @@ class Gun(Trait):
             c.gun_charge = 1.0 - c.gun_cooldown / c.gun_interval
 
     def on_event(self, c, name, enc):
-        if name == 'pickup' and self.upgrades:
-            c.gun_upgrade_level = 1 if c.nonstacking_powerups else c.gun_upgrade_level + 1
+        if name == 'pickup' and self.upgrades and not c.weapon_pickups:
+            c.gun_upgrade_level += 1
             c.upgrade_remaining = config.POWERUP_DURATION_SECONDS
             if self.cadence == 'burst':
                 c.fire_interval = (c.base_fire_interval * cooldown_for_upgrade(c.gun_upgrade_level)

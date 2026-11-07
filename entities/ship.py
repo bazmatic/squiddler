@@ -329,12 +329,12 @@ class Ship(RotatingThrusterShip):
             self.powerup_shield_timer = config.SETTINGS.powerups.shieldDurationSeconds * config.FPS
             self.weapon_notice = self.weapon.catalog[weapon_id].name
             self._start_powerup_flash()
-            self.sound_manager.play_powerup_activation()
+            self.sound_manager.play_powerup_activation(weapon_id)
             return
         self.weapon.equip(weapon_id)
         self.weapon_notice = self.weapon.definition.name
         self._start_powerup_flash()
-        self.sound_manager.play_powerup_activation()
+        self.sound_manager.play_powerup_activation(weapon_id)
 
     def activate_gun_upgrade(self) -> None:
         """Activate gun upgrade (called when crystal is collected)."""

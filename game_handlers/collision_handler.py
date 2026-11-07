@@ -272,13 +272,22 @@ class CollisionHandler:
         return False
     
     def handle_hunter_crystal_collision(self, hunter, crystal: 'PowerupCrystal') -> bool:
-        """Any weapon pickup refreshes the hunter's generic power boost; no weapon is equipped."""
+        """The hunter takes a crystal's weapon and fires it until the ammo runs out, or a shield's immunity;
+        under the legacy rules a crystal has no weapon and its Gun takes the pickup as an upgrade."""
         if hunter is None or not hunter.active or not crystal.active:
             return False
         if not crystal.check_circle_collision(hunter.get_pos(), hunter.radius):
             return False
+        weapon_id = crystal.weapon_id
+        if weapon_id is not None and crystal.catalog[weapon_id].behaviour == 'shield':
+            hunter.immunity_remaining = max(hunter.immunity_remaining, config.SETTINGS.powerups.shieldDurationSeconds)
+        elif weapon_id is not None:
+            from weapons import EquippedWeapon
+            if getattr(hunter, 'weapon', None) is None:
+                hunter.weapon = EquippedWeapon(crystal.catalog)
+            hunter.weapon.equip(weapon_id)
         hunter.emit('pickup', hunter.encounter)
         self.level_crystals_collected += 1
-        self.sound_manager.play_powerup_activation()
+        self.sound_manager.play_powerup_activation(weapon_id or 'upgrade')
         return True
 
