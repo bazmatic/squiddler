@@ -124,3 +124,34 @@ def test_a_fetched_beacon_summons_the_neural_ally_whatever_the_setting(spec, mon
     r = fly_campaign(13, 300, spec, horizon=2.5, pilot=ScriptedPilot(fetch_beacon))
     assert r['result'].beacon and allies == ['neural']
     assert SETTINGS.game.hunterPilot == 'jev'
+
+
+def test_one_campaign_training_iteration_saves_a_campaign_policy(tmp_path):
+    pytest.importorskip('torch')
+    from hunter.neural.policy import NeuralPolicy
+    from tools import ppo_neural
+    lines = []
+    result = ppo_neural.train_rl(str(HUNTER_POLICY_PATH), tmp_path, iterations=1, episodes=2, workers=1,
+                                 task='campaign_hunter', levels=[1], horizon=2, log=lines.append)
+    NeuralPolicy.load(result['last'], CAMPAIGN_FEATURE_NAMES)        # raises InvalidPolicy if it is not one
+    assert result['last'].name == 'iter0000.npz'
+    for key in ('exited=', 'cleared_exit=', 'scored_out=', 'own_kills=', 'mean_return='):
+        assert key in lines[0]
+
+
+def test_the_campaign_rewards_are_trainer_settings_for_that_task_alone():
+    from dataclasses import fields
+    from tools import ppo_neural
+    from tools.trainer.settings import applies_to
+    args = ppo_neural.build_parser().parse_args(['--task', 'campaign_hunter'])
+    for field in fields(CampaignShaping):
+        assert getattr(args, field.name) == field.default
+        assert applies_to(field.name) == ('campaign_hunter',)
+
+
+def test_the_trainer_server_still_starts_without_pygame():
+    import subprocess
+    import sys
+    loaded = subprocess.run([sys.executable, '-c', "import sys, tools.trainer.server; print('pygame' in sys.modules)"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+    assert loaded == 'False'

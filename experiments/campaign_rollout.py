@@ -14,25 +14,13 @@ import numpy as np
 from experiments import harness
 from experiments.harness import FPS
 from hunter.campaign_senses import CAMPAIGN_FEATURE_NAMES
+from learning.campaign_rewards import CampaignShaping
 
 FOLLOW_DEGREES = 45.0      # the ship's flight follows a compass when its velocity is this close to it
 START_TIME = 1000.0        # the episode clock's first reading, in seconds
 
 _INDEX = {name: i for i, name in enumerate(CAMPAIGN_FEATURE_NAMES)}
 _EVENTS = ('own_kills', 'pickups', 'beacon', 'wall_crashes', 'following')
-
-
-@dataclass
-class CampaignShaping:
-    """Points per event (starting values; tuned against the Demo bar)."""
-    own_kill: float = 10.0
-    pickup: float = 3.0
-    beacon: float = 5.0
-    exit: float = 100.0
-    cleared_exit: float = 100.0          # on top of `exit` when no enemy is left, whoever killed them
-    score_out: float = -100.0
-    wall_crash: float = -1.0
-    compass_following: float = 0.02      # per decision flying with the enemy compass (the exit's once none remain)
 
 
 @dataclass(frozen=True)

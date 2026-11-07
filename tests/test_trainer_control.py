@@ -298,3 +298,13 @@ def test_resume_worker_change_rolls_back_if_launch_fails(root):
     with pytest.raises(OSError):
         resume('run52', root=root, processes=[], launch=fail, changes={'workers':7})
     assert (path/'config.json').read_bytes() == before
+
+
+def test_a_new_campaign_hunter_run_starts_from_the_shipped_hunter_pilot(root):
+    fake = FakeLaunch()
+    started = start(changes={'task': 'campaign_hunter'}, root=root, processes=[], launch=fake)
+    command = fake.commands[0]
+    assert started.run == 'run53' and started.started_from == 'assets/neural/hunter.npz'
+    assert command[command.index('--start') + 1] == str(ppo.DEFAULT_START)
+    assert command[command.index('--task') + 1] == 'campaign_hunter'
+    assert command[command.index('--horizon') + 1] == '180.0'

@@ -128,7 +128,8 @@ def start(from_=None, changes=None, root=RL_ROOT, processes=None, launch=None, a
             definition = task(requested_task)
         except ValueError as e:
             raise TrainerError(str(e)) from None
-        if definition.capabilities.fresh_weights and from_ in (None, 'new', 'random'):
+        # A new run of a task with fresh weights, or one that starts from its own policy, like the Campaign Hunter.
+        if (definition.capabilities.fresh_weights or definition.start) and from_ in (None, 'new', 'random'):
             from tools.trainer.settings import SETTINGS, Value
             base = {s.dest: Value(s.default, 'recorded') for s in SETTINGS}
             for key, value in dict(task=requested_task, **definition.fresh_defaults).items():
@@ -140,9 +141,10 @@ def start(from_=None, changes=None, root=RL_ROOT, processes=None, launch=None, a
             name = f'run{next_run_number(root)}'
             out = root/name
             out.mkdir()
-            command = [sys.executable, '-m', 'tools.ppo_neural', '--start', '', '--out', str(out), *to_argv(values), *actor_options]
+            start_policy = str(REPO / definition.start) if definition.start else ''
+            command = [sys.executable, '-m', 'tools.ppo_neural', '--start', start_policy, '--out', str(out), *to_argv(values), *actor_options]
             (launch or launch_process)(command, root/f'{name}.log')
-            return Started(name, 'random', changed(base, values), command)
+            return Started(name, definition.start or 'random', changed(base, values), command)
         source, checkpoint = _source(from_, runs)
         base = read_settings(source.path, run_folders(root))
         source_task = (config_of(source.path) or {}).get('task', UNTAGGED_TASK)

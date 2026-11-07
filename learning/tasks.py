@@ -5,6 +5,7 @@ import importlib
 from learning.inchworm_rewards import SETTINGS as INCHWORM_REWARD_SETTINGS
 from learning.flocker_rewards import SETTINGS as FLOCKER_REWARD_SETTINGS
 from learning.jelly_rewards import SETTINGS as JELLY_REWARD_SETTINGS
+from learning.campaign_rewards import SETTINGS as CAMPAIGN_REWARD_SETTINGS
 
 
 REPLAY_MODES = ('hooks', 'builtin', None)
@@ -43,6 +44,7 @@ class Task:
     replay_hooks: str | None = None   # the module learning.replay asks to rebuild, score and draw this task's episodes
     dashboard: str | None = None      # the module declaring this task's charts, see learning.dashboard
     capabilities: Capabilities = field(default_factory=Capabilities)
+    start: str | None = None          # the policy a new run starts from (relative to the repo) when no run is named
 
     def replay(self):
         return importlib.import_module(self.replay_module) if self.replay_module else None
@@ -76,6 +78,11 @@ TASKS = {
         ('budget_seconds','bootstrap_episodes','bootstrap_epochs','seed') + JELLY_REWARD_SETTINGS, 'learning.replay',
         'learning.adapters.jelly_replay', 'learning.adapters.jelly_dashboard',
         Capabilities(fresh_weights=True, actor_damping=False, replay_mode='hooks', settings_scope='listed')),
+    # Trained by the hunter's PPO loop; a new run starts from the shipped hunter pilot, migrated to its senses.
+    'campaign_hunter': Task('campaign_hunter', 'learning.adapters.campaign_hunter', 'Campaign Hunter',
+        dict(horizon=180.0), CAMPAIGN_REWARD_SETTINGS,
+        capabilities=Capabilities(fresh_weights=False, replay_mode=None, settings_scope='listed'),
+        start='assets/neural/hunter.npz'),
 }
 
 # Replayable runs recorded before config.json named its task were all Wallcrawler team runs.
