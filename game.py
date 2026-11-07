@@ -91,6 +91,9 @@ PAR_WARNING_SECONDS = 5.0  # The par star pulses for this long before par runs o
 class Game:
     """Main game class managing state and game loop."""
     autoplay = None  # An AutoplayDirector when the game runs unattended (AUTOPLAY=1)
+    ship_pilot = None  # Anything with decide(game) -> ShipCommand; when set it flies the player ship
+    clock = time.time  # Wall time for scoring and cooldowns; a training harness swaps in a frame clock
+    clock_ms = pygame.time.get_ticks  # The same, in milliseconds, for the fire cooldown
     CRITICAL_WARNING_THRESHOLD = config.SETTINGS.game.criticalWarningThreshold
     
     def __init__(self, screen: pygame.Surface):
@@ -100,7 +103,7 @@ class Game:
         self.combat_ruleset = RULESET
         self.grows_flora = config.FLORA.enabled     # living weed; training switches it off
         self.curved_walls = config.CAVE.enabled     # training runs recorded on square walls replay on square walls
-        self.clock = pygame.time.Clock()
+        self.frame_limiter = pygame.time.Clock()
         self.font = get_font(36)
         self.small_font = get_font(24)
         self.renderer = Renderer(screen)
@@ -459,7 +462,7 @@ class Game:
             self.powerup_crystals.append(JevBeacon(beacon_pos))
         
         # Start scoring
-        current_time = time.time()
+        current_time = self.clock()
         self.scoring.start_level(current_time)
         self.level_start_time = current_time  # Record level start time to ignore initial SPACE press
         
@@ -970,7 +973,7 @@ class Game:
                     self.ship.vy *= scale
         
         # Ignore input for a short period after level start to avoid counting menu key presses
-        current_time = time.time()
+        current_time = self.clock()
         ignore_input_duration = 0.5  # Ignore input for 0.5 seconds after level start
         ignore_input = (current_time - self.level_start_time) < ignore_input_duration
         
@@ -1015,7 +1018,16 @@ class Game:
             # Update the set
             self.keys_pressed_at_start = keys_still_pressed
         
-        if self.autoplay is not None:
+        if self.ship_pilot is not None:
+            pilot_command = self.ship_pilot.decide(self)
+            commands = []
+            if pilot_command.turn < 0:
+                commands.append(CommandType.ROTATE_LEFT)
+            elif pilot_command.turn > 0:
+                commands.append(CommandType.ROTATE_RIGHT)
+            if pilot_command.thrust:
+                commands.append(CommandType.APPLY_THRUST)
+        elif self.autoplay is not None:
             commands = []  # Nobody is flying the player: it stays parked
 
         # Filter out ALL movement commands if we should ignore input
@@ -1049,7 +1061,9 @@ class Game:
         space_still_pressed = pygame.K_SPACE in self.keys_pressed_at_start
         should_ignore_fire = ignore_input or space_still_pressed or self.autoplay is not None
         
-        if not should_ignore_fire:
+        if self.ship_pilot is not None:
+            fire_key_pressed = pilot_command.fire
+        elif not should_ignore_fire:
             try:
                 fire_key_pressed = keys[pygame.K_SPACE]
             except (IndexError, KeyError):
@@ -1083,7 +1097,7 @@ class Game:
         if fire_pressed:
             if not hasattr(self, 'last_shot_time'):
                 self.last_shot_time = 0
-            current_time = pygame.time.get_ticks()
+            current_time = self.clock_ms()
             fire_cooldown = calculate_fire_cooldown(self.ship)
             
             if self.ship.weapon is not None or current_time - self.last_shot_time > fire_cooldown:
@@ -1180,7 +1194,7 @@ class Game:
         self._update_powerup_crystals(dt)
         
         # Check exit reached
-        if self.autoplay is None and self.maze.check_exit_reached((self.ship.x, self.ship.y), self.ship.radius):
+        if (self.autoplay is None or self.ship_pilot is not None) and self.maze.check_exit_reached((self.ship.x, self.ship.y), self.ship.radius):
             if not self.exit_explosion_active:
                 # Start exit explosion; nothing after this changes the stars
                 self.finish_tally = self.star_tally()
@@ -1199,7 +1213,7 @@ class Game:
             return  # Don't update game during explosion
         
         # Check if score has reached zero (level failed)
-        current_time = time.time()
+        current_time = self.clock()
         potential = self.scoring.calculate_current_potential_score(
             current_time,
             self.ship.fuel,
@@ -1210,7 +1224,8 @@ class Game:
         self.ship.low_power = potential['score_percentage'] <= LOW_POWER_THRESHOLD
 
         # When score reaches zero, freeze all action and start fade
-        if potential_score <= 0 and not self.game_frozen and self.autoplay is None:
+        if potential_score <= 0 and not self.game_frozen \
+                and (self.autoplay is None or self.ship_pilot is not None):
             self.game_frozen = True
             self._start_game_over_sequence(current_time)
         
@@ -1615,7 +1630,7 @@ class Game:
         """Main game loop."""
         try:
             while self.running:
-                dt_ms = self.clock.tick(config.FPS)
+                dt_ms = self.frame_limiter.tick(config.FPS)
                 # Normalize delta time: 1.0 = 60fps, scales movement for frame independence
                 dt = dt_ms / (1000.0 / config.FPS)
             
