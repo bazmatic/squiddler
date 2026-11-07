@@ -69,7 +69,7 @@ def test_power_out_can_be_skipped_and_never_records_a_clear(game, monkeypatch, s
         pygame.event.post(pygame.event.Event(pygame.JOYBUTTONDOWN, button=0))
         game.handle_events()
     else:
-        monkeypatch.setattr(time, 'time', lambda: game.game_over_start_time + game.game_over_death_duration + 1.15)
+        monkeypatch.setattr(game, 'clock', lambda: game.game_over_start_time + game.game_over_death_duration + 1.15)
         game.update(1)
     assert game.state == config.STATE_LEVEL_COMPLETE
     assert not game.level_succeeded
@@ -193,7 +193,7 @@ def test_game_over_text_is_visible_as_soon_as_fade_finishes(game, monkeypatch):
     game.player_has_moved = True
     game.scoring.level_start_time = time.time() - 1000
     game.update(1)
-    monkeypatch.setattr(time, 'time', lambda: game.game_over_start_time + game.game_over_death_duration + 0.51)
+    monkeypatch.setattr(game, 'clock', lambda: game.game_over_start_time + game.game_over_death_duration + 0.51)
     game.draw()
     # The fully black fade is behind the white GAME OVER label.
     center = game.screen.subsurface(pygame.Rect(300, 300, 750, 260))
