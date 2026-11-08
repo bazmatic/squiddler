@@ -177,8 +177,8 @@ def train_rl(start, out_dir, iterations, episodes=96, workers=12, lr=1e-4, seed=
         old_weight = saved['net']['embed.weight']
         width = net.state_dict()['embed.weight'].shape[1]
         if old_weight.shape[1] < width:
-            from hunter.senses import FEATURE_NAMES
-            if old_weight.shape[1] != FEATURE_NAMES.index('power_boost'):
+            from hunter.neural.policy import older_layouts
+            if old_weight.shape[1] not in {len(names) for names in older_layouts(adapter.FEATURE_NAMES)}:
                 raise ValueError('unsupported resume observation schema')
             saved['net']['embed.weight'] = torch.nn.functional.pad(old_weight, (0, width-old_weight.shape[1]))
             parameter_ids = [key for group in saved['optimiser']['param_groups'] for key in group['params']]
@@ -281,7 +281,8 @@ def train_rl(start, out_dir, iterations, episodes=96, workers=12, lr=1e-4, seed=
 
 
 def start_policy(start, feature_names):
-    """The policy in `start` in the `feature_names` layout; a hunter policy is carried over to a longer layout."""
+    """The policy in `start` in the `feature_names` layout; a hunter policy is carried over to a longer layout, and a
+    policy in a known older version of the layout (such as the first campaign layout) loads padded to the current."""
     from hunter.senses import FEATURE_NAMES
     try:
         return NeuralPolicy.load(start, feature_names)

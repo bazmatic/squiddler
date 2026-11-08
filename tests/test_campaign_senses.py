@@ -6,9 +6,10 @@ import numpy as np
 
 import config
 from entities.jev_beacon import JevBeacon
-from hunter.campaign_senses import CAMPAIGN_FEATURE_NAMES, CampaignSenses, CampaignSurroundings, ShipBody
+from hunter.campaign_senses import (CAMPAIGN_FEATURE_NAMES, CAMPAIGN_FEATURE_NAMES_V1, HELD_WEAPON_IDS, CampaignSenses,
+                                   CampaignSurroundings, ShipBody)
 from hunter.model import HunterSettings
-from hunter.senses import FEATURE_NAMES
+from hunter.senses import FEATURE_NAMES, OBSERVATION_VERSION
 from maze.wall_segment import WallSegment
 from tests.hunter_fixture import HunterRig
 from tests.test_campaign_pilot_seam import game  # noqa: F401  (fixture)
@@ -124,3 +125,106 @@ def test_a_policy_file_loads_only_as_the_layout_it_was_built_for_and_migration_c
     with pytest.raises(InvalidPolicy, match='layout differs'):
         NeuralPolicy.load(tmp_path / 'c.npz')
     assert NeuralPolicy.load(tmp_path / 'c.npz', CAMPAIGN_FEATURE_NAMES).feature_names == CAMPAIGN_FEATURE_NAMES
+    v1 = _v1_policy_file(tmp_path / 'v1.npz')                           # the first campaign layout: carried over
+    assert NeuralPolicy.load(v1, CAMPAIGN_FEATURE_NAMES).feature_names == CAMPAIGN_FEATURE_NAMES
+    with pytest.raises(InvalidPolicy, match='layout differs'):
+        NeuralPolicy.load(v1)
+
+
+def _live(game):  # noqa: F811  (a level, not the fixture)
+    body = ShipBody(game.ship, game, HunterSettings())
+    return CampaignSenses(HunterSettings()).perceive(body, CampaignSurroundings(game), IDLE, game.clock())
+
+
+def _held(vector):
+    return [w for w in HELD_WEAPON_IDS if value(vector, f'weapon_{w}') == 1.0]
+
+
+def test_the_held_weapon_inputs_are_the_catalog_pickups_after_the_v1_layout():
+    from weapons.catalog import CATALOG
+    assert HELD_WEAPON_IDS == tuple(w for w in CATALOG.drops if CATALOG[w].behaviour != 'shield')
+    assert CAMPAIGN_FEATURE_NAMES[:len(CAMPAIGN_FEATURE_NAMES_V1)] == CAMPAIGN_FEATURE_NAMES_V1
+    assert CAMPAIGN_FEATURE_NAMES[len(CAMPAIGN_FEATURE_NAMES_V1):] == (
+        tuple(f'weapon_{w}' for w in HELD_WEAPON_IDS) + ('shield_remaining',))
+
+
+def test_the_held_weapon_inputs_name_the_pickup_weapon_in_hand(game):  # noqa: F811
+    assert _held(_live(game)) == []                                     # the plain gun
+    for weapon_id in HELD_WEAPON_IDS:
+        game.ship.weapon.reset()
+        game.ship.equip_weapon(weapon_id)
+        assert _held(_live(game)) == [weapon_id]
+    game.ship.weapon.reset()
+    game.ship.equip_weapon('railgun')
+    game.ship.weapon.ammo = 1
+    game.ship.weapon.try_fire((game.ship.x, game.ship.y), game.ship.angle)   # the last round
+    assert _held(_live(game)) == []
+
+
+def test_shield_remaining_is_the_share_of_the_pickup_shield_left(game):  # noqa: F811
+    assert value(_live(game), 'shield_remaining') == 0.0
+    game.ship.equip_weapon('shield')
+    assert value(_live(game), 'shield_remaining') == 1.0
+    assert _held(_live(game)) == []                                     # a shield is not a weapon in hand
+    full = game.ship.powerup_shield_timer
+    for _ in range(int(full * 0.75)):                                   # three quarters of its frames go by
+        game.ship.update(1.0)
+    assert math.isclose(value(_live(game), 'shield_remaining'), 1 - int(full * 0.75) / full, rel_tol=1e-4)
+    for _ in range(int(full)):
+        game.ship.update(1.0)
+    assert value(_live(game), 'shield_remaining') == 0.0
+
+
+def _v1_policy_file(path, seed=3):
+    """A V1-layout campaign policy with every V1 input weighted."""
+    from hunter.neural.policy import random_policy
+    policy = random_policy(seed)
+    rng = np.random.default_rng(seed)
+    width = len(CAMPAIGN_FEATURE_NAMES_V1)
+    params = dict(policy.params, embed_w=rng.normal(0, 0.3, (policy.params['embed_w'].shape[0], width)).astype(np.float32))
+    np.savez(path, mean=rng.normal(size=width).astype(np.float32), scale=rng.uniform(0.5, 2, width).astype(np.float32),
+             feature_names=np.array(CAMPAIGN_FEATURE_NAMES_V1), observation_version=OBSERVATION_VERSION, **params)
+    return path
+
+
+def test_a_v1_campaign_pilot_flies_the_same_whatever_the_new_inputs_read(tmp_path):
+    from hunter.neural.policy import NeuralPolicy
+    path = _v1_policy_file(tmp_path / 'v1.npz')
+    v1 = NeuralPolicy.load(path, CAMPAIGN_FEATURE_NAMES_V1)
+    v2 = NeuralPolicy.load(path, CAMPAIGN_FEATURE_NAMES)
+    assert v2.feature_names == CAMPAIGN_FEATURE_NAMES
+    rng = np.random.default_rng(2)
+    a_state, b_state = v1.initial_state(), v2.initial_state()
+    for _ in range(5):
+        senses = rng.normal(size=len(CAMPAIGN_FEATURE_NAMES_V1)).astype(np.float32)
+        extra = rng.normal(0, 50, len(CAMPAIGN_FEATURE_NAMES) - len(senses)).astype(np.float32)
+        a, a_state = v1.step(senses, a_state)
+        b, b_state = v2.step(np.concatenate([senses, extra]), b_state)
+        for head in a:
+            assert np.allclose(a[head], b[head], atol=1e-5)
+
+
+def test_only_the_known_v1_campaign_layout_is_carried_over(tmp_path):
+    import pytest
+    from hunter.neural.policy import InvalidPolicy, NeuralPolicy
+    path = _v1_policy_file(tmp_path / 'v1.npz')
+    with pytest.raises(InvalidPolicy, match='layout differs'):
+        NeuralPolicy.load(path)                                          # not a hunter policy
+    data = dict(np.load(path))
+    cut = len(CAMPAIGN_FEATURE_NAMES_V1) - 1                             # some other prefix: refused
+    np.savez(tmp_path / 'short.npz', **dict(data, feature_names=np.array(CAMPAIGN_FEATURE_NAMES_V1[:cut]),
+                                            embed_w=data['embed_w'][:, :cut], mean=data['mean'][:cut],
+                                            scale=data['scale'][:cut]))
+    with pytest.raises(InvalidPolicy, match='layout differs'):
+        NeuralPolicy.load(tmp_path / 'short.npz', CAMPAIGN_FEATURE_NAMES)
+
+
+def test_training_from_a_v1_start_writes_a_v2_start(tmp_path):
+    from hunter.neural.policy import NeuralPolicy
+    from tools.ppo_neural import build_net, export, start_policy
+    policy = start_policy(_v1_policy_file(tmp_path / 'v1.npz'), CAMPAIGN_FEATURE_NAMES)
+    export(build_net(policy), policy, tmp_path / 'iter_start.npz')
+    names = tuple(str(n) for n in np.load(tmp_path / 'iter_start.npz')['feature_names'])
+    assert names == CAMPAIGN_FEATURE_NAMES
+    reloaded = NeuralPolicy.load(tmp_path / 'iter_start.npz', CAMPAIGN_FEATURE_NAMES)
+    assert not reloaded.params['embed_w'][:, len(CAMPAIGN_FEATURE_NAMES_V1):].any()

@@ -1,15 +1,14 @@
 """The Campaign Hunter's senses: what the allied hunter perceives, from the player ship's seat, plus where the
-exit is and where an Ally beacon lies (the two things the level asks of the player that a hunter never needed)."""
+exit is and where an Ally beacon lies (the two things the level asks of the player that a hunter never needed), and
+which pickup weapon the ship holds and how long its pickup shield has left."""
 import math
 import numpy as np
 import config
-from hunter.senses import FEATURE_NAMES, Senses, blocked
+from hunter.senses import Senses, blocked
 from entities.jev_beacon import JevBeacon
 
-CAMPAIGN_FEATURE_NAMES = FEATURE_NAMES + (
-    'exit_compass_present', 'exit_compass_sin', 'exit_compass_cos', 'exit_compass_dist', 'exit_open',
-    'beacon_compass_present', 'beacon_compass_sin', 'beacon_compass_cos', 'beacon_compass_dist')
-_EXTRA = len(CAMPAIGN_FEATURE_NAMES) - len(FEATURE_NAMES)
+from hunter.campaign_layout import CAMPAIGN_FEATURE_NAMES, CAMPAIGN_FEATURE_NAMES_V1, HELD_WEAPON_IDS  # noqa: F401
+
 _INDEX = {name: i for i, name in enumerate(CAMPAIGN_FEATURE_NAMES)}
 
 
@@ -38,6 +37,18 @@ class ShipBody:
     def _held(self):
         weapon = self.ship.weapon
         return weapon if weapon is not None and weapon.weapon_id != 'basic' else None
+
+    @property
+    def held_weapon_id(self):
+        """The pickup weapon in hand, or None for the plain gun (and once a pickup's ammo has run out)."""
+        weapon = self._held()
+        return weapon.weapon_id if weapon is not None else None
+
+    @property
+    def shield_remaining(self):
+        """The share of a pickup shield's run still to go: 1 just picked up, 0 with none."""
+        full = config.SETTINGS.powerups.shieldDurationSeconds * config.FPS
+        return min(1.0, max(0.0, self.ship.powerup_shield_timer / full)) if full > 0 else 0.0
 
     @property
     def fire_interval(self):
@@ -91,7 +102,8 @@ class CampaignSurroundings:
 
 class CampaignSenses(Senses):
     def perceive(self, body, surroundings, last_controls, now):
-        """The hunter's vector for `body`, then the exit compass, `exit_open` and the beacon compass."""
+        """The hunter's vector for `body`, then the exit compass, `exit_open`, the beacon compass, the held weapon
+        and the pickup shield."""
         base = super().perceive(body, surroundings, last_controls, now)
         out = np.zeros(len(CAMPAIGN_FEATURE_NAMES), dtype=np.float32)
         out[:len(base)] = base
@@ -110,6 +122,10 @@ class CampaignSenses(Senses):
             out[_INDEX['beacon_compass_sin']] = math.sin(rel)
             out[_INDEX['beacon_compass_cos']] = math.cos(rel)
             out[_INDEX['beacon_compass_dist']] = min(1.0, math.dist(origin, (nearest.x, nearest.y)) / width)
+        held = getattr(body, 'held_weapon_id', None)
+        if held in HELD_WEAPON_IDS:
+            out[_INDEX[f'weapon_{held}']] = 1.0
+        out[_INDEX['shield_remaining']] = getattr(body, 'shield_remaining', 0.0)
         return out
 
     def _exit_compass(self, out, origin, h, reach, maze, exit_pos, width):

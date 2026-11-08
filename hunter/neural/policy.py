@@ -55,7 +55,9 @@ class NeuralPolicy:
 
     @classmethod
     def load(cls, path, feature_names=FEATURE_NAMES):
-        """Load a policy built for `feature_names`. Only the hunter layout accepts older, shorter hunter policies."""
+        """Load a policy built for `feature_names`. Only known older layouts of the same pilot are carried over, with
+        the inputs added since at zero weight: older, shorter hunter policies for the hunter layout, and the first
+        campaign layout for the campaign one."""
         try:
             size = len(feature_names)
             hunter_layout = feature_names == FEATURE_NAMES
@@ -65,16 +67,18 @@ class NeuralPolicy:
             version = int(data['observation_version']) if 'observation_version' in data else (1 if len(names) == legacy_size else OBSERVATION_VERSION)
             if version not in ((1, OBSERVATION_VERSION) if hunter_layout else (OBSERVATION_VERSION,)):
                 raise InvalidPolicy('unsupported observation version')
-            if names != feature_names and not (hunter_layout and names == FEATURE_NAMES[:legacy_size]):
+            older = older_layouts(feature_names)
+            if names != feature_names and names not in older:
                 raise InvalidPolicy('senses layout differs from this build')
             params = {k: data[k] for k in _PARAMS}
             mean, scale = data['mean'], data['scale']
-            if len(names) == legacy_size:
-                # Explicit legacy-prefix adapter: new weapon features have zero influence.
-                # It preserves old behaviour but does not teach old pilots weapon choice.
-                if params['embed_w'].shape[1] != legacy_size or mean.shape != (legacy_size,) or scale.shape != (legacy_size,):
+            if names != feature_names:
+                # Explicit older-layout adapter: the inputs added since have zero influence.
+                # It preserves old behaviour but does not teach old pilots to use them.
+                width = len(names)
+                if params['embed_w'].shape[1] != width or mean.shape != (width,) or scale.shape != (width,):
                     raise InvalidPolicy('invalid legacy observation dimensions')
-                extra = size-legacy_size
+                extra = size - width
                 params['embed_w'] = np.pad(params['embed_w'], ((0,0),(0,extra)))
                 mean = np.pad(mean, (0,extra))
                 scale = np.pad(scale, (0,extra), constant_values=1)
@@ -94,6 +98,16 @@ class NeuralPolicy:
             raise
         except Exception as exc:
             raise InvalidPolicy(type(exc).__name__) from None
+
+
+def older_layouts(feature_names):
+    """The older layouts a policy file for `feature_names` may be in and still load."""
+    from hunter.campaign_layout import CAMPAIGN_FEATURE_NAMES, OLDER_CAMPAIGN_LAYOUTS
+    if feature_names == FEATURE_NAMES:
+        return (FEATURE_NAMES[:FEATURE_NAMES.index('power_boost')],)
+    if feature_names == CAMPAIGN_FEATURE_NAMES:
+        return OLDER_CAMPAIGN_LAYOUTS
+    return ()
 
 
 def random_policy(seed, hidden=32, embed=16):
