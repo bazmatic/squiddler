@@ -22,7 +22,8 @@ METRICS = (
 LAYOUT = Layout(sections=('Training', 'Outcome', 'Policy'), strip=('exited', 'cleared_exit', 'own_kills'))
 
 _TITLES = dict(own_kill='Own kill', pickup='Pickup', beacon='Beacon', exit='Exit', cleared_exit='Cleared exit',
-               score_out='Score out', wall_crash='Wall crash', compass_following='Compass following')
+               score_out='Score out', wall_crash='Wall crash', compass_following='Compass following',
+               idle='Idling')
 
 
 def _kind(key):

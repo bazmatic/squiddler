@@ -11,7 +11,7 @@ from hunter.campaign_senses import CAMPAIGN_FEATURE_NAMES
 from hunter.neural.loader import DEFAULT_PATH as HUNTER_POLICY_PATH
 from tools.migrate_policy import migrate
 
-SHAPING = CampaignShaping()
+SHAPING = CampaignShaping(idle=0.0)       # the terminal rewards read alone; an idle ship would add its penalty
 
 
 @pytest.fixture(scope='module', autouse=True)
@@ -31,8 +31,8 @@ def spec(tmp_path):
 class ScriptedPilot:
     """Holds still and runs `script(game, decision)` at each decision, reporting blank senses as a pilot would."""
 
-    def __init__(self, script=lambda game, decision: None):
-        self.script, self.decisions, self._listeners = script, 0, []
+    def __init__(self, script=lambda game, decision: None, thrust=False):
+        self.script, self.thrust, self.decisions, self._listeners = script, thrust, 0, []
 
     def on_observed(self, listener):
         self._listeners.append(listener)
@@ -42,7 +42,7 @@ class ScriptedPilot:
             listener(np.zeros(len(CAMPAIGN_FEATURE_NAMES), dtype=np.float32), (1, 0, 0))
         self.script(game, self.decisions)
         self.decisions += 1
-        return ShipCommand(0, False, False)
+        return ShipCommand(0, self.thrust, False)
 
 
 def into_the_open_exit(game):
@@ -77,12 +77,19 @@ def test_exiting_pays_and_clearing_first_pays_more(spec):
                 game.encounter.kill(enemy)
             into_the_open_exit(game)
 
-    left = fly_campaign(1, 300, spec, horizon=5.0, pilot=ScriptedPilot(leave))
-    cleared = fly_campaign(1, 300, spec, horizon=5.0, pilot=ScriptedPilot(clear_then_leave))
+    left = fly_campaign(1, 300, spec, horizon=5.0, pilot=ScriptedPilot(leave), shaping=SHAPING)
+    cleared = fly_campaign(1, 300, spec, horizon=5.0, pilot=ScriptedPilot(clear_then_leave), shaping=SHAPING)
     assert left['result'].end == cleared['result'].end == 'exited'
     assert left['result'].enemies_at_start > 0 and not left['result'].cleared and cleared['result'].cleared
     assert left['rewards'][-1] == pytest.approx(SHAPING.exit)
     assert cleared['rewards'][-1] == pytest.approx(SHAPING.exit + SHAPING.cleared_exit)
+
+
+def test_idling_costs_a_penalty_a_decision_and_thrusting_does_not(spec):
+    idle = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot())
+    assert idle['rewards'].sum() == pytest.approx(len(idle['rewards']) * CampaignShaping().idle)
+    thrusting = fly_campaign(1, 300, spec, horizon=0.3, pilot=ScriptedPilot(thrust=True))
+    assert thrusting['rewards'].sum() == pytest.approx(0)
 
 
 def test_only_the_ships_own_kills_pay(spec):
@@ -122,7 +129,7 @@ def test_scoring_out_ends_the_episode_with_its_penalty(spec, monkeypatch):
     from scoring.system import ScoringSystem
     monkeypatch.setattr(ScoringSystem, 'calculate_current_potential_score',
                         lambda self, *a, **k: {'potential_score': 0, 'score_percentage': 0.0})
-    r = fly_campaign(1, 300, spec, horizon=5.0, pilot=ScriptedPilot())
+    r = fly_campaign(1, 300, spec, horizon=5.0, pilot=ScriptedPilot(), shaping=SHAPING)
     assert r['result'].end == 'scored_out' and r['result'].elapsed < 1.0
     assert r['rewards'][-1] == pytest.approx(SHAPING.score_out)
 

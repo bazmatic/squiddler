@@ -16,11 +16,12 @@ from experiments.harness import FPS
 from hunter.campaign_senses import CAMPAIGN_FEATURE_NAMES
 from learning.campaign_rewards import CampaignShaping
 
+IDLE_SPEED = 1.0           # a ship slower than this and not thrusting is idling
 FOLLOW_DEGREES = 45.0      # the ship's flight follows a compass when its velocity is this close to it
 START_TIME = 1000.0        # the episode clock's first reading, in seconds
 
 _INDEX = {name: i for i, name in enumerate(CAMPAIGN_FEATURE_NAMES)}
-_EVENTS = ('own_kills', 'pickups', 'beacon', 'wall_crashes', 'following')
+_EVENTS = ('own_kills', 'pickups', 'beacon', 'wall_crashes', 'following', 'idle')
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,8 @@ class _Recorder:
         command = self.pilot.decide(game)
         if self._observed:
             self.controls.append((command.turn + 1, int(command.thrust), int(command.fire)))
+            ship = game.ship
+            self.events[-1]['idle'] = int(not command.thrust and math.hypot(ship.vx, ship.vy) < IDLE_SPEED)
         return command
 
     def add(self, event, count):
@@ -87,9 +90,9 @@ class _Recorder:
         n = min(len(self.senses), len(self.controls))
         senses = np.asarray(self.senses[:n], dtype=np.float32).reshape(n, len(CAMPAIGN_FEATURE_NAMES))
         controls = np.asarray(self.controls[:n], dtype=np.int8).reshape(n, 3)
-        events = np.asarray([[row[e] for e in _EVENTS] for row in self.events[:n]], dtype=np.float64).reshape(n, 5)
+        events = np.asarray([[row[e] for e in _EVENTS] for row in self.events[:n]], dtype=np.float64).reshape(n, len(_EVENTS))
         weights = np.array([shaping.own_kill, shaping.pickup, shaping.beacon, shaping.wall_crash,
-                            shaping.compass_following])
+                            shaping.compass_following, shaping.idle])
         rewards = events @ weights
         if n:
             rewards[-1] += terminal
