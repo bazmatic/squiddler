@@ -112,3 +112,15 @@ def test_a_held_weapon_part_way_through_its_reload_reads_as_that_share_of_its_re
     vector = CampaignSenses(HunterSettings()).perceive(body, CampaignSurroundings(game), IDLE, game.clock())
     assert 0 < value(vector, 'cooldown') < 1
     assert math.isclose(value(vector, 'cooldown'), weapon.cooldown / weapon.definition.interval, rel_tol=1e-5)
+
+
+def test_a_policy_file_loads_only_as_the_layout_it_was_built_for_and_migration_crosses(tmp_path):
+    import pytest
+    from hunter.neural.policy import InvalidPolicy, NeuralPolicy
+    from tools.migrate_policy import migrate
+    with pytest.raises(InvalidPolicy, match='layout differs'):
+        NeuralPolicy.load('assets/neural/hunter.npz', CAMPAIGN_FEATURE_NAMES)
+    migrate('assets/neural/hunter.npz', tmp_path / 'c.npz', CAMPAIGN_FEATURE_NAMES)
+    with pytest.raises(InvalidPolicy, match='layout differs'):
+        NeuralPolicy.load(tmp_path / 'c.npz')
+    assert NeuralPolicy.load(tmp_path / 'c.npz', CAMPAIGN_FEATURE_NAMES).feature_names == CAMPAIGN_FEATURE_NAMES
