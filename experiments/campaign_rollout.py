@@ -14,6 +14,7 @@ import numpy as np
 from experiments import harness
 from experiments.harness import FPS
 from hunter.campaign_senses import CAMPAIGN_FEATURE_NAMES
+from hunter.maze_route import MazeRoutes
 from learning.campaign_rewards import CampaignShaping
 
 IDLE_SPEED = 1.0           # a ship slower than this and not thrusting is idling
@@ -21,7 +22,7 @@ FOLLOW_DEGREES = 45.0      # the ship's flight follows a compass when its veloci
 START_TIME = 1000.0        # the episode clock's first reading, in seconds
 
 _INDEX = {name: i for i, name in enumerate(CAMPAIGN_FEATURE_NAMES)}
-_EVENTS = ('own_kills', 'pickups', 'beacon', 'wall_crashes', 'following', 'idle')
+_EVENTS = ('own_kills', 'pickups', 'beacon', 'wall_crashes', 'following', 'idle', 'exit_progress')
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,7 @@ class _Recorder:
         self.pilot, self.game = pilot, game
         self.senses, self.controls, self.temperatures, self.events = [], [], [], []
         self._observed = False
+        self._routes, self._exit_distance = MazeRoutes(), None
         pilot.on_observed(self._observe)
 
     def _observe(self, senses, last_controls):
@@ -69,9 +71,25 @@ class _Recorder:
         self.senses.append(np.asarray(senses, dtype=np.float32))
         controller = getattr(self.pilot, 'controller', None)
         self.temperatures.append(getattr(controller, 'temperature', 1.0))
+        self._pay_exit_progress()
         row = dict.fromkeys(_EVENTS, 0)
         row['following'] = int(_following(self.senses[-1], self.game))
         self.events.append(row)
+
+    def _pay_exit_progress(self):
+        """Once the exit is open, the last decision is paid for the ground it made toward the exit by route, in maze
+        widths: what steering for the exit earns and circling does not."""
+        game = self.game
+        if not game.exit_opened:
+            return
+        maze, exit_pos, ship = game.maze, game.maze.exit.get_pos(), game.ship
+        origin = (ship.x, ship.y)
+        found = self._routes.route(maze, origin, [exit_pos])
+        points = [origin] + (list(reversed(found[1])) if found else []) + [tuple(exit_pos)]
+        distance = sum(math.dist(a, b) for a, b in zip(points, points[1:])) / max(maze.grid_width * maze.cell_size_x, 1.0)
+        if self._exit_distance is not None:
+            self.add('exit_progress', self._exit_distance - distance)
+        self._exit_distance = distance
 
     def decide(self, game):
         self._observed = False
@@ -92,7 +110,7 @@ class _Recorder:
         controls = np.asarray(self.controls[:n], dtype=np.int8).reshape(n, 3)
         events = np.asarray([[row[e] for e in _EVENTS] for row in self.events[:n]], dtype=np.float64).reshape(n, len(_EVENTS))
         weights = np.array([shaping.own_kill, shaping.pickup, shaping.beacon, shaping.wall_crash,
-                            shaping.compass_following, shaping.idle])
+                            shaping.compass_following, shaping.idle, shaping.exit_progress])
         rewards = events @ weights
         if n:
             rewards[-1] += terminal

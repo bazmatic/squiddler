@@ -86,10 +86,28 @@ def test_exiting_pays_and_clearing_first_pays_more(spec):
 
 
 def test_idling_costs_a_penalty_a_decision_and_thrusting_does_not(spec):
-    idle = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot())
+    idle = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot(), shaping=CampaignShaping(exit_progress=0.0))
     assert idle['rewards'].sum() == pytest.approx(len(idle['rewards']) * CampaignShaping().idle)
-    thrusting = fly_campaign(1, 300, spec, horizon=0.3, pilot=ScriptedPilot(thrust=True))
+    thrusting = fly_campaign(1, 300, spec, horizon=0.3, pilot=ScriptedPilot(thrust=True),
+                         shaping=CampaignShaping(exit_progress=0.0))
     assert thrusting['rewards'].sum() == pytest.approx(0)
+
+
+def test_closing_on_the_open_exit_pays_and_standing_off_does_not(spec):
+    def open_then_jump(game, decision):
+        if decision == 1:
+            game.exit_opened = True
+        if decision == 4:                     # a cell from the exit, where the ship started far off
+            x, y = game.maze.exit.get_pos()
+            game.ship.x, game.ship.y = x + game.maze.cell_size_x, y
+            game.ship.vx = game.ship.vy = 0.0
+
+    shaping = CampaignShaping(idle=0.0, compass_following=0.0)
+    closing = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot(open_then_jump), shaping=shaping)
+    standing = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot(lambda g, d: setattr(g, 'exit_opened', True)),
+                            shaping=shaping)
+    assert closing['result'].end == 'horizon' and closing['rewards'].sum() > shaping.exit_progress * 0.3
+    assert standing['rewards'].sum() == pytest.approx(0, abs=1e-6)
 
 
 def test_only_the_ships_own_kills_pay(spec):
