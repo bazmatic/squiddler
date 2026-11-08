@@ -15,14 +15,16 @@ from experiments import harness
 from experiments.harness import FPS
 from hunter.campaign_senses import CAMPAIGN_FEATURE_NAMES
 from hunter.maze_route import MazeRoutes
+from hunter.senses import HIT_POINT_CELLS
 from learning.campaign_rewards import CampaignShaping
 
+PROGRESS_CAP = 0.2         # the most ground one decision can pay or cost, in maze widths
 IDLE_SPEED = 1.0           # a ship slower than this and not thrusting is idling
 FOLLOW_DEGREES = 45.0      # the ship's flight follows a compass when its velocity is this close to it
 START_TIME = 1000.0        # the episode clock's first reading, in seconds
 
 _INDEX = {name: i for i, name in enumerate(CAMPAIGN_FEATURE_NAMES)}
-_EVENTS = ('own_kills', 'pickups', 'beacon', 'wall_crashes', 'following', 'idle', 'exit_progress')
+_EVENTS = ('own_kills', 'pickups', 'beacon', 'wall_crashes', 'following', 'idle', 'exit_progress', 'hunt_progress')
 
 
 @dataclass(frozen=True)
@@ -63,7 +65,7 @@ class _Recorder:
         self.pilot, self.game = pilot, game
         self.senses, self.controls, self.temperatures, self.events = [], [], [], []
         self._observed = False
-        self._routes, self._exit_distance = MazeRoutes(), None
+        self._routes, self._progress = MazeRoutes(), None
         pilot.on_observed(self._observe)
 
     def _observe(self, senses, last_controls):
@@ -71,25 +73,38 @@ class _Recorder:
         self.senses.append(np.asarray(senses, dtype=np.float32))
         controller = getattr(self.pilot, 'controller', None)
         self.temperatures.append(getattr(controller, 'temperature', 1.0))
-        self._pay_exit_progress()
+        self._pay_progress()
         row = dict.fromkeys(_EVENTS, 0)
         row['following'] = int(_following(self.senses[-1], self.game))
         self.events.append(row)
 
-    def _pay_exit_progress(self):
-        """Once the exit is open, the last decision is paid for the ground it made toward the exit by route, in maze
-        widths: what steering for the exit earns and circling does not."""
+    def _pay_progress(self):
+        """The last decision is paid for the ground it made along the route to what the ship is after, in maze widths:
+        the nearest enemy while any is left, then the exit once it is open. What steering for it earns, circling does
+        not. A decision on which the target changes (a kill, the last enemy gone) is not paid, and a switch to a nearer
+        enemy is capped, so neither reads as ground lost."""
         game = self.game
-        if not game.exit_opened:
+        alive = game.roster.alive()
+        if alive:
+            kind, targets = 'hunt_progress', [(e.x, e.y) for e in alive]
+        elif game.exit_opened:
+            kind, targets = 'exit_progress', [tuple(game.maze.exit.get_pos())]
+        else:
+            self._progress = None
             return
-        maze, exit_pos, ship = game.maze, game.maze.exit.get_pos(), game.ship
+        maze, ship = game.maze, game.ship
         origin = (ship.x, ship.y)
-        found = self._routes.route(maze, origin, [exit_pos])
-        points = [origin] + (list(reversed(found[1])) if found else []) + [tuple(exit_pos)]
-        distance = sum(math.dist(a, b) for a, b in zip(points, points[1:])) / max(maze.grid_width * maze.cell_size_x, 1.0)
-        if self._exit_distance is not None:
-            self.add('exit_progress', self._exit_distance - distance)
-        self._exit_distance = distance
+        found = self._routes.cheapest_route(maze, origin, targets, HIT_POINT_CELLS)
+        if found is None:
+            target, route, extra = min(targets, key=lambda p: math.dist(origin, p)), [], 0.0
+        else:
+            index, route, extra = found
+            target = targets[index]
+        points = [origin] + list(reversed(route)) + [target]
+        distance = (sum(math.dist(a, b) for a, b in zip(points, points[1:])) + extra) / max(maze.grid_width * maze.cell_size_x, 1.0)
+        if self._progress is not None and self._progress[:2] == (kind, len(alive)):
+            self.add(kind, max(-PROGRESS_CAP, min(PROGRESS_CAP, self._progress[2] - distance)))
+        self._progress = (kind, len(alive), distance)
 
     def decide(self, game):
         self._observed = False
@@ -110,7 +125,8 @@ class _Recorder:
         controls = np.asarray(self.controls[:n], dtype=np.int8).reshape(n, 3)
         events = np.asarray([[row[e] for e in _EVENTS] for row in self.events[:n]], dtype=np.float64).reshape(n, len(_EVENTS))
         weights = np.array([shaping.own_kill, shaping.pickup, shaping.beacon, shaping.wall_crash,
-                            shaping.compass_following, shaping.idle, shaping.exit_progress])
+                            shaping.compass_following, shaping.idle, shaping.exit_progress,
+                            shaping.hunt_progress])
         rewards = events @ weights
         if n:
             rewards[-1] += terminal

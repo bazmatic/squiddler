@@ -23,7 +23,7 @@ LAYOUT = Layout(sections=('Training', 'Outcome', 'Policy'), strip=('exited', 'cl
 
 _TITLES = dict(own_kill='Own kill', pickup='Pickup', beacon='Beacon', exit='Exit', cleared_exit='Cleared exit',
                score_out='Score out', wall_crash='Wall crash', compass_following='Compass following',
-               exit_progress='Exit progress', idle='Idling')
+               hunt_progress='Hunt progress', exit_progress='Exit progress', idle='Idling')
 
 
 def _kind(key):
