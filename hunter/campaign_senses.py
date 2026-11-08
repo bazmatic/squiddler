@@ -35,17 +35,25 @@ class ShipBody:
     def upgrade_remaining(self):
         return self.ship.gun_upgrade_timer / config.FPS
 
+    def _held(self):
+        weapon = self.ship.weapon
+        return weapon if weapon is not None and weapon.weapon_id != 'basic' else None
+
     @property
     def fire_interval(self):
+        """Seconds between shots: the held weapon's interval (kept in simulation frames), else the gun's."""
+        weapon = self._held()
+        if weapon is not None:
+            return weapon.view.interval / config.FPS
         from game_handlers.fire_rate_calculator import calculate_fire_cooldown
         return calculate_fire_cooldown(self.ship) / 1000
 
     @property
     def fire_remaining(self):
-        """Seconds until the trigger is next heard: the held weapon's cooldown, else the gun's."""
-        weapon = self.ship.weapon
-        if weapon is not None and weapon.weapon_id != 'basic':
-            return weapon.view.cooldown
+        """Seconds until the trigger is next heard: the held weapon's cooldown (kept in frames), else the gun's."""
+        weapon = self._held()
+        if weapon is not None:
+            return weapon.view.cooldown / config.FPS
         ready_at = getattr(self.game, 'last_shot_time', 0) + self.fire_interval * 1000
         return max(0.0, ready_at - self.game.clock_ms()) / 1000
 

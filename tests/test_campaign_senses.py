@@ -101,3 +101,14 @@ def test_a_migrated_hunter_pilot_flies_the_same_with_campaign_senses(tmp_path):
     b, _ = campaign.step(np.concatenate([senses, extra]), campaign.initial_state())
     for head in a:
         assert np.allclose(a[head], b[head], atol=1e-5)
+
+
+def test_a_held_weapon_part_way_through_its_reload_reads_as_that_share_of_its_reload(game):  # noqa: F811
+    game.ship.equip_weapon('railgun')
+    weapon = game.ship.weapon
+    weapon.cooldown = weapon.definition.interval * 0.4      # frames, as the weapon counts them
+    body = ShipBody(game.ship, game, HunterSettings())
+    assert body.fire_remaining == weapon.cooldown / config.FPS
+    vector = CampaignSenses(HunterSettings()).perceive(body, CampaignSurroundings(game), IDLE, game.clock())
+    assert 0 < value(vector, 'cooldown') < 1
+    assert math.isclose(value(vector, 'cooldown'), weapon.cooldown / weapon.definition.interval, rel_tol=1e-5)
