@@ -212,6 +212,23 @@ class Clock:
         return self.now
 
 
+def test_r_in_demo_restarts_the_level_as_demo_begins_one(make_game):
+    game = make_game()
+    clock = [1000.0]
+    game.autoplay.clock = lambda: clock[0]
+    game.autoplay.start_level(len(game.roster.alive()))
+    game.ship_pilot.reset = Mock(wraps=game.ship_pilot.reset)
+    clock[0] += 80                                    # most of the 90 s level timer used
+    pygame.event.clear()
+    pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_r, unicode='r'))
+    game.handle_events()
+    assert game.level == 4 and game.state == config.STATE_PLAYING and game.player_has_moved
+    game.ship_pilot.reset.assert_called_once()
+    clock[0] += 80                                    # a fresh timer: 80 s into the restarted level
+    game.update(1.0)
+    assert game.level == 4
+
+
 def test_the_no_kill_skip_waits_while_the_ship_heads_for_the_exit():
     clock = Clock()
     d = AutoplayDirector(4, 6, 300, clock=clock, no_kill_seconds=20)

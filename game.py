@@ -308,8 +308,11 @@ class Game:
         replaying = self.replaying
         self.sound_manager.stop_all_sounds()
         self.scoring.total_score = self.total_score_before_level
-        self.state = config.STATE_PLAYING
-        self.start_level()
+        if self.autoplay is not None:
+            self._begin_autoplay_level()   # Demo: a fresh pilot and level timer, as at any Demo level's start
+        else:
+            self.state = config.STATE_PLAYING
+            self.start_level()
         # Retrying an ordinary clear replaces that attempt, even though the
         # first clear has already unlocked the next level in the profile.
         self.replaying = replaying
