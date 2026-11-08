@@ -350,21 +350,30 @@ def _anti_goal_violations(maze):
 SCREENS = {'default 3840x2160': (3840, 2160), 'real display 1352x878': (1352, 878)}
 
 
+# One case per level and per generator preset and size, so a parallel run spreads the sweep over its workers.
+SWEEP = [f'level {level}' for level in LEVELS] + [f'{c.name} {size}' for c in MazeComplexity for size in (18, 32)]
+
+
+def _sweep_mazes(case):
+    if case.startswith('level '):
+        level = int(case.split()[1])
+        return [(case, lambda: level_maze(level))]
+    name, size = case.split()
+    complexity, size = MazeComplexity[name], int(size)
+    return [(f'{case} seed {seed}', lambda sd=seed: generated_maze(complexity, size, sd, level=sd + 1))
+            for seed in range(SEEDS_PER_PRESET)]
+
+
+@pytest.mark.parametrize('case', SWEEP)
 @pytest.mark.parametrize('screen', SCREENS)
-def test_all_levels_meet_anti_goals(monkeypatch, screen):
+def test_all_levels_meet_anti_goals(monkeypatch, screen, case):
     """Every level and SEEDS_PER_PRESET generated mazes per preset and size, on the default screen
     and on the real fullscreen display (where cells are about a third the size)."""
     width, height = SCREENS[screen]
     monkeypatch.setattr(config, 'SCREEN_WIDTH', width)
     monkeypatch.setattr(config, 'SCREEN_HEIGHT', height)
-    mazes = [(f'level {level}', lambda level=level: level_maze(level)) for level in LEVELS]
-    for complexity in MazeComplexity:
-        for size in (18, 32):
-            for seed in range(SEEDS_PER_PRESET):
-                mazes.append((f'{complexity.name} {size} seed {seed}',
-                              lambda c=complexity, s=size, sd=seed: generated_maze(c, s, sd, level=sd + 1)))
     failures = {}
-    for name, build in mazes:
+    for name, build in _sweep_mazes(case):
         bad = {check: found[:3] for check, found in _anti_goal_violations(build()).items() if found}
         if bad:
             failures[name] = bad
@@ -381,6 +390,7 @@ def _cluster_maze():
     return maze, cluster
 
 
+@pytest.mark.perf
 def test_multi_block_blast_budget():
     scoring = ScoringSystem()
     scoring.start_level(1)
@@ -452,6 +462,7 @@ def _episode_seconds(curved, level, horizon):
 FRAME_TIME_GATES = [(27, 3.0, 1.3), (13, 6.0, 1.75)]
 
 
+@pytest.mark.perf
 @pytest.mark.parametrize('level, horizon, limit', FRAME_TIME_GATES)
 def test_curved_walls_cost_little_frame_time(level, horizon, limit):
     """A level plays about as fast on curved rock as on square walls.
@@ -498,6 +509,7 @@ def _destroy_times(curved, cells, count=12):
     return statistics.median(destroys), (statistics.median(opens) if opens else 0.0)
 
 
+@pytest.mark.perf
 def test_destroying_blocks_stays_within_budget(monkeypatch):
     """Grenades and rails destroy blocks: on the real screen, the same 12 blocks of a grid-32 maze,
     curved against square. A curved destroy rebuilds the rock (CaveShape.open_cell, whose own budget

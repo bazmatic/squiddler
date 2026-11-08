@@ -1,6 +1,7 @@
 pygame>=2.5.0
 numpy>=1.20.0
 pytest>=7.0.0
+pytest-xdist>=3.5    # parallel tests: python -m pytest -q tests -n auto
 pyinstaller>=6.0.0
 opencv-python>=4.5.0
 pymunk==7.3.1

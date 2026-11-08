@@ -76,6 +76,7 @@ def test_fast_visibility_matches_on_grid_aligned_origins():
             reference.visible_wall_portions(origin, walls, 400.0))
 
 
+@pytest.mark.perf
 def test_fast_visibility_is_much_faster_in_a_dense_maze():
     walls = random_maze_walls(random.Random(7), cells=30, size=33.0)
     origin = (495.0 + 16.5, 495.0 + 16.5)
@@ -91,6 +92,7 @@ def test_fast_visibility_is_much_faster_in_a_dense_maze():
     assert timed(visible_wall_portions) * 4 < timed(reference.visible_wall_portions)
 
 
+@pytest.mark.perf
 def test_visibility_on_curved_maze_stays_fast():
     """Hunter sight on curved rock, with its many short walls, costs at most 4x what square walls cost."""
     import pygame
