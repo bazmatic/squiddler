@@ -99,6 +99,25 @@ def test_only_the_ships_own_kills_pay(spec):
     assert own['rewards'].sum() - ally['rewards'].sum() == pytest.approx(SHAPING.own_kill)
 
 
+def test_the_longest_spell_without_a_kill_counts_only_while_enemies_remain(spec):
+    def ally_kills_one(game, decision):
+        if decision == 60:                                  # a second in (one call a frame)
+            game.encounter.kill(game.roster.alive()[0], SimpleNamespace(source='hunter', weapon_id=None))
+
+    def clears_the_level(game, decision):
+        if decision == 30:                                  # half a second in
+            for enemy in game.roster.alive():
+                game.encounter.kill(enemy, SimpleNamespace(source='player', weapon_id=None))
+
+    still = fly_campaign(1, 300, spec, horizon=2.0, pilot=ScriptedPilot())['result']
+    late = fly_campaign(1, 300, spec, horizon=2.5, pilot=ScriptedPilot(ally_kills_one))['result']
+    cleared = fly_campaign(1, 300, spec, horizon=2.0, pilot=ScriptedPilot(clears_the_level))['result']
+    assert still.enemies_at_start > 1 and still.own_kills == still.ally_kills == 0
+    assert still.max_no_kill_gap == pytest.approx(2.0, abs=0.05)
+    assert late.ally_kills == 1 and late.max_no_kill_gap == pytest.approx(1.5, abs=0.15)
+    assert cleared.cleared and cleared.max_no_kill_gap == pytest.approx(0.5, abs=0.15)
+
+
 def test_scoring_out_ends_the_episode_with_its_penalty(spec, monkeypatch):
     from scoring.system import ScoringSystem
     monkeypatch.setattr(ScoringSystem, 'calculate_current_potential_score',

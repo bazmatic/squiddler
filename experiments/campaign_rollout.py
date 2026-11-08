@@ -35,6 +35,7 @@ class CampaignResult:
     cleared: bool             # no enemy was left when the episode ended
     pickups: int              # crystals the ship collected
     beacon: bool              # the ship fetched an Ally beacon
+    max_no_kill_gap: float    # the longest spell, in episode seconds, with enemies left and no kill by ship or ally
 
 
 def _following(senses, game):
@@ -166,7 +167,9 @@ def fly_campaign(level, seed, spec, horizon=180.0, shaping=CampaignShaping(), gr
         game.ship_pilot = recorder
         scoring, handler = game.scoring, game.collision_handler
         enemies_at_start = len(game.roster.alive())
-        seen = dict(own=0, pickups=0, walls=0)
+        seen = dict(own=0, pickups=0, walls=0, kills=handler.level_kills)
+        # Demo's no-kill skip, measured rather than applied: the clock waits while no enemy is left.
+        last_kill, max_gap = now[0], 0.0
         flight, beacon, end, frames = game.hunter_flight, False, 'horizon', 0
         while frames < int(horizon * FPS):
             game.update(1.0)
@@ -182,6 +185,10 @@ def fly_campaign(level, seed, spec, horizon=180.0, shaping=CampaignShaping(), gr
                 beacon = True
                 recorder.add('beacon', 1)
             flight = game.hunter_flight
+            if handler.level_kills > seen['kills'] or not game.roster.alive():
+                last_kill = now[0]
+            seen['kills'] = handler.level_kills
+            max_gap = max(max_gap, now[0] - last_kill)
             if game.exit_explosion_active:
                 end = 'exited'
                 break
@@ -194,7 +201,7 @@ def fly_campaign(level, seed, spec, horizon=180.0, shaping=CampaignShaping(), gr
         senses, controls, rewards, temperatures = recorder.arrays(shaping, terminal)
         result = CampaignResult(level, seed, end, frames / FPS, enemies_at_start, scoring.enemies_destroyed,
                                 handler.level_kills - scoring.enemies_destroyed, cleared,
-                                scoring.powerup_crystals_collected, beacon)
+                                scoring.powerup_crystals_collected, beacon, max_gap)
     finally:
         _restore(game)
         config.SETTINGS.game.lowGraphics = previous_graphics
