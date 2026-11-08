@@ -218,6 +218,7 @@ def test_build_duel_makes_a_destructible_rules_hunter_and_a_distinct_neural_one(
     assert isinstance(rules.flight.controller, HunterController) and isinstance(vibes.flight.controller, NeuralController)
     assert rules.hunter.health == vibes.hunter.health == 5
     assert not rules.hunter.settings.indestructible and not vibes.hunter.settings.indestructible
+    assert rules.hunter.wall_energy == vibes.hunter.wall_energy == 0      # walls cost neither hunter in the duel
     assert rules.hunter.settings.turn_rate_multiplier == hunter_settings_for('rules').turn_rate_multiplier
     assert vibes.hunter.settings.turn_rate_multiplier == config.SETTINGS.game.neuralTurnRate
     assert rules.hunter.body.colours['color'] != vibes.hunter.body.colours['color']                      # you can tell them apart

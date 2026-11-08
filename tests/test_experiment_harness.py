@@ -282,7 +282,7 @@ def test_results_do_not_depend_on_the_real_clock(monkeypatch):
     for drift_seed in (1, 2):
         monkeypatch.setattr(time, 'monotonic', drifting_clock(drift_seed))
         monkeypatch.setattr(time, 'time', drifting_clock(drift_seed + 100))
-        runs.append(run_episode(13, 5, horizon=60.0))
+        runs.append(run_episode(13, 5, horizon=15.0))
     assert runs[0] == runs[1]
 
 

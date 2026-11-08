@@ -335,6 +335,7 @@ def test_only_movers_that_touch_a_gate_are_changed():
         assert [(m.x, m.y, m.vx, m.vy) for m in movers] == before
 
 
+@pytest.mark.perf
 def test_a_crowd_steps_quickly():
     _, world = world_with([GatePlacement(PIN, motor='cw')])
     gate = world.gates[0]

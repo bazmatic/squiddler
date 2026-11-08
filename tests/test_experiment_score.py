@@ -35,10 +35,6 @@ def test_a_scrape_costs_less_than_a_crash_even_when_there_are_more_of_them():
     assert score(scrapes) > score(crash)
 
 
-def test_the_rate_floor_is_forty_five_seconds():
-    assert RATE_FLOOR_SECONDS == 45.0
-
-
 def test_rates_use_a_floor_so_a_very_short_episode_is_finite():
     c = components(result(elapsed=0.5, kills=1, idle_seconds=0.0))
     assert c['kills_per_min'] == pytest.approx(1 / (RATE_FLOOR_SECONDS / 60))

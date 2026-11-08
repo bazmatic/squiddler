@@ -178,7 +178,11 @@ def test_training_rollouts_end_early_after_a_long_gap_without_a_catch_but_evalua
     assert run(training=False) == 30.
 
 
-def test_a_run_capped_at_stage_one_stays_on_solo_navigation_however_well_it_does():
+def test_a_run_capped_at_stage_one_stays_on_solo_navigation_however_well_it_does(monkeypatch):
+    # The cap is what is tested, not the scripted baseline (flying it took ~30 s): stand in a modest one.
+    monkeypatch.setattr(scenario, '_baselines', {})
+    monkeypatch.setattr(scenario, 'scripted_metrics',
+                        lambda *a, **k: dict(catches_per_minute=1., stuck_fraction=.5))
     args = ppo_neural.build_parser().parse_args(['--task', 'jelly_team', '--jelly-start-lesson', '2', '--jelly-max-stage', '1'])
     state = scenario.initial_curriculum(args)
     great = dict(episodes=96, catches_per_minute=99., stuck_fraction=0., navigation_lesson=2, angular_spread=1.,

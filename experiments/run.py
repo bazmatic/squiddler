@@ -27,6 +27,9 @@ def episode_list(level_set, seeds=SEEDS):
 
 
 def _use_dummy_drivers():
+    # SDL must not turn the pool's SIGTERM into a queued quit event: Pool.terminate() (on leaving the `with`) would
+    # then wait forever for a worker that never polls that queue. learning/run.py's pool does the same.
+    os.environ['SDL_NO_SIGNAL_HANDLERS'] = '1'
     os.environ['SDL_VIDEODRIVER'] = 'dummy'
     os.environ['SDL_AUDIODRIVER'] = 'dummy'
 

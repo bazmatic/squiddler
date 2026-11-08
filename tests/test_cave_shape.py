@@ -161,6 +161,7 @@ def test_rock_and_territory(maze):
     assert shape.territory(open_cell) is None
 
 
+@pytest.mark.perf
 def test_open_cell_fast():
     grid = generated(32)
     shape, _, _ = build(grid)

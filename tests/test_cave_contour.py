@@ -107,7 +107,7 @@ def test_saddle_decided_by_centre():
     samples = SampleGrid(1, 1, 1.0, 1.0, (0.0, 0.0), 1, 1)
     # Rock on TL and BR with centre average 0.5: the rock joins, each segment cuts off an open corner
     joined = _mids(_square_segments(np.array([[1.0, 0.0], [0.0, 1.0]]), samples, 0, 0))
-    assert joined == pytest.approx([(0.25, 0.75), (0.75, 0.25)])
+    assert np.array(joined) == pytest.approx(np.array([(0.25, 0.75), (0.75, 0.25)]))
     # Centre average 0.3: the rock splits, each segment cuts off a rock corner
     split = _mids(_square_segments(np.array([[0.6, 0.0], [0.0, 0.6]]), samples, 0, 0))
     assert split[0][0] < 0.5 and split[0][1] < 0.5 and split[1][0] > 0.5 and split[1][1] > 0.5

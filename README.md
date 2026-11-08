@@ -57,7 +57,8 @@ A controller can be plugged in or unplugged at any time; the keyboard always wor
 ## Develop
 
 ```bash
-venv/bin/python -m pytest tests/                       # run the tests
+venv/bin/python -m pytest -q tests -n auto             # run the tests in parallel (about 1.5 minutes)
+venv/bin/python -m pytest -q tests -m perf             # the wall-clock budgets: alone, on an idle machine
 WINDOWED=1 START_LEVEL=13 NO_POWER_DRAIN=1 ./run.sh    # jump to a level in a window, with no time pressure
 LEVEL_EDITOR=1 ./run.sh                                # adds an EDITOR item to the main menu
 ```

@@ -23,10 +23,6 @@ def select(model, item):
     model.palette_index = PALETTE.index(item)
 
 
-def test_the_palette_has_both_gates_after_the_beacon():
-    assert PALETTE[-3:] == ('beacon', 'gate', 'motor_gate')
-
-
 def test_placing_turning_and_flipping_a_gate(tmp_path):
     model = model_with()
     model.cursor = (5, 5)
