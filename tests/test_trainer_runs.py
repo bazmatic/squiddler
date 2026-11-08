@@ -147,3 +147,33 @@ def test_status_reports_evaluation_and_worker_cleanup_phases(tmp_path):
     (run/'state.json').write_text('{"state":"finished","iteration":0}')
     assert status(tmp_path,processes)['phase']=='finished'
     assert status(tmp_path,[])['state']=='idle'
+
+
+def test_listing_runs_again_does_not_reparse_unchanged_logs_but_picks_up_a_log_that_grew(tmp_path, monkeypatch):
+    from tools.trainer import runs
+    for n in (1, 2, 3):
+        make_run(tmp_path, f'run{n}', iterations=n)
+    parsed = []
+    real = runs._parse_log
+    monkeypatch.setattr(runs, '_parse_log', lambda path: parsed.append(path.parent.name) or real(path))
+    first = list_runs(tmp_path, processes=[])
+    assert sorted(parsed) == ['run1', 'run2', 'run3']
+    parsed.clear()
+    assert list_runs(tmp_path, processes=[]) == first and parsed == []
+    with open(tmp_path / 'run2' / 'train.log', 'a') as log:
+        log.write(LINE.format(i=2) + '\n')
+    again = by_name(list_runs(tmp_path, processes=[]))
+    assert parsed == ['run2'] and again['run2'].iterations_done == 3 and again['run1'].iterations_done == 1
+
+
+def test_cached_listing_equals_a_fresh_parse_and_callers_cannot_corrupt_it(tmp_path):
+    from tools.trainer import runs
+    make_run(tmp_path, 'run1', iterations=3)
+    runs._LOG_CACHE.clear()
+    cold = log_rows(tmp_path / 'run1')
+    cold.pop()
+    cold[0]['score'] = -1
+    warm = log_rows(tmp_path / 'run1')
+    runs._LOG_CACHE.clear()
+    assert len(warm) == 3 and warm[1:] == log_rows(tmp_path / 'run1')[1:]
+    assert list_runs(tmp_path, processes=[]) == list_runs(tmp_path, processes=[])

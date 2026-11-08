@@ -65,16 +65,18 @@ export async function act(button){
     await loadRuns()}
   catch(e){const m=$('status-msg');m.className='msg error';m.textContent=e.message;button.disabled=false}
 }
-export async function loadStatus(){try{S.STATUS=await api('api/status');syncCreature();renderStatus();if(S.FOLLOW&&S.STATUS.run&&S.STATUS.run!==S.VIEW)setView(S.STATUS.run)}catch(e){}}
+// A poll that finds the previous request still pending shares it, so a slow server is never queued up behind itself.
+const once=(key,load)=>()=>S[key]||(S[key]=load().finally(()=>{S[key]=null}));
+export const loadStatus=once('STATUS_REQUEST',async()=>{try{S.STATUS=await api('api/status');syncCreature();renderStatus();if(S.FOLLOW&&S.STATUS.run&&S.STATUS.run!==S.VIEW)setView(S.STATUS.run)}catch(e){}});
 
 // The charts, for the active run unless another one is chosen.
-export async function loadRuns(){
+export const loadRuns=once('RUNS_REQUEST',async()=>{
   try{S.RUNS=await api('api/runs');syncCreature();fillFrom();fillReplay();renderStatus();
     const sel=$('view-run'),keep=S.FOLLOW?'':sel.value;
     sel.innerHTML=`<option value="">The active run</option>`+[...S.RUNS].reverse().map(r=>`<option value="${r.name}">${r.name} (${r.state}, ${r.iterations_done} iterations)</option>`).join('');
     sel.value=keep;renderStart();
     if(S.VIEW&&viewTask()!==S.VIEW_TASK){S.VIEW_TASK=viewTask();render()}}catch(e){}
-}
+});
 export function viewTask(){return taskOf(S.RUNS.find(r=>r.name===S.VIEW))}
 export function setView(run){if(run===S.VIEW)return;S.VIEW=run;S.VIEW_TASK=viewTask();S.D=[];S.CHART_START=savedChartStart(run);$('chart-start').value=String(S.CHART_START);$('rules').innerHTML='';$('rewards').innerHTML='';render();refresh();loadRules()}
 // Restart the dashboard server (training is separate and carries on): wait for it to go down and come back, then reload.

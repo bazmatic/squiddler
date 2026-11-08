@@ -2,6 +2,7 @@
 import datetime
 import json
 import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -37,10 +38,33 @@ def next_run_number(root):
     return int(folders[-1].name[3:]) + 1 if folders else 1
 
 
+_LOG_CACHE = {}               # train.log path -> ((mtime_ns, size), rows): a finished run's log never changes
+_LOG_CACHE_MAX = 1000
+_LOG_LOCK = threading.Lock()
+
+
 def log_rows(run_dir):
-    """The run's complete train.log lines, as numbers (and True/False)."""
+    """The run's complete train.log lines, as numbers (and True/False). Parsed again only when the file changed."""
+    path = Path(run_dir) / 'train.log'
     try:
-        text = (Path(run_dir) / 'train.log').read_text()
+        info = path.stat()
+    except OSError:
+        return []
+    key = (info.st_mtime_ns, info.st_size)
+    with _LOG_LOCK:
+        hit = _LOG_CACHE.get(path)
+    if hit is None or hit[0] != key:           # stat came first, so the rows are at least as new as the key
+        hit = (key, _parse_log(path))
+        with _LOG_LOCK:
+            if len(_LOG_CACHE) >= _LOG_CACHE_MAX and path not in _LOG_CACHE:
+                _LOG_CACHE.clear()
+            _LOG_CACHE[path] = hit
+    return list(hit[1])                        # the row dicts are shared: callers only read them
+
+
+def _parse_log(path):
+    try:
+        text = path.read_text()
     except OSError:
         return []
     lines = text.split('\n')[:-1]          # the last piece has no newline yet: a line still being written

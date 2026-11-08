@@ -59,6 +59,17 @@ assert.match(list,/<td>25<\/td>/);assert.doesNotMatch(list,/<td>26<\/td>/);
 """)
 
 
+def test_overlapping_status_and_run_polls_share_one_request_each():
+    run_js(r"""
+const answers={status:[],runs:[]};
+const p=await page({routes:{'api/status':()=>new Promise(r=>answers.status.push(r)),'api/runs':()=>new Promise(r=>answers.runs.push(r))}});
+const s=[p.runs.loadStatus(),p.runs.loadStatus()],r=[p.runs.loadRuns(),p.runs.loadRuns()];
+await p.settle();assert.equal(answers.status.length,1);assert.equal(answers.runs.length,1);
+answers.status[0]({});answers.runs[0]([]);await Promise.all([...s,...r]);
+p.runs.loadStatus();await p.settle();assert.equal(answers.status.length,2);   // the next poll is a new request
+""")
+
+
 def test_start_sends_the_chosen_checkpoint_and_settings_and_says_what_started():
     run_js(r"""
 const p=await page({routes:{'api/runs':[{...given.run1,name:'run67',checkpoints:['iter0040']}],
