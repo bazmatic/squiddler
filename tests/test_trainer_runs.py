@@ -177,3 +177,10 @@ def test_cached_listing_equals_a_fresh_parse_and_callers_cannot_corrupt_it(tmp_p
     runs._LOG_CACHE.clear()
     assert len(warm) == 3 and warm[1:] == log_rows(tmp_path / 'run1')[1:]
     assert list_runs(tmp_path, processes=[]) == list_runs(tmp_path, processes=[])
+
+
+def test_a_checkpoint_saved_after_the_last_listing_shows_up(tmp_path):
+    make_run(tmp_path, 'run1', iterations=1)
+    assert by_name(list_runs(tmp_path, processes=[]))['run1'].checkpoints == ['iter0000']
+    (tmp_path / 'run1' / 'iter0001.npz').write_bytes(b'')
+    assert by_name(list_runs(tmp_path, processes=[]))['run1'].checkpoints == ['iter0000', 'iter0001']

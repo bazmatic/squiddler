@@ -103,14 +103,33 @@ def _state(path, pid):
     return 'interrupted' if (path / ppo_neural.RESUME_FILE).exists() else 'stopped'
 
 
+_FOLDER_CACHE = {}            # run folder -> ((folder mtime_ns, config mtime_ns, config size), config, checkpoints)
+
+
+def _config_and_checkpoints(path):
+    """The run's config and checkpoint names; a folder's mtime moves when a checkpoint is added or removed."""
+    try:
+        key = (path.stat().st_mtime_ns, *(lambda i: (i.st_mtime_ns, i.st_size))((path / 'config.json').stat()))
+    except OSError:
+        key = None
+    hit = _FOLDER_CACHE.get(path)
+    if key is None or hit is None or hit[0] != key:
+        hit = (key, config_of(path), sorted(p.stem for p in path.glob('iter[0-9]*.npz')))
+        if key is not None:
+            if len(_FOLDER_CACHE) >= _LOG_CACHE_MAX and path not in _FOLDER_CACHE:
+                _FOLDER_CACHE.clear()
+            _FOLDER_CACHE[path] = hit
+    return hit[1], list(hit[2])
+
+
 def read_run(path, root, trained):
-    config = config_of(path)
+    config, checkpoints = _config_and_checkpoints(path)
     total = ((config or {}).get('args') or {}).get('iterations')
     pid = trained.get(path.name)
     rows = log_rows(path)
     return Run(name=path.name, number=int(path.name[3:]), path=path, state=_state(path, pid),
                iterations_done=len(rows), total=total, started_from=_started_from(config, root),
-               checkpoints=sorted(p.stem for p in path.glob('iter[0-9]*.npz')), pid=pid)
+               checkpoints=checkpoints, pid=pid)
 
 
 def list_runs(root=RL_ROOT, processes=None):
