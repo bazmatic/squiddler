@@ -80,7 +80,7 @@ TASKS = {
         Capabilities(fresh_weights=True, actor_damping=False, replay_mode='hooks', settings_scope='listed')),
     # Trained by the hunter's PPO loop; a new run starts from the shipped hunter pilot, migrated to its senses.
     'campaign_hunter': Task('campaign_hunter', 'learning.adapters.campaign_hunter', 'Campaign Hunter',
-        dict(horizon=180.0), CAMPAIGN_REWARD_SETTINGS,
+        dict(horizon=180.0), CAMPAIGN_REWARD_SETTINGS, dashboard='learning.adapters.campaign_dashboard',
         capabilities=Capabilities(fresh_weights=False, replay_mode=None, settings_scope='listed'),
         start='assets/neural/hunter.npz'),
 }
