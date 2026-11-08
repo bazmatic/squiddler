@@ -137,6 +137,9 @@ def fly_campaign(level, seed, spec, horizon=180.0, shaping=CampaignShaping(), gr
     Returns the per-decision `senses`, `controls`, `rewards` and `temperatures`, and the episode's `result`; the
     exit's or the score-out's reward lands on the last decision. `pilot` replaces the policy (for tests): anything
     with decide(game) and on_observed(listener).
+
+    Greedy wins if either `greedy` or `spec.greedy` says so, and StudentSpec defaults to greedy=True: a training job
+    that wants sampled choices must pass a spec built with greedy=False, not just greedy=False here.
     """
     import config
     from hunter.campaign_pilot import CampaignPilot
