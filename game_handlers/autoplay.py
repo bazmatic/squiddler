@@ -21,10 +21,11 @@ class AutoplayDirector:
         """Why the level is over ('no_kill' or 'time'), or None: the safety nets for a ship that never leaves.
 
         The ship leaving the level, through the exit or by scoring out, is the game's to report. A kill is the live
-        enemy count falling. With none left the ship is on its way to the exit, so the no-kill rule waits.
+        enemy count falling. With none left the ship is on its way to the exit, so the no-kill rule waits, and its
+        clock stays fresh: an enemy appearing later gets the full spell before the level is cut short.
         """
         now = self.clock()
-        if enemies_left < self._enemies_seen:
+        if enemies_left < self._enemies_seen or not enemies_left:
             self._last_kill = now
         self._enemies_seen = enemies_left
         if self.no_kill_seconds and enemies_left and now - self._last_kill > self.no_kill_seconds:

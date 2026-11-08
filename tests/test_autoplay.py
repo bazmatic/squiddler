@@ -114,3 +114,18 @@ def test_start_level_restarts_the_no_kill_clock():
     d.start_level(enemy_count=5)
     clock.now += 19
     assert d.end_reason(5) is None
+
+
+def test_an_enemy_appearing_after_a_long_clear_spell_gets_a_fresh_no_kill_clock():
+    clock = Clock()
+    d = kill_director(clock)
+    clock.now += 5
+    assert d.end_reason(0) is None   # all dead: the ship heads for the exit
+    clock.now += 30
+    assert d.end_reason(0) is None
+    clock.now += 0.1
+    assert d.end_reason(1) is None   # a late spawn, long after the last kill
+    clock.now += 19.8
+    assert d.end_reason(1) is None
+    clock.now += 0.3
+    assert d.end_reason(1) == 'no_kill'   # a real stall on the newcomer still ends the level
