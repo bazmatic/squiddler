@@ -131,13 +131,18 @@ def _restore(game):
     harness._clear_overrides(game)
 
 
-def fly_campaign(level, seed, spec, horizon=180.0, shaping=CampaignShaping(), greedy=False, *, pilot=None):
+def fly_campaign(level, seed, spec, horizon=180.0, shaping=CampaignShaping(), greedy=False, *, pilot=None,
+                 policy=None, trace=None, low_graphics=True):
     """One episode on `level` flown by the campaign policy in `spec` (sampled from `spec.sample_seed`, unless it or
     `greedy` asks for its best choices). It ends at the exit, on scoring out, or after `horizon` seconds.
 
     Returns the per-decision `senses`, `controls`, `rewards` and `temperatures`, and the episode's `result`; the
     exit's or the score-out's reward lands on the last decision. `pilot` replaces the policy (for tests): anything
-    with decide(game) and on_observed(listener).
+    with decide(game) and on_observed(listener). `policy`, a loaded policy, is flown in place of `spec.weights` (a
+    replay's start policy, migrated in memory).
+
+    For watching: `trace`, if given, is called each frame, after the game updates, with (seconds, game); and
+    `low_graphics=False` keeps the tentacles' drag physics, which the episode does not depend on.
 
     Greedy wins if either `greedy` or `spec.greedy` says so, and StudentSpec defaults to greedy=True: a training job
     that wants sampled choices must pass a spec built with greedy=False, not just greedy=False here.
@@ -151,12 +156,13 @@ def fly_campaign(level, seed, spec, horizon=180.0, shaping=CampaignShaping(), gr
     if pilot is None:
         greedy = greedy or spec.greedy
         # Loaded afresh each episode: a trainer may rewrite the same weights file between iterations.
-        policy = NeuralPolicy.load(spec.weights, CAMPAIGN_FEATURE_NAMES)
+        if policy is None:
+            policy = NeuralPolicy.load(spec.weights, CAMPAIGN_FEATURE_NAMES)
         pilot = CampaignPilot(policy, spec.decision_frames, greedy=greedy,
                               rng=None if greedy else np.random.default_rng(spec.sample_seed))
     now = [START_TIME]
     previous_graphics, previous_ally = config.SETTINGS.game.lowGraphics, config.SETTINGS.game.hunterPilot
-    config.SETTINGS.game.lowGraphics = True          # tentacle physics: nothing the pilot senses reads it
+    config.SETTINGS.game.lowGraphics = low_graphics  # tentacle physics: nothing the pilot senses reads it
     # A beacon summons the ally with the configured pilot; Jev's reads wall time and calls out, so it is pinned.
     config.SETTINGS.game.hunterPilot = 'neural'
     try:
@@ -189,6 +195,8 @@ def fly_campaign(level, seed, spec, horizon=180.0, shaping=CampaignShaping(), gr
                 last_kill = now[0]
             seen['kills'] = handler.level_kills
             max_gap = max(max_gap, now[0] - last_kill)
+            if trace is not None:
+                trace(frames / FPS, game)
             if game.exit_explosion_active:
                 end = 'exited'
                 break
