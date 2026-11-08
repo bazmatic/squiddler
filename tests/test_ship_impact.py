@@ -86,10 +86,9 @@ def test_enemy_bullet_triggers_player_flinch(game):
 
 
 def test_game_over_waits_for_the_player_death(game, monkeypatch):
-    import time
     start(game, 1)
-    game._start_game_over_sequence(time.time())
-    monkeypatch.setattr(time, 'time', lambda: game.game_over_start_time + 0.5)
+    game._start_game_over_sequence(1000.0)
+    monkeypatch.setattr(game, 'clock', lambda: game.game_over_start_time + 0.5)   # half a second in
     game.update(30)
     assert game.game_over_active and game.ship.is_dying
     assert game.ship.death_timer == 30
