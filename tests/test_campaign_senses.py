@@ -82,6 +82,15 @@ def test_ship_health_is_the_remaining_potential_score(game):  # noqa: F811
     assert 0 < body.health < full
 
 
+def test_banked_kill_bonuses_do_not_lift_health_past_full(game):  # noqa: F811
+    settings = HunterSettings()
+    body = ShipBody(game.ship, game, settings)
+    game.scoring.calculate_current_potential_score = lambda *a, **k: {'potential_score': 250.0}
+    assert body.health == settings.health
+    game.scoring.calculate_current_potential_score = lambda *a, **k: {'potential_score': 40.0}
+    assert 0 < body.health < settings.health
+
+
 def test_the_campaign_vector_of_a_live_level_is_finite(game):  # noqa: F811
     body = ShipBody(game.ship, game, HunterSettings())
     vector = CampaignSenses(HunterSettings()).perceive(body, CampaignSurroundings(game), IDLE, game.clock())

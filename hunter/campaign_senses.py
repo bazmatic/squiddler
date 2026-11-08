@@ -25,10 +25,13 @@ class ShipBody:
 
     @property
     def health(self):
-        """The share of the level's potential score still to be had, on the hunter's health scale."""
+        """How far the level's potential score is from running out (the ship's nearness to death), on the hunter's
+        health scale. Kills bank more than the level's maximum, but that is not safety: the share stops at 1, so the
+        sense says only how close to scoring out the ship is, not how well it has done."""
         game, scoring = self.game, self.game.scoring
         potential = scoring.calculate_current_potential_score(game.clock(), self.ship.fuel, self.ship.ammo)
-        return potential['potential_score'] / scoring.calculate_max_possible_score() * self.settings.health
+        share = potential['potential_score'] / scoring.calculate_max_possible_score()
+        return min(share, 1.0) * self.settings.health
 
     @property
     def upgrade_remaining(self):
