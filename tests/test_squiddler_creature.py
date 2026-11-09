@@ -52,7 +52,7 @@ def test_the_catalogue_builds_a_squiddler():
     squid = squiddler()
     assert isinstance(squid.body, Squid) and squid.radius == 15
     run(squid, 1)
-    assert squid.hit_points == squid.max_hit_points == 3
+    assert squid.hit_points == squid.max_hit_points == 5
 
 
 def test_gun_level_one_strength_is_the_old_squid_gun():

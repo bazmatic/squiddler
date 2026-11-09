@@ -141,7 +141,7 @@
     "traits": {
       "replaysPlayer": {},
       "thrusters": {
-        "speedShare": 0.3
+        "speedShare": 0.45
       },
       "ramsShip": {},
       "gun": {
@@ -157,7 +157,7 @@
         ]
       },
       "takesHits": {
-        "hitPoints": 3
+        "hitPoints": 5
       },
       "dropsPickup": {}
     }

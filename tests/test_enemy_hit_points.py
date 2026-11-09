@@ -31,7 +31,7 @@ def make_squid():
 
 
 def test_squid_takes_several_hits():
-    assert SQUIDDLER_HIT_POINTS == 3
+    assert SQUIDDLER_HIT_POINTS == 5
     squid = make_squid()
     encounter(squid).step(1.0)
     assert squid.hit_points == squid.max_hit_points == SQUIDDLER_HIT_POINTS

@@ -28,7 +28,7 @@ def test_the_catalogue_builds_a_squidlet():
     assert squidlet.hit_points == squidlet.max_hit_points == 1
 
 
-@pytest.mark.parametrize('kind, share', [('baby', 0.5), ('replay', 0.3)])
+@pytest.mark.parametrize('kind, share', [('baby', 0.5), ('replay', 0.45)])
 def test_a_squidlet_flies_faster_than_a_squiddler(kind, share):
     squid = creatures.build(kind, POS, 1, thrusting_recorder())
     squid.angle = 0.0
