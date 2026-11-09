@@ -53,11 +53,6 @@ LABELS = {
 
 from learning.inchworm_rewards import DEFAULTS as INCHWORM_REWARD_DEFAULTS
 LABELS.update({f'inchworm_{name}': ('Rewards', 'Inchworm ' + name.replace('_', ' ')) for name in INCHWORM_REWARD_DEFAULTS})
-from learning.flocker_rewards import DEFAULTS as FLOCKER_REWARD_DEFAULTS
-LABELS.update({f'flocker_{name}': ('Rewards', 'Flocker ' + name.replace('_', ' ')) for name in FLOCKER_REWARD_DEFAULTS})
-LABELS.update({'flocker_bunch_penalty': ('Rewards', 'Teammate contact penalty'),
-               'flocker_bunch_distance': ('Rewards', 'Legacy proximity distance'),
-               'flocker_contact_only': ('Rewards', 'Contact only (1=yes, 0=legacy proximity)')})
 from learning.reward_table import tables as _reward_tables
 for _table in _reward_tables().values():
     LABELS.update(_table.labels())

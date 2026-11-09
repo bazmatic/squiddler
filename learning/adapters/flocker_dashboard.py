@@ -1,6 +1,6 @@
 """Flocker outcome, coordination and rest metrics."""
-from learning.dashboard import Layout, Metric, RewardRule
-from learning.flocker_rewards import DEFAULTS, recovered_settings
+from learning.dashboard import Layout, Metric
+from learning.flocker_rewards import TABLE, recovered_settings  # noqa: F401 (recovered_settings: see learning.dashboard)
 
 METRICS = tuple(Metric(key,title,description,unit='%' if key in ('perch_success','accuracy','aim_accuracy') else '',section=section,higher_is_better=better) for key,title,description,section,better in (
     ('hits_per_minute','Hits / minute','Accepted projectile damage per minute.','Combat',True),
@@ -25,21 +25,7 @@ METRICS = tuple(Metric(key,title,description,unit='%' if key in ('perch_success'
 LAYOUT = Layout(sections=('Training','Combat','Coordination','Flight','Perching','Policy'),
                 strip=('hits_per_minute','useful_volleys_per_minute','survival_fraction'))
 HIDDEN = ('seconds','episodes','shots','hits','landed_hits','non_damaging_hits','volleys','kills')
-REWARD_RULES = tuple(RewardRule(n,'Teammate contact penalty' if n=='bunch_penalty' else n.replace('_',' ').capitalize(),('Credit for improving aim toward a visible target’s predicted intercept; target motion alone earns nothing.'
-                  if n=='aim_progress_reward' else 'Cost per actual wall impact, charged to the colliding bird; gentle perching costs nothing.'
-                  if n=='wall_collision_penalty' else
-                  'Per hit point a Flocker loses to incoming fire (a hit does half a point at stage 5 full strength), charged to the bird hit.'
-                  if n=='damage_penalty' else
-                  'Per decision a bird is in the line of fire: a hostile shot will pass within hitting distance in the next second.'
-                  if n=='threat_penalty' else
-                  'Legacy proximity threshold in pixels; ignored when contact_only is 1.'
-                  if n=='bunch_distance' else
-                  '1 penalizes only touching or overlapping; 0 retains the legacy proximity rule. Movement is not blocked.'
-                  if n=='contact_only' else
-                  'Per decision while touching or overlapping a teammate; once per bird regardless of neighbour count.'
-                  if n=='bunch_penalty' else 'Run-scoped Flocker reward coefficient.'),
-                               'shaping' if n in ('bunch_distance','contact_only') else 'penalty' if n.endswith(('cost','penalty')) else 'reward',(), 'flocker_'+n,v)
-                     for n,v in DEFAULTS.items())
+REWARD_RULES = TABLE.reward_rules()     # from the Flocker's reward table (learning/flocker_rewards.py)
 
 
 def stage(row):

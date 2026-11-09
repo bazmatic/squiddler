@@ -555,7 +555,7 @@ def test_weaker_training_bullets_really_do_half_damage_to_flockers():
             shot=Projectile(bird.get_pos(),0.,source='hunter')
             shot.vx=shot.vy=0.
             env.world.projectiles=[shot]
-            env.fly_shots(Counter())
+            env.fly_shots(env.event_rows())
             assert bird.hit_points==remaining
             assert bird.active==(stage==5)
         finally:
@@ -575,8 +575,9 @@ def test_aim_accuracy_counts_both_landed_shots_when_immunity_blocks_second_damag
             shot.vx=shot.vy=0.;shot.actor_id=bird.agent_id;shots.append(shot)
         env.world.projectiles=shots
         env.counts['shots']=2
-        rewards=Counter();health=ship.health
-        env.fly_shots(rewards)
+        rows=env.event_rows();health=ship.health
+        env.fly_shots(rows)
+        rewards=env.paid(rows)
         events=env.events();summary=scenario.metrics([events])
         assert all(not shot.active for shot in shots)
         assert health-ship.health==1
@@ -671,17 +672,16 @@ def test_checkpoints_without_aim_inputs_keep_their_behaviour_when_they_are_added
 
 
 def land_shots(env,count):
-    from collections import defaultdict
     from entities.projectile import Projectile
     bird=env.team.members()[0]
-    rewards=defaultdict(float)
+    rows=env.event_rows()
     for _ in range(count):
         t=env.targets[0]
         shot=Projectile(t.get_pos(),0.,is_enemy=True,source='enemy')
         shot.actor_id=bird.agent_id
         env.world.projectiles.append(shot)
-        env.fly_shots(rewards)
-    return rewards
+        env.fly_shots(rows)
+    return env.paid(rows)
 
 
 def test_aiming_drill_targets_take_any_number_of_hits_and_stay_where_they_are():
@@ -765,7 +765,7 @@ def test_combat_opens_against_a_weaker_hunter_but_held_out_trials_face_the_full_
         bird=env.team.members()[0];bird.x,bird.y=400.,300.
         shot=incoming_fire(bird,0.,0.)
         env.world.projectiles=[shot]
-        env.fly_shots(Counter())
+        env.fly_shots(env.event_rows())
         assert bird.hit_points==pytest.approx(.875)
     finally:
         env.close()

@@ -135,7 +135,6 @@ def test_overlapping_birds_can_fly_through_each_other_without_bouncing():
 
 
 def test_separated_bird_earns_regrouping_credit_without_an_adversary():
-    from collections import defaultdict
     env,a,b,_=collision_scene()
     try:
         env.world.ship=env.world.hunter=None
@@ -146,11 +145,12 @@ def test_separated_bird_earns_regrouping_credit_without_an_adversary():
         a.vx,a.vy=2.,0.
         b.vx=b.vy=0.
         env.rewards['cohesion_reward']=.002
-        toward=defaultdict(float)
+        toward=env.event_rows()
         env.sample_motion(toward)
         a.vx=-2.
-        away=defaultdict(float)
+        away=env.event_rows()
         env.sample_motion(away)
+        toward,away=env.paid(toward),env.paid(away)
         assert toward[a.agent_id]>away[a.agent_id]
         assert toward[a.agent_id]>0.
         assert toward[b.agent_id]==0.
@@ -159,7 +159,6 @@ def test_separated_bird_earns_regrouping_credit_without_an_adversary():
 
 
 def test_regrouping_credit_does_not_pull_birds_into_a_wall_or_toward_unseen_birds():
-    from collections import defaultdict
     env,a,b,_=collision_scene()
     try:
         env.rewards['cohesion_reward']=.02
@@ -169,19 +168,18 @@ def test_regrouping_credit_does_not_pull_birds_into_a_wall_or_toward_unseen_bird
         b.x,b.y=450.,300.
         a.vx,a.vy=2.,0.
         b.vx=b.vy=0.
-        credit=defaultdict(float)
+        credit=env.event_rows()
         env.sample_motion(credit)
-        assert credit[a.agent_id]==0.
+        assert env.paid(credit)[a.agent_id]==0.
         env.world.maze=open_maze()
         b.x=750.
         env.sample_motion(credit)
-        assert credit[a.agent_id]==0.
+        assert env.paid(credit)[a.agent_id]==0.
     finally:
         env.close()
 
 
 def test_nearby_cohesion_rewards_velocity_alignment_not_just_proximity():
-    from collections import defaultdict
     import pytest
     env,a,b,_=collision_scene()
     try:
@@ -196,17 +194,17 @@ def test_nearby_cohesion_rewards_velocity_alignment_not_just_proximity():
         credits=[]
         for velocity in ((1.,0.),(1.,1.),(0.,2.),(-2.,0.),(0.,0.)):
             b.vx,b.vy=velocity
-            credit=defaultdict(float)
+            credit=env.event_rows()
             env.sample_motion(credit)
-            credits.append(credit[a.agent_id])
+            credits.append(env.paid(credit)[a.agent_id])
         assert credits[0]==pytest.approx(.02/6)
         assert credits[0]>credits[1]>credits[2]
         assert credits[2:]==[0.,0.,0.]
         a.vx=a.vy=0.
         b.vx=2.
-        credit=defaultdict(float)
+        credit=env.event_rows()
         env.sample_motion(credit)
-        assert credit[a.agent_id]==0.
+        assert env.paid(credit)[a.agent_id]==0.
     finally:
         env.close()
 

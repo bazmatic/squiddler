@@ -158,9 +158,9 @@ class RewardTable:
         """Per decision (or per agent), the points its event counts earn: the sum over paying terms of each term's
         weight times its event's count, matched by name. `rows` are dicts of event counts (as row() makes); a row
         missing a term's event, or holding an event no term pays on, is an error, so a count and its points cannot
-        drift apart."""
+        drift apart. `values` may hold more than the table's settings (a task's own extras): only the table's are read."""
         import numpy as np
-        values = self.validate(values)
+        values = self.validate({key: value for key, value in values.items() if key in self.by_key})
         events = set(self.events)
         rewards = np.zeros(len(rows), dtype=np.float64)
         for i, row in enumerate(rows):
