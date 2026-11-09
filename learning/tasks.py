@@ -4,7 +4,6 @@ import importlib
 
 from learning.inchworm_rewards import SETTINGS as INCHWORM_REWARD_SETTINGS
 from learning.flocker_rewards import SETTINGS as FLOCKER_REWARD_SETTINGS
-from learning.jelly_rewards import SETTINGS as JELLY_REWARD_SETTINGS
 
 
 REPLAY_MODES = ('hooks', 'builtin', None)
@@ -86,9 +85,10 @@ TASKS = {
     'jelly_team': Task('jelly_team', 'learning.adapters.jelly_scenario', 'Jelly team',
         dict(horizon=60.0, workers=4, iterations=10000, bootstrap_episodes=0,
              jelly_boredom_penalty=.02, jelly_no_catch_timeout=25.),
-        ('budget_seconds','bootstrap_episodes','bootstrap_epochs','seed') + JELLY_REWARD_SETTINGS, 'learning.replay',
+        ('budget_seconds','bootstrap_episodes','bootstrap_epochs','seed'), 'learning.replay',
         'learning.adapters.jelly_replay', 'learning.adapters.jelly_dashboard',
-        Capabilities(fresh_weights=True, actor_damping=False, replay_mode='hooks', settings_scope='listed')),
+        Capabilities(fresh_weights=True, actor_damping=False, replay_mode='hooks', settings_scope='listed'),
+        rewards='learning.jelly_rewards'),
     # Trained by the hunter's PPO loop; a new run starts from the shipped hunter pilot, migrated to its senses.
     'campaign_hunter': Task('campaign_hunter', 'learning.adapters.campaign_hunter', 'Campaign Hunter',
         dict(horizon=180.0), dashboard='learning.adapters.campaign_dashboard', rewards='learning.campaign_rewards',

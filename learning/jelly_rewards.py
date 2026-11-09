@@ -1,39 +1,87 @@
-"""Jelly reward defaults and their manifest locations, shared by training, replay and the dashboard."""
-DEFAULTS = {
-    'catch_reward': 10., 'team_catch_share': .25, 'progress_reward': .002, 'stuck_penalty': .05,
-    'flank_reward': .005, 'flank_range': 200., 'bunch_distance': 40., 'bunch_penalty': .01,
-    'ship_hit_reward': 4., 'ship_kill_reward': 10., 'team_ship_share': .25,
-    'death_penalty': 5., 'team_death_share': .25,
-    'boredom_penalty': 0., 'boredom_window': 2., 'boredom_distance': 10.,
-    'start_lesson': 0.,       # navigation lesson a run begins in (0 open, 1 barrier, 2 cave); a trained start may skip ahead
-    'dagger_weight': .5,      # how hard training pulls the policy toward the teacher's moves in its own states (0: no teacher)
-    'max_stage': 3.,          # the last stage a run may be promoted to (1 keeps it on solo navigation)
-    'no_catch_timeout': 0.,   # training rollouts only: end an episode this many seconds after its last catch (0: never)
-}
+"""The Jelly team's reward settings, declared once (see learning.reward_table); shared by training, replay and the
+dashboard. No pygame here.
+
+Each paying term pays on one event that learning.adapters.jelly_scenario counts per Jelly per decision. A Jelly's
+penalties are sizes, subtracted from its reward, and its manifest records them as negative reward terms. The run
+settings at the end (a lesson, the teacher's weight, limits) are kept with the rewards but pay nothing.
+"""
+from learning.reward_table import RewardTable, RewardTerm
+
+TABLE = RewardTable((
+    RewardTerm('boredom_penalty', 0., 'Boredom: idle',
+               'Per decision after remaining inside the configured movement radius for the full grace window, even '
+               'while braking. Own catches or ship hits reset the grace period.',
+               'bored_decisions', 'penalty', (1, 2, 3), ('rewards', 'boredom_per_decision'), rule='boredom'),
+    RewardTerm('boredom_window', 2., 'Idle grace window',
+               'Seconds of little movement before the boredom penalty begins; turning and moving detours are allowed.',
+               kind='shaping', stages=(1, 2, 3), manifest=('boredom', 'window_seconds')),
+    RewardTerm('boredom_distance', 10., 'Idle movement radius',
+               'Pixel radius of the recent position window; independent of target direction and acceleration.',
+               kind='shaping', stages=(1, 2, 3), manifest=('boredom', 'distance_pixels')),
+    RewardTerm('start_lesson', 0., 'Start lesson',
+               'Navigation lesson a run begins in (0 open, 1 barrier, 2 cave); a trained start may skip ahead.',
+               kind='setting', manifest=('training_limits', 'start_lesson')),
+    RewardTerm('dagger_weight', .5, 'Teacher weight',
+               "How hard training pulls the policy toward the teacher's moves in its own states (0: no teacher).",
+               kind='setting', manifest=('training_limits', 'dagger_weight')),
+    RewardTerm('max_stage', 3., 'Last stage',
+               'The last stage a run may be promoted to (1 keeps it on solo navigation).',
+               kind='setting', manifest=('training_limits', 'max_stage')),
+    RewardTerm('no_catch_timeout', 0., 'No-catch timeout',
+               'Training rollouts only: end an episode this many seconds after its last catch (0: never).',
+               kind='setting', manifest=('training_limits', 'no_catch_timeout_seconds')),
+    RewardTerm('catch_reward', 10., 'Catch',
+               'To the Jelly that touches the target with its body; the target reappears at least 300 px from every '
+               'Jelly. Stages 1-2 (and the stage-3 retention cases).',
+               'catches', 'reward', (1, 2, 3), ('rewards', 'catch'), rule='catch'),
+    RewardTerm('team_catch_share', .25, 'Teammate catch share',
+               "Share of the catch reward every other living Jelly gets for a teammate's catch.",
+               kind='shaping', stages=(1, 2, 3), manifest=('rewards', 'team_catch_share')),
+    RewardTerm('progress_reward', .002, 'Closing on the quarry',
+               'Per pixel a Jelly closes on its quarry (the target, or the ship at stage 3) over a decision, about 0.03 '
+               'at full speed; moving away costs the same.',
+               'closing_pixels', 'reward', (1, 2, 3), ('rewards', 'progress_per_pixel'), rule='progress'),
+    RewardTerm('stuck_penalty', .05, 'Stuck',
+               'Per decision spent stuck: pushing throughout the last second while moving less than 10 px (0.5 per '
+               'second at the default).',
+               'stuck_decisions', 'penalty', (1, 2, 3), ('rewards', 'stuck_per_decision'), rule='stuck'),
+    RewardTerm('flank_reward', .005, 'Flanking',
+               'Per decision to every living Jelly, times the flank spread (0 all from one side, 1 an even ring) of the '
+               'Jellies within the flank range of the quarry, when two or more are that close.',
+               'flank_spread', 'reward', (2, 3), ('rewards', 'stage2_flank_per_decision'), rule='flank'),
+    RewardTerm('flank_range', 200., 'Flank range',
+               'px: Jellies this close to the quarry count towards its reward spread (the chart uses a fixed 200 px '
+               'benchmark).',
+               kind='shaping', stages=(2, 3), manifest=('flank', 'range')),
+    RewardTerm('bunch_distance', 40., 'Bunching distance',
+               'px between Jelly centres for the shaping penalty (the chart uses a fixed 40 px benchmark; about two '
+               'body widths).',
+               kind='shaping', stages=(2, 3), manifest=('flank', 'bunch_distance')),
+    RewardTerm('bunch_penalty', .01, 'Bunching',
+               'Per decision, to each Jelly of every pair closer than the bunching distance.',
+               'bunched_pairs', 'penalty', (2, 3), ('rewards', 'stage2_bunch_per_pair_decision'), rule='bunch'),
+    RewardTerm('ship_hit_reward', 4., 'Ship hit',
+               "To the Jelly whose touch costs the training ship a hull point (none during the hull's immunity after "
+               "a hit).",
+               'ship_hits', 'reward', (3,), ('rewards', 'stage3_ship_hit'), rule='ship_hit'),
+    RewardTerm('ship_kill_reward', 10., 'Ship kill',
+               "On top of the hit reward, to the Jelly whose touch takes the ship's last hull point.",
+               'ship_kills', 'reward', (3,), ('rewards', 'stage3_ship_kill'), rule='ship_kill'),
+    RewardTerm('team_ship_share', .25, 'Teammate ship share',
+               "Share of a teammate's ship hit and kill rewards every other living Jelly gets.",
+               kind='shaping', stages=(3,), manifest=('rewards', 'stage3_team_ship_share')),
+    RewardTerm('death_penalty', 5., 'Jelly killed',
+               'To a Jelly the ship kills, on the decision it dies.',
+               'deaths', 'penalty', (3,), ('rewards', 'stage3_death'), rule='death'),
+    RewardTerm('team_death_share', .25, 'Teammate death share',
+               'Share of the death penalty every surviving Jelly loses for each teammate lost.',
+               kind='shaping', stages=(3,), manifest=('rewards', 'stage3_team_death_share')),
+), prefix='jelly_', help_prefix='Jelly: ', signed=False)
+
+DEFAULTS = TABLE.defaults
 # setting -> (manifest block, field, multiplier); penalties are recorded as negative reward terms.
-MANIFEST_FIELDS = {
-    'boredom_penalty': ('rewards', 'boredom_per_decision', -1),
-    'boredom_window': ('boredom', 'window_seconds', 1),
-    'boredom_distance': ('boredom', 'distance_pixels', 1),
-    'start_lesson': ('training_limits', 'start_lesson', 1),
-    'dagger_weight': ('training_limits', 'dagger_weight', 1),
-    'max_stage': ('training_limits', 'max_stage', 1),
-    'no_catch_timeout': ('training_limits', 'no_catch_timeout_seconds', 1),
-    'catch_reward': ('rewards', 'catch', 1),
-    'team_catch_share': ('rewards', 'team_catch_share', 1),
-    'progress_reward': ('rewards', 'progress_per_pixel', 1),
-    'stuck_penalty': ('rewards', 'stuck_per_decision', -1),
-    'flank_reward': ('rewards', 'stage2_flank_per_decision', 1),
-    'flank_range': ('flank', 'range', 1),
-    'bunch_distance': ('flank', 'bunch_distance', 1),
-    'bunch_penalty': ('rewards', 'stage2_bunch_per_pair_decision', -1),
-    'ship_hit_reward': ('rewards', 'stage3_ship_hit', 1),
-    'ship_kill_reward': ('rewards', 'stage3_ship_kill', 1),
-    'team_ship_share': ('rewards', 'stage3_team_ship_share', 1),
-    'death_penalty': ('rewards', 'stage3_death', -1),
-    'team_death_share': ('rewards', 'stage3_team_death_share', 1),
-}
-SETTINGS = tuple(f'jelly_{name}' for name in DEFAULTS)
+MANIFEST_FIELDS = TABLE.manifest_fields()
+SETTINGS = TABLE.settings
 
 
 def from_args(args):
