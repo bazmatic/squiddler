@@ -15,7 +15,7 @@ from experiments import harness
 from experiments.harness import FPS
 from hunter.campaign_senses import CAMPAIGN_FEATURE_NAMES, CAMPAIGN_HIT_POINT_CELLS
 from hunter.maze_route import MazeRoutes
-from learning.campaign_rewards import CampaignShaping
+from learning.campaign_rewards import TABLE, CampaignShaping
 
 PROGRESS_CAP = 0.2         # the most ground one decision can pay or cost, in maze widths
 IDLE_SPEED = 1.0           # a ship slower than this and not thrusting is idling
@@ -23,7 +23,6 @@ FOLLOW_DEGREES = 45.0      # the ship's flight follows a compass when its veloci
 START_TIME = 1000.0        # the episode clock's first reading, in seconds
 
 _INDEX = {name: i for i, name in enumerate(CAMPAIGN_FEATURE_NAMES)}
-_EVENTS = ('own_kills', 'pickups', 'beacon', 'wall_crashes', 'following', 'idle', 'exit_progress', 'hunt_progress', 'thrusting', 'shots')
 
 
 @dataclass(frozen=True)
@@ -75,7 +74,7 @@ class _Recorder:
         controller = getattr(self.pilot, 'controller', None)
         self.temperatures.append(getattr(controller, 'temperature', 1.0))
         self._pay_progress()
-        row = dict.fromkeys(_EVENTS, 0)
+        row = TABLE.row()              # the counts each reward term pays on (learning.campaign_rewards)
         row['following'] = int(_following(self.senses[-1], self.game))
         self.events.append(row)
 
@@ -121,17 +120,24 @@ class _Recorder:
         if count and self.events:
             self.events[-1][event] += count
 
-    def arrays(self, shaping, terminal):
-        n = min(len(self.senses), len(self.controls))
+    def _complete(self):
+        """Decisions with both senses and controls: the episode's steps."""
+        return min(len(self.senses), len(self.controls))
+
+    def finish(self, end, cleared):
+        """Count how the episode ended on its last complete decision."""
+        n = self._complete()
+        if n:
+            last = self.events[n - 1]
+            last['exited'] += int(end == 'exited')
+            last['cleared_exit'] += int(end == 'exited' and cleared)
+            last['scored_out'] += int(end == 'scored_out')
+
+    def arrays(self, shaping):
+        n = self._complete()
         senses = np.asarray(self.senses[:n], dtype=np.float32).reshape(n, len(CAMPAIGN_FEATURE_NAMES))
         controls = np.asarray(self.controls[:n], dtype=np.int8).reshape(n, 3)
-        events = np.asarray([[row[e] for e in _EVENTS] for row in self.events[:n]], dtype=np.float64).reshape(n, len(_EVENTS))
-        weights = np.array([shaping.own_kill, shaping.pickup, shaping.beacon, shaping.wall_crash,
-                            shaping.compass_following, shaping.idle, shaping.exit_progress,
-                            shaping.hunt_progress, shaping.thrust, shaping.shot])
-        rewards = events @ weights
-        if n:
-            rewards[-1] += terminal
+        rewards = TABLE.pay(self.events[:n], vars(shaping))
         temperatures = np.asarray(self.temperatures[:n], dtype=np.float32)
         return senses, controls, rewards.astype(np.float32), temperatures
 
@@ -244,9 +250,8 @@ def fly_campaign(level, seed, spec, horizon=180.0, shaping=CampaignShaping(), gr
                 end = 'scored_out'
                 break
         cleared = not game.roster.alive()
-        terminal = {'exited': shaping.exit + (shaping.cleared_exit if cleared else 0.0),
-                    'scored_out': shaping.score_out, 'horizon': 0.0}[end]
-        senses, controls, rewards, temperatures = recorder.arrays(shaping, terminal)
+        recorder.finish(end, cleared)
+        senses, controls, rewards, temperatures = recorder.arrays(shaping)
         result = CampaignResult(level, seed, end, frames / FPS, enemies_at_start, scoring.enemies_destroyed,
                                 handler.level_kills - scoring.enemies_destroyed, cleared,
                                 scoring.powerup_crystals_collected, beacon, max_gap, scoring.wall_collisions, scoring.shots_fired)
