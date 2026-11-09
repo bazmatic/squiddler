@@ -161,8 +161,8 @@ def test_every_screen_and_palette_item_draws(editor):
     for index, item in enumerate(PALETTE):
         model.cursor, model.palette_index = free[index * (len(free)//len(PALETTE))], index
         assert model.place(), item                                # every item lands, so every sprite is drawn
-        editor.update(1.0)
-        editor.draw()
+    editor.update(1.0)
+    editor.draw()                                                 # once with them all, not once per item (~17 s)
     editor.model.dirty = True
     editor.handle_key(key(pygame.K_ESCAPE))
     editor.draw()                                                # with the confirmation showing

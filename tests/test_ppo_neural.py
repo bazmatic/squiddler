@@ -1,3 +1,5 @@
+import functools
+
 import numpy as np
 import pytest
 
@@ -82,13 +84,20 @@ def test_pack_pads_episodes_and_masks_the_padding():
     assert batch['rewards'][0, 0].item() == pytest.approx(ppo.REWARD_SCALE)
 
 
-def test_ppo_raises_the_probability_of_a_rewarded_action():
+@functools.cache
+def free_learning():
+    """(start, end) right-turn probabilities of a deterministic unanchored run, shared by the tests below."""
     start, end, _, _ = learn(kl_coef=0.0)
+    return start, end
+
+
+def test_ppo_raises_the_probability_of_a_rewarded_action():
+    start, end = free_learning()
     assert end > max(0.7, start + 0.25)
 
 
 def test_the_kl_anchor_holds_the_policy_near_where_it_started():
-    start, free, _, _ = learn(kl_coef=0.0)
+    start, free = free_learning()
     _, anchored, _, _ = learn(kl_coef=50.0)
     assert anchored < free - 0.2 and abs(anchored - start) < 0.15
 

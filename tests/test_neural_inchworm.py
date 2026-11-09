@@ -809,8 +809,10 @@ def test_every_batch_after_crawl_keeps_a_quarter_of_its_episodes_on_crawl():
     assert {c['stage'] for c in scenario.training_cases(0,24,1,curriculum=dict(stage=1))} == {1}     # Crawl itself is unchanged
 
 
+CROSSING_SEED = 2000000906    # one of the seeds 2000000900-11 where the scripted stride crosses the gap (and quickly)
+
+
 def test_gap_lesson_puts_the_goal_on_a_second_island_that_a_worm_can_sometimes_cross():
-    crossed = 0
     for seed in range(2000000900,2000000912):
         env = scenario.environment(horizon=60.,scripted=True,rewards=dict(DEFAULTS))
         env.reset(seed,stage=9,level=4)
@@ -823,11 +825,14 @@ def test_gap_lesson_puts_the_goal_on_a_second_island_that_a_worm_can_sometimes_c
         goal_along = (env.world.worm_goal[0]-env.origin[0])*env.forward[0]+(env.world.worm_goal[1]-env.origin[1])*env.forward[1]
         assert goal_along > second[0][0]                           # the marker is on the far island
         assert env.worm.get_pos() != env.world.worm_goal and env.distance() > 100.
-        while not env.finished:
-            env.step({0:(0.,)*8})
-        crossed += env.success
         env.close()
-    assert crossed >= 1                                            # solvable: even the scripted stride sometimes makes it
+    # Solvable: even the scripted stride (deterministic) makes it on some seeds. Flying all twelve took ~27 s.
+    env = scenario.environment(horizon=60.,scripted=True,rewards=dict(DEFAULTS))
+    env.reset(CROSSING_SEED,stage=9,level=4)
+    while not env.finished:
+        env.step({0:(0.,)*8})
+    assert env.success
+    env.close()
     assert 9 in scenario.CURRICULUM and 9 not in scenario.DEMONSTRATED
 
 
@@ -836,7 +841,11 @@ def test_the_bundled_inchworm_brain_loads_and_drives_a_game_worm(monkeypatch):
     monkeypatch.delenv('INCHWORM_POLICY')                      # as in the game: no override, so the bundled brain
     c,enc = setting()
     assert c.worm_driver is not None
+    gripping = 0
     for _ in range(120):
         enc.step(1.)
-    assert c.active and c.worm_driver.state.any() and (c.worm_front_grip or c.worm_rear_grip)
+        gripping += bool(c.worm_front_grip or c.worm_rear_grip)
+    # The brain samples its actions, so any single frame may catch both ends lifted mid-stride (this used to flake
+    # about 1 run in 3). A worm the brain is really driving holds the wall for most of the run (~95 of 120 frames).
+    assert c.active and c.worm_driver.state.any() and gripping > 60
     enc.close()

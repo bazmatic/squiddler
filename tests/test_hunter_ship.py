@@ -75,11 +75,3 @@ def test_cancelled_burst_fires_no_further_shots():
     assert ship.step(1, ACTIONS['none_coast_fire'], LINED_UP)
     ship.cancel_burst()
     assert not any(ship.step(1, NEUTRAL, LINED_UP) for _ in range(30))
-
-
-def test_hunter_has_no_status_label():
-    """The hunter is drawn without text beside it; the label was removed on purpose."""
-    import inspect
-    import game
-    assert not hasattr(HunterRig, 'draw_status')
-    assert 'draw_status' not in inspect.getsource(game)

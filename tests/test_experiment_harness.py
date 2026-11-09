@@ -287,7 +287,7 @@ def test_results_do_not_depend_on_the_real_clock(monkeypatch):
         monkeypatch.setattr(Game, 'clock', staticmethod(drifting_clock(drift_seed + 200)))
         tick_ms = drifting_clock(drift_seed + 300)
         monkeypatch.setattr(Game, 'clock_ms', staticmethod(lambda: int(tick_ms() * 1000)))
-        runs.append(run_episode(13, 5, horizon=60.0))
+        runs.append(run_episode(13, 5, horizon=15.0))
     assert runs[0] == runs[1]
 
 

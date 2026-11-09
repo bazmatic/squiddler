@@ -14,11 +14,17 @@ def undo_harness_side_effects():
     harness.reset()
 
 
-@pytest.fixture
-def spec(tmp_path):
-    path = tmp_path / 'p.npz'
+@pytest.fixture(scope='module')
+def spec(tmp_path_factory):
+    path = tmp_path_factory.mktemp('rollout') / 'p.npz'
     random_policy(0).save(path)
     return StudentSpec(weights=str(path), decision_frames=6, turn_rate=1.0, greedy=False, sample_seed=1)
+
+
+@pytest.fixture(scope='module')
+def long_flight(spec):
+    """One 50 s rollout shared by the tests that only read it (each used to fly its own, ~4 s apiece)."""
+    return rollout.fly_rollout(14, 300, spec, horizon=50.0)
 
 
 def test_a_rollout_has_aligned_senses_controls_and_rewards(spec):
@@ -28,15 +34,15 @@ def test_a_rollout_has_aligned_senses_controls_and_rewards(spec):
     assert r['controls'].shape[1] == 3 and set(np.unique(r['controls'][:, 0])) <= {0, 1, 2}
 
 
-def test_the_rewards_add_up_to_the_lab_score_times_minutes(spec):
-    r = rollout.fly_rollout(14, 300, spec, horizon=50.0)
+def test_the_rewards_add_up_to_the_lab_score_times_minutes(long_flight):
+    r = long_flight
     result = r['result']
     assert result.elapsed >= 45.0          # the lab's floor on short episodes does not apply
     assert float(r['rewards'].sum()) == pytest.approx(score(result) * result.elapsed / 60.0, rel=1e-4, abs=1e-3)
 
 
-def test_collisions_and_idling_cost_and_kills_pay(spec):
-    r = rollout.fly_rollout(14, 300, spec, horizon=50.0)
+def test_collisions_and_idling_cost_and_kills_pay(long_flight):
+    r = long_flight
     result = r['result']
     if result.kills == 0:
         assert not (r['rewards'] > 0).any()              # nothing pays without a kill
@@ -69,8 +75,8 @@ def test_the_weights_file_is_not_modified_by_flying(spec):
     assert open(spec.weights, 'rb').read() == before
 
 
-def test_a_wall_scale_multiplies_only_the_wall_penalty(spec):
-    plain = rollout.fly_rollout(14, 300, spec, horizon=50.0)
+def test_a_wall_scale_multiplies_only_the_wall_penalty(spec, long_flight):
+    plain = long_flight
     heavy = rollout.fly_rollout(14, 300, spec, horizon=50.0, wall_scale=5.0)
     assert heavy['result'] == plain['result']                          # flying is unchanged
     from experiments.score import Weights
@@ -78,8 +84,8 @@ def test_a_wall_scale_multiplies_only_the_wall_penalty(spec):
     assert float(plain['rewards'].sum() - heavy['rewards'].sum()) == pytest.approx(extra, rel=1e-4, abs=1e-3)
 
 
-def test_a_hit_scale_multiplies_only_the_enemy_hit_penalty(spec):
-    plain = rollout.fly_rollout(14, 300, spec, horizon=50.0)
+def test_a_hit_scale_multiplies_only_the_enemy_hit_penalty(spec, long_flight):
+    plain = long_flight
     heavy = rollout.fly_rollout(14, 300, spec, horizon=50.0, hit_scale=5.0)
     assert heavy['result'] == plain['result']
     from experiments.score import Weights

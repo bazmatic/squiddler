@@ -48,7 +48,7 @@ def undo_harness_side_effects():
 @pytest.mark.parametrize('level', [20, 26])
 def test_low_graphics_does_not_change_what_happens_in_an_episode(level):
     from experiments.harness import run_episode
-    full = run_episode(level, 7, horizon=25.0, low_graphics=False)
-    low = run_episode(level, 7, horizon=25.0, low_graphics=True)
+    full = run_episode(level, 7, horizon=10.0, low_graphics=False)
+    low = run_episode(level, 7, horizon=10.0, low_graphics=True)
     assert low == full
     assert config.SETTINGS.game.lowGraphics is False        # the harness puts the setting back

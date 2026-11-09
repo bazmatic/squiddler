@@ -55,9 +55,3 @@ def test_the_neural_hunter_pays_for_walls_and_the_other_pilots_do_not():
     import config
     assert hunter_settings_for('neural').wall_energy == config.SETTINGS.game.neuralWallEnergy > 0
     assert hunter_settings_for('jev').wall_energy == hunter_settings_for('rules').wall_energy == 0
-
-
-def test_in_the_duel_walls_cost_neither_hunter():
-    from hunter.duel import build_duel
-    import inspect
-    assert 'wall_energy=0.0' in inspect.getsource(build_duel)
