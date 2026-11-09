@@ -1,5 +1,6 @@
 """Task registry is the only place that knows the available creature/scenario adapters."""
 from dataclasses import dataclass, field
+from enum import Enum
 import importlib
 
 
@@ -30,6 +31,16 @@ class Capabilities:
             raise ValueError(f'unknown settings_scope: {self.settings_scope!r}')
 
 
+class Trainer(Enum):
+    """The training loop that trains a task, named by its module, which offers add_arguments(parser) (the options it
+    takes) and train_task(args) (a run, from tools.ppo_neural's command line)."""
+    HUNTER_LOOP = 'tools.ppo_neural'      # recurrent PPO on whole hunter-student episodes, one policy
+    SCENARIO = 'learning.run'             # staged team training on a creature scenario
+
+    def module(self):
+        return importlib.import_module(self.value)
+
+
 @dataclass(frozen=True)
 class Task:
     key: str
@@ -43,6 +54,11 @@ class Task:
     capabilities: Capabilities = field(default_factory=Capabilities)
     start: str | None = None          # the policy a new run starts from (relative to the repo) when no run is named
     rewards: str | None = None        # the module whose TABLE declares this task's rewards, see learning.reward_table
+    trainer: Trainer = Trainer.SCENARIO
+    cli: str | None = None            # the module whose add_arguments(parser) adds the task's own trainer options
+    # The values the trainer's command line gives this task's options when it does not name them (fresh_defaults are
+    # what the settings form starts a new run with).
+    cli_defaults: dict = field(default_factory=dict)
 
     def __post_init__(self):
         # A reward table's settings are the task's options without being listed again.
@@ -61,26 +77,32 @@ class Task:
         return importlib.import_module(self.module)
 
 
+# The Inchworm's defaults, for a new run on the settings form and on the command line alike.
+_INCHWORM = dict(horizon=120., workers=4, iterations=5000, episodes=24, bootstrap_episodes=80, bootstrap_epochs=4,
+                 lr=1e-4, gamma=.997, gae_lambda=.97, budget_seconds=7200, start='', seed=0)
+
 TASKS = {
-    'inchworm': Task('inchworm', 'learning.adapters.inchworm_scenario', 'Inchworm',
-        dict(horizon=120., workers=4, iterations=5000, episodes=24, bootstrap_episodes=80,
-             bootstrap_epochs=4, lr=1e-4, gamma=.997, gae_lambda=.97, budget_seconds=7200, start='', seed=0),
+    'inchworm': Task('inchworm', 'learning.adapters.inchworm_scenario', 'Inchworm', _INCHWORM,
         ('budget_seconds','bootstrap_episodes','bootstrap_epochs','seed'),
         'learning.replay', 'learning.adapters.inchworm_replay', 'learning.adapters.inchworm_dashboard',
-        rewards='learning.inchworm_rewards'),
+        rewards='learning.inchworm_rewards', cli_defaults=_INCHWORM),
+    # Flocker training starts without imitation.
     'flocker_team': Task('flocker_team', 'learning.adapters.flocker_scenario', 'Flocker team',
         dict(horizon=60., workers=4, iterations=10000, bootstrap_episodes=0),
         ('budget_seconds','seed'), 'learning.replay',
-        'learning.adapters.flocker_replay', 'learning.adapters.flocker_dashboard', rewards='learning.flocker_rewards'),
+        'learning.adapters.flocker_replay', 'learning.adapters.flocker_dashboard', rewards='learning.flocker_rewards',
+        cli_defaults=dict(horizon=60., bootstrap_episodes=0)),
     'hunter': Task('hunter', 'learning.adapters.hunter', 'Hunter', dashboard='learning.adapters.hunter_dashboard',
         rewards='learning.hunter_rewards',
         capabilities=Capabilities(fresh_weights=False, actor_damping=False, replay_mode='builtin',
-                                  settings_scope='unclaimed')),
+                                  settings_scope='unclaimed'),
+        trainer=Trainer.HUNTER_LOOP, cli='learning.adapters.hunter'),
     'wallcrawler_team': Task('wallcrawler_team', 'learning.adapters.crawler_scenario', 'Wallcrawler team',
         dict(horizon=60.0,workers=4,iterations=10000),
         ('opponent','budget_seconds','bootstrap_episodes','seed'), 'learning.replay',
         'learning.adapters.crawler_replay', 'learning.adapters.crawler_dashboard',
-        Capabilities(fresh_weights=True, actor_damping=True, replay_mode='hooks', settings_scope='listed')),
+        Capabilities(fresh_weights=True, actor_damping=True, replay_mode='hooks', settings_scope='listed'),
+        cli_defaults=dict(horizon=60.)),
     # Imitation remains opt-in while teacher warm-start experiments are evaluated.
     'jelly_team': Task('jelly_team', 'learning.adapters.jelly_scenario', 'Jelly team',
         dict(horizon=60.0, workers=4, iterations=10000, bootstrap_episodes=0,
@@ -88,12 +110,12 @@ TASKS = {
         ('budget_seconds','bootstrap_episodes','bootstrap_epochs','seed'), 'learning.replay',
         'learning.adapters.jelly_replay', 'learning.adapters.jelly_dashboard',
         Capabilities(fresh_weights=True, actor_damping=False, replay_mode='hooks', settings_scope='listed'),
-        rewards='learning.jelly_rewards'),
+        rewards='learning.jelly_rewards', cli_defaults=dict(horizon=60.)),
     # Trained by the hunter's PPO loop; a new run starts from the shipped hunter pilot, migrated to its senses.
     'campaign_hunter': Task('campaign_hunter', 'learning.adapters.campaign_hunter', 'Campaign Hunter',
         dict(horizon=180.0), dashboard='learning.adapters.campaign_dashboard', rewards='learning.campaign_rewards',
         capabilities=Capabilities(fresh_weights=False, replay_mode='builtin', settings_scope='listed'),
-        start='assets/neural/hunter.npz'),
+        start='assets/neural/hunter.npz', trainer=Trainer.HUNTER_LOOP, cli_defaults=dict(horizon=180.0)),
 }
 
 # Replayable runs recorded before config.json named its task were all Wallcrawler team runs.

@@ -6,7 +6,7 @@ from argparse import Namespace
 
 import pytest
 
-from tools import ppo_neural as ppo
+from tools import ppo_neural as ppo, run_record
 from tools.trainer.control import TrainerError, resume
 from tools.trainer.processes import REPO
 
@@ -39,7 +39,7 @@ def _scenario_args(namespace, path):
 def recorded_for(namespace, path):
     """What the trainer records for a run with these arguments, by the code that records it."""
     from learning.run import expected_manifest
-    if namespace.task in ppo.PPO_TASKS:
+    if run_record.is_ppo({'task': namespace.task}):
         return ppo.run_record(namespace)
     return dict(task=namespace.task, args=vars(namespace), manifest=expected_manifest(_scenario_args(namespace, path)))
 
@@ -83,7 +83,7 @@ def test_a_paused_run_resumes_with_a_changed_setting_and_records_what_it_launche
     args.levels = list(args.levels) if args.levels else args.levels
     expected = recorded_for(args, path)
     assert not {'shaping', 'rewards', 'episode', 'start'} & set(updated)
-    if task in ppo.PPO_TASKS:
+    if run_record.is_ppo({'task': task}):
         assert run_record.shaping(updated) == run_record.shaping(dict(expected, rules=updated.get('rules')))
         assert run_record.episode(updated) == run_record.episode(expected)
     else:

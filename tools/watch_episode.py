@@ -20,8 +20,8 @@ CAMPAIGN = 'campaign_hunter'
 
 
 def episode_jobs(run, iteration):
-    """The iteration's jobs, (level, seed, spec) each, exactly as training made them, and the shaping they flew with.
-    A Campaign Hunter job also names its task, (level, seed, spec, 'campaign_hunter'), as training's do.
+    """The iteration's jobs, (level, seed, spec, task) each, exactly as training made them, and the shaping they flew
+    with.
 
     The run's settings are its recorded arguments (tools.run_record derives the rest from them): a resume that changed
     the episode count or levels changes how the iterations before it list (and fly) too.
@@ -51,8 +51,8 @@ def episode_jobs(run, iteration):
             count = args.episodes
             jobs = [(25 if int((iteration * count + i + 1) * share + 1e-9)
                      > int((iteration * count + i) * share + 1e-9)
-                     else others[(iteration * count + i) % len(others)], seed, spec)
-                    for i, (_, seed, spec) in enumerate(jobs)]
+                     else others[(iteration * count + i) % len(others)], seed, spec, key)
+                    for i, (_, seed, spec, key) in enumerate(jobs)]
     return jobs, run_record.shaping(config, iteration)
 
 
@@ -77,12 +77,12 @@ def _fly(item):
     job, shaping = item
     from experiments import run
     run._use_dummy_drivers()
-    if len(job) == 4:
+    if job[3] == CAMPAIGN:
         flown = _fly_campaign(job, shaping)
         result = flown['result']
         return job[0], result.end, float(flown['rewards'].sum()), result.own_kills, result.elapsed
     from experiments.rollout import fly_rollout
-    level, seed, spec = job
+    level, seed, spec, _ = job
     flown = fly_rollout(level, seed, spec, **shaping)
     temperatures = flown['temperatures']
     return (level, float((temperatures > 1.0).mean()) if len(temperatures) else 0.0, float(flown['rewards'].sum()),
@@ -94,6 +94,22 @@ def fly_all(run, iteration, workers):
     jobs, shaping = episode_jobs(run, iteration)
     with ProcessPoolExecutor(workers) as pool:
         return list(pool.map(_fly, [(job, shaping) for job in jobs]))
+
+
+def episode_rows(run, iteration, workers):
+    """Each of the iteration's episodes flown again, as the trainer page lists it: a campaign episode with how it
+    ended, the hunter's with its panic share too."""
+    rows = []
+    for index, row in enumerate(fly_all(run, iteration, workers)):
+        if isinstance(row[1], str):                    # a campaign episode's: its kills are the ship's own
+            level, end, ret, kills, seconds = row
+            rows.append({'episode': index, 'level': level, 'end': end, 'return': ret, 'kills': kills,
+                         'seconds': seconds})
+        else:
+            level, panic, ret, kills, end, seconds = row
+            rows.append({'episode': index, 'level': level, 'panic': panic, 'return': ret, 'kills': kills, 'end': end,
+                         'seconds': seconds})
+    return rows
 
 
 def find(run, iteration, workers):
@@ -175,7 +191,7 @@ def _drawer(speed):
 def watch(run, iteration, episode, speed):
     jobs, shaping = episode_jobs(run, iteration)
     heading = f'run {Path(run).name}  iteration {iteration}  episode {episode}  level {jobs[episode][0]}'
-    if len(jobs[episode]) == 4:
+    if jobs[episode][3] == CAMPAIGN:
         draw = _drawer(speed)
         # The window keeps the tentacles' drag physics; the episode does not depend on it.
         flown = _fly_campaign(jobs[episode], shaping, low_graphics=False,
@@ -185,7 +201,7 @@ def watch(run, iteration, episode, speed):
               f'return {flown["rewards"].sum():.1f}')
         return
     from experiments.rollout import fly_rollout
-    level, seed, spec = jobs[episode]
+    level, seed, spec, _ = jobs[episode]
     draw = _drawer(speed)
 
     def frame(seconds, game, hunter):

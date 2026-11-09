@@ -13,7 +13,7 @@ from tools import ppo_neural as ppo
 def fake_rollout_factory():
     def rollout(jobs, workers):
         episodes = []
-        for level, seed, spec in jobs:
+        for level, seed, spec, _ in jobs:
             rng = np.random.default_rng(spec.sample_seed)
             n = 30
             episodes.append({
@@ -30,7 +30,7 @@ def test_jobs_depend_only_on_the_iteration_and_count_not_on_the_workers():
     a = ppo.make_jobs(3, 24, 'w.npz', 6, 1.0)
     b = ppo.make_jobs(3, 24, 'w.npz', 6, 1.0)
     assert a == b and len(a) == 24
-    assert all(not spec.greedy and 300 <= seed < 400 and level in TUNE_LEVELS for level, seed, spec in a)
+    assert all(not spec.greedy and 300 <= seed < 400 and level in TUNE_LEVELS for level, seed, spec, _ in a)
     assert len({spec.sample_seed for _, _, spec in a}) == 24
     assert {spec.sample_seed for _, _, spec in a}.isdisjoint(
         {spec.sample_seed for _, _, spec in ppo.make_jobs(4, 24, 'w.npz', 6, 1.0)})
@@ -105,7 +105,7 @@ def test_each_iteration_logs_where_its_time_went(tmp_path):
 def _timed_job(job):
     import os
     import time
-    level, seed, spec = job
+    level, seed, spec, _ = job
     time.sleep(0.02 * (level % 3))
     return {'pid': os.getpid(), 'level': level, 'seed': seed, 'wall': 0.02 * (level % 3)}
 
