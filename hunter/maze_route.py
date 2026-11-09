@@ -8,6 +8,7 @@ class MazeRoutes:
     def __init__(self):
         self._links = {}
         self._links_walls = None
+        self._gates, self._gate_blocks, self._gate_cells = (), {}, {}
 
     def _geometry(self, maze):
         sx, sy, ox, oy = maze.cell_size_x, maze.cell_size_y, maze.offset_x, maze.offset_y
@@ -15,11 +16,24 @@ class MazeRoutes:
         # A destroyed block can expose as many faces as it loses, so count alone is not enough
         walls_key = (id(maze), len(active), getattr(maze, 'wall_generation', 0))
         if self._links_walls != walls_key:
-            self._links, self._links_walls = {}, walls_key
+            self._links, self._links_walls, self._gates = {}, walls_key, None     # a new layout: the gates are indexed afresh
 
         def cell(pos):
             return (min(maze.grid_width - 1, max(0, int((pos[0] - ox) // sx))),
                     min(maze.grid_height - 1, max(0, int((pos[1] - oy) // sy))))
+
+        # Gates move independently of the wall layout, but not between the many route queries of one frame: which
+        # cells each reaches is worked out when a gate moves, and a link is tested only against the gates in its cells.
+        gates = tuple((tuple(g.start), tuple(g.end)) for g in getattr(maze, 'gate_segments', ()) if g.active)
+        if gates != self._gates:
+            self._gates, self._gate_blocks, self._gate_cells = gates, {}, {}
+            for gate in gates:
+                low = cell((min(gate[0][0], gate[1][0]), min(gate[0][1], gate[1][1])))
+                high = cell((max(gate[0][0], gate[1][0]), max(gate[0][1], gate[1][1])))
+                for cx in range(low[0], high[0] + 1):
+                    for cy in range(low[1], high[1] + 1):
+                        self._gate_cells.setdefault((cx, cy), []).append(gate)
+        gate_cells = self._gate_cells
 
         def centre(c):
             return (ox + (c[0] + .5) * sx, oy + (c[1] + .5) * sy)
@@ -34,10 +48,12 @@ class MazeRoutes:
                 self._links[key] = not any(
                     w.active and line_line_collision(centre(a), centre(b), w.start, w.end)
                     for w in near)
-            # Gates move independently of the wall layout, so never cache their connectivity.
-            return self._links[key] and not any(
-                gate.active and line_line_collision(centre(a), centre(b), gate.start, gate.end)
-                for gate in getattr(maze, 'gate_segments', ()))
+            if not self._links[key]:
+                return False
+            if key not in self._gate_blocks:
+                self._gate_blocks[key] = any(line_line_collision(centre(a), centre(b), start, end)
+                                             for start, end in gate_cells.get(a, []) + gate_cells.get(b, []))
+            return not self._gate_blocks[key]
         return cell, centre, linked
 
     def cheapest_route(self, maze, origin, targets, hit_point_cells):
