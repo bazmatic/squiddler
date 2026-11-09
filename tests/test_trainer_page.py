@@ -166,6 +166,16 @@ assert.equal(p.S.EPI,24);
 """)
 
 
+def test_a_metric_first_logged_midway_charts_from_where_it_starts():
+    run_js(r"""
+const p=await page();
+const rows=[0,1,2,3].map(i=>i<2?{iteration:i}:{iteration:i,thrust:0.5+i/10});
+const html=p.charts.chart({title:'Thrust',sub:'',key:'thrust'},rows,0);
+assert.doesNotMatch(html,/NaN/);
+assert.match(html,/<path d="M/);
+""")
+
+
 def test_chart_start_filters_charts_and_strip_and_is_remembered_per_run():
     run_js(r"""
 const p=await page(),{setChartStart}=p.charts;
