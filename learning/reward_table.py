@@ -2,7 +2,7 @@
 
 Everything a trainer needs about a task's rewards derives from its RewardTable: the shaping values and their
 defaults, the trainer flags, the settings-form labels, the dashboard's reward rules, the checks a paused run's edited
-values pass, the rewards summary recorded in a run's config.json, and the per-decision events-times-weights sum, which
+values pass, and the per-decision events-times-weights sum, which
 matches each weight to its event by name, never by position. Adding a reward is one RewardTerm plus the line in the
 task's episode that counts its event.
 
@@ -26,13 +26,6 @@ class RewardKind(Enum):
         return self in (RewardKind.REWARD, RewardKind.PENALTY)
 
 
-class RowNames(Enum):
-    """What a task's rewards summary rows are named after: each term's key in words ("own_kill": "Own kill"), or its
-    title."""
-    KEY = 'key'
-    TITLE = 'title'
-
-
 @dataclass(frozen=True)
 class RewardTerm:
     """key: the setting (and trainer flag, with prefix) holding the points; kind: its RewardKind, always declared;
@@ -43,8 +36,7 @@ class RewardTerm:
     when that is not its own key.
 
     fixed: the term is not a run setting (no flag, no label): it always pays its default. unit: the points one unit of
-    the setting is worth, for a setting that scales a fixed weight (1: the setting is the points). recorded_as: older
-    names of its row in a run's rewards summary, which a run recorded before it was renamed.
+    the setting is worth, for a setting that scales a fixed weight (1: the setting is the points).
     """
     key: str
     kind: RewardKind
@@ -57,7 +49,6 @@ class RewardTerm:
     rule: str | None = None
     fixed: bool = False
     unit: float = 1.
-    recorded_as: tuple = ()
 
     def __post_init__(self):
         if not isinstance(self.kind, RewardKind):
@@ -85,14 +76,11 @@ class RewardTable:
 
     signed: a penalty's points are negative and added, as a Campaign Hunter's are (True); or they are its size and
     subtracted, as a Jelly's are (False). rule_defaults: whether the dashboard may show a run that does not record a
-    term at the term's default (False when older runs trained with other values than today's defaults). row_names: what
-    the rows of a run's rewards summary are named after (a RowNames)."""
+    term at the term's default (False when older runs trained with other values than today's defaults)."""
 
-    def __init__(self, terms, prefix='', help_prefix='', signed=True, rule_defaults=True, row_names=RowNames.KEY):
-        if not isinstance(row_names, RowNames):
-            raise TypeError(f'reward table: row_names must be a RowNames, not {row_names!r}')
+    def __init__(self, terms, prefix='', help_prefix='', signed=True, rule_defaults=True):
         self.terms = tuple(terms)
-        self.prefix, self.help_prefix, self.signed, self.row_names = prefix, help_prefix, signed, row_names
+        self.prefix, self.help_prefix, self.signed = prefix, help_prefix, signed
         self.rule_defaults = rule_defaults
         self.paying = tuple(t for t in self.terms if t.pays)
         self.settable = tuple(t for t in self.terms if not t.fixed)    # the terms that are run settings
@@ -147,8 +135,8 @@ class RewardTable:
                                 help=self.help_prefix + self.described(t))
 
     def described(self, term):
-        """The term's help as the trainer's flags and a run's rewards rows give it: a signed table's penalty says
-        that its points are negative."""
+        """The term's help as the trainer's flags give it: a signed table's penalty says that its points are
+        negative."""
         return term.help + (' (negative: a penalty)' if self.signed and term.kind is RewardKind.PENALTY else '')
 
     def labels(self, group='Rewards'):
@@ -181,36 +169,6 @@ class RewardTable:
                                 '' if t.fixed else self.prefix + t.key,
                                 abs(self.points(t, defaults)) if self.rule_defaults else None)
                      for t in self.terms if t.kind is not RewardKind.SETTING)
-
-    def row_name(self, term):
-        """The name of the term's row in a run's rewards summary."""
-        return term.title if self.row_names is RowNames.TITLE else term.key.replace('_', ' ').capitalize()
-
-    def row_names_of(self, term):
-        """Every name the term's row has had, the current one first."""
-        return (self.row_name(term), *term.recorded_as)
-
-    def summary(self, values):
-        """The rewards rows recorded in a run's config.json for each paying term whose points are not 0: name, sign,
-        value and unit. A signed table's row has the sign of its points and their size; an unsigned table's has the
-        sign its kind pays with (+ a reward, - a penalty) and its points as set."""
-        values = self.validate(values)
-        rows = []
-        for t in self.paying:
-            points = self.points(t, values)
-            if not points:
-                continue
-            if self.signed:
-                sign, value = '+' if points > 0 else '-', abs(points)
-            else:
-                sign, value = '-' if t.kind is RewardKind.PENALTY else '+', points
-            rows.append({'name': self.row_name(t), 'sign': sign, 'value': round(value, 4), 'unit': self.described(t)})
-        return rows
-
-    def summary_rows(self):
-        """{row name: (setting, unit)} for each paying setting: how a run's rewards summary row recovers the setting
-        (the row's value over the unit). Only the current row names: an older name never recovers a setting."""
-        return {self.row_name(t): (self.prefix + t.key, t.unit) for t in self.paying if not t.fixed}
 
     # --- the episode ---
     def row(self):

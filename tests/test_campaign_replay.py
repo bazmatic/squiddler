@@ -29,12 +29,13 @@ def campaign_run(root, levels, episodes, horizon, iterations=1):
     checkpoints (each the start migrated to the campaign senses)."""
     run = root / 'run7'
     run.mkdir()
-    config = {'task': 'campaign_hunter',
-              'episode': {'horizon_seconds': horizon, 'episodes_per_iteration': episodes, 'learning_rate': 1e-4,
-                          'levels': levels},
-              'start': str(HUNTER_POLICY_PATH), 'shaping': dict(horizon=horizon, **SHAPING),
-              'decision_frames': 6, 'turn_rate': 1.0}
-    (run / 'config.json').write_text(json.dumps(config))
+    from tools import ppo_neural
+    argv = ['--task', 'campaign_hunter', '--start', str(HUNTER_POLICY_PATH), '--out', str(run),
+            '--episodes', str(episodes), '--horizon', str(horizon), '--levels', ','.join(map(str, levels))]
+    for name, value in SHAPING.items():
+        argv += ['--' + name.replace('_', '-'), str(value)]
+    args = ppo_neural.build_parser().parse_args(argv)
+    ppo_neural.write_run_config(args)
     migrate(str(HUNTER_POLICY_PATH), str(run / 'iter0000.npz'), CAMPAIGN_FEATURE_NAMES)
     for i in range(1, iterations):
         shutil.copy(run / 'iter0000.npz', run / f'iter{i:04d}.npz')

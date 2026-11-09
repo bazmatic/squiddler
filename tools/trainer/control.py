@@ -9,9 +9,9 @@ from pathlib import Path
 
 from tools import ppo_neural
 from tools.trainer.processes import REPO, list_processes, terminate_tree
-from tools.trainer.runs import RL_ROOT, list_runs, log_rows, next_run_number, run_folders
+from tools.trainer.runs import RL_ROOT, list_runs, log_rows, next_run_number
 from tools.trainer import resume_edits
-from tools.trainer.settings import apply_changes, changed, config_of, read_settings, to_argv
+from tools.trainer.settings import NoSettings, apply_changes, changed, config_of, read_settings, to_argv
 
 LOCK = '.trainer.lock'
 STALE_LOCK_SECONDS = 60
@@ -146,7 +146,10 @@ def start(from_=None, changes=None, root=RL_ROOT, processes=None, launch=None, a
             (launch or launch_process)(command, root/f'{name}.log')
             return Started(name, definition.start or 'random', changed(base, values), command)
         source, checkpoint = _source(from_, runs)
-        base = read_settings(source.path, run_folders(root))
+        try:
+            base = read_settings(source.path)
+        except NoSettings as exc:
+            raise TrainerError(str(exc)) from None
         source_task = (config_of(source.path) or {}).get('task', UNTAGGED_TASK)
         if actor_scale!=1 and not _actor_damping(source_task):
             raise TrainerError(_damping_refusal())
@@ -221,7 +224,7 @@ def resume(run=None, root=RL_ROOT, processes=None, launch=None, changes=None):
         args = (config_of(target.path) or {}).get('args')
         if not isinstance(args, dict):
             raise TrainerError(f'{target.name} was started before pausing existed; it cannot resume')
-        values = read_settings(target.path, run_folders(root))
+        values = read_settings(target.path)
         try:
             edit = resume_edits.prepare(target.path, values, changes) if changes else resume_edits.Edit(values)
         except resume_edits.EditRefused as exc:

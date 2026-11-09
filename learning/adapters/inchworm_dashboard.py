@@ -1,6 +1,6 @@
 """Physical outcomes for the inchworm curriculum."""
 from learning.dashboard import Layout, Metric
-from learning.inchworm_rewards import TABLE, recovered_settings  # noqa: F401 (recovered_settings: see learning.dashboard)
+from learning.inchworm_rewards import TABLE
 
 METRICS = tuple(Metric(key,title,description,section='Body',higher_is_better=better) for key,title,description,better in (
     ('success','Lesson success','Fraction of episodes meeting the physical lesson objective.',True),

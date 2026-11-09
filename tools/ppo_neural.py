@@ -195,21 +195,20 @@ def train_rl(start, out_dir, iterations, episodes=96, workers=12, lr=1e-4, seed=
         config_path = out_dir / 'config.json'
         if config_path.exists():
             import json
-            run_config = json.loads(config_path.read_text())
-            # Combat rules/tuning are immutable within a run. Old runs keep legacy combat.
-            prior = run_config.get('shaping', {})
+            from tools import run_record
+            recorded = json.loads(config_path.read_text())
+            rules, history = run_record.rules(recorded), run_record.history(recorded)
             if shaping is not None and task == 'hunter':
-                shaping = dict(shaping)
-                shaping['combat_ruleset'] = prior.get('combat_ruleset', 'legacy')
-                shaping['curved_walls'] = prior.get('curved_walls', False)
-                shaping['weapon_tuning'] = prior.get('weapon_tuning')
-            episode = run_config.get('episode', {})
-            if episode.get('rules_share') and 'level_cycle_from_iteration' not in episode:
-                episode['level_cycle_from_iteration'] = first
-            if (shaping or {}).get('random_maze') and not run_config.get('shaping', {}).get('random_maze'):
-                run_config.setdefault('episode', {})['random_maze_from_iteration'] = first
-                run_config.setdefault('shaping', {})['random_maze'] = True
-            config_path.write_text(json.dumps(run_config, indent=1))
+                # The rules a run keeps for life stay as it recorded them; random mazes it may take up now.
+                takes_mazes = bool(shaping.get('random_maze')) and not rules['random_maze']
+                shaping = {**shaping, **{k: v for k, v in rules.items() if k != 'random_maze'}}
+                if takes_mazes:
+                    history['random_maze_from_iteration'] = first
+                    rules['random_maze'] = True
+                shaping['random_maze'] = rules['random_maze']
+            if history.get('rules_share') and 'level_cycle_from_iteration' not in history:
+                history['level_cycle_from_iteration'] = first
+            config_path.write_text(json.dumps(run_record.migrated(recorded, rules, history), indent=1))
         current = out_dir / f'iter{first - 1:04d}.npz'
         log_file = out_dir / 'train.log'
         if log_file.exists() and not log_file.read_bytes().endswith(b'\n'):
@@ -315,13 +314,6 @@ def write_state(out_dir, state, iteration):
     (Path(out_dir) / STATE_FILE).write_text(json.dumps({'state': state, 'iteration': iteration}))
 
 
-def reward_summary(args):
-    """The reward terms a hunter run trains on, as plain numbers for the dashboard: its rewards rows (name, sign,
-    value, unit), from learning.hunter_rewards."""
-    from learning.hunter_rewards import TABLE
-    return TABLE.summary(TABLE.from_args(args))
-
-
 def _wall_energy():
     import config
     return config.SETTINGS.game.neuralWallEnergy
@@ -358,46 +350,45 @@ def shaping_from(args):
             'weapon_tuning': CATALOG.snapshot()}
 
 
-def table_reward_summary(args):
-    """The reward terms of a task that declares them in a reward table, as reward_summary gives the hunter's."""
-    from learning.tasks import task
-    table = task(args.task).reward_table()
-    return table.summary(table.from_args(args))
-
-
-# Shaping a run keeps for its whole life, whatever its settings later say: train_rl restores these on resume (and
-# records when a run first took random mazes), so editing a paused run's settings never rewrites them.
-RUN_RULES = ('duel_separation', 'random_maze', 'combat_ruleset', 'curved_walls', 'weapon_tuning')
+# The rules a hunter run keeps for its whole life, recorded when it starts (config.json 'rules'), whatever its settings
+# or the code later say, each with the value a run older than that rule flew with. Random mazes are the exception that
+# a resume may take up (train_rl notes the iteration in the run's history).
+RUN_RULES = {'combat_ruleset': 'legacy', 'curved_walls': False, 'weapon_tuning': None, 'random_maze': False}
 
 
 def run_config(args):
-    """What a run with these arguments records in its config.json, so the dashboard can list it and it can resume."""
-    recorded_args = {k: (list(v) if isinstance(v, tuple) else v) for k, v in vars(args).items()}
+    """What a run with these arguments trains with, derived from them (tools.run_record reads runs through this):
+    its episode block and shaping, and its arguments as a run records them."""
     if args.task == 'campaign_hunter':
-        return {'task': args.task, 'rewards': table_reward_summary(args),
-                'episode': {'horizon_seconds': args.horizon, 'episodes_per_iteration': args.episodes,
-                            'learning_rate': args.lr, 'levels': list(args.levels)},
-                'start': str(args.start), 'shaping': shaping_from(args),
-                'observation_version': OBSERVATION_VERSION, 'decision_frames': 6, 'turn_rate': 1.0,
-                'args': recorded_args}
-    return {'rewards': reward_summary(args),
-            'episode': {'horizon_seconds': args.horizon, 'after_clear_seconds': args.after_clear,
-                        'episodes_per_iteration': args.episodes, 'learning_rate': args.lr,
-                        'health': args.health, 'wall_energy': _wall_energy() if args.health else 0,
-                        'levels': args.levels,
-                        'panic_score': args.panic_score, 'panic_temperature': args.panic_temperature},
-            'start': str(args.start), 'shaping': shaping_from(args),
-            'observation_version': OBSERVATION_VERSION,
-            'decision_frames': 6, 'turn_rate': 1.0,
-            'args': recorded_args}
+        episode = {'horizon_seconds': args.horizon, 'episodes_per_iteration': args.episodes, 'learning_rate': args.lr,
+                   'levels': list(args.levels)}
+    else:
+        episode = {'horizon_seconds': args.horizon, 'after_clear_seconds': args.after_clear,
+                   'episodes_per_iteration': args.episodes, 'learning_rate': args.lr,
+                   'health': args.health, 'wall_energy': _wall_energy() if args.health else 0,
+                   'levels': args.levels,
+                   'panic_score': args.panic_score, 'panic_temperature': args.panic_temperature}
+    return {'episode': episode, 'shaping': shaping_from(args),
+            'args': {k: (list(v) if isinstance(v, tuple) else v) for k, v in vars(args).items()}}
+
+
+def run_record(args):
+    """What a new run records in its config.json: its settings (its arguments, the only copy: tools.run_record derives
+    the rest from them), a hunter run's rules for life, and the fixed decision rate and turn rate."""
+    derived = run_config(args)
+    record = {'task': args.task, 'args': derived['args'], 'observation_version': OBSERVATION_VERSION,
+              'decision_frames': 6, 'turn_rate': 1.0}
+    if args.task == 'hunter':
+        record['rules'] = {key: derived['shaping'][key] for key in RUN_RULES}
+    return record
 
 
 def write_run_config(args):
-    """Record what this run trains on beside its log, so the dashboard can list it."""
+    """Record what this run trains on beside its log, so the dashboard can list it and it can resume."""
     import json
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    (out / 'config.json').write_text(json.dumps(run_config(args), indent=1))
+    (out / 'config.json').write_text(json.dumps(run_record(args), indent=1))
 
 
 def unit_interval(value):

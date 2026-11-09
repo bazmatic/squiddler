@@ -595,7 +595,7 @@ def test_new_run_records_curved_walls_and_old_runs_stay_square(tmp_path):
     args = ppo.build_parser().parse_args(['--out', str(tmp_path), '--levels', '25'])
     assert ppo.shaping_from(args)['curved_walls'] is True
     ppo.write_run_config(args)
-    assert json.loads((tmp_path / 'config.json').read_text())['shaping']['curved_walls'] is True
+    assert json.loads((tmp_path / 'config.json').read_text())['rules']['curved_walls'] is True
 
 
 def test_resuming_a_run_without_the_record_stays_square(tmp_path, monkeypatch):

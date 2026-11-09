@@ -1,7 +1,7 @@
 """The Jelly team's starter dashboard: keys from jelly_scenario.summarise(), which metrics() writes into train.log over
 all of an iteration's episodes. The per-stage stage<n>_* copies are left to the automatic "Other" section for now."""
 from learning.dashboard import Layout, Metric
-from learning.jelly_rewards import TABLE, recovered_settings  # noqa: F401 (recovered_settings: see learning.dashboard)
+from learning.jelly_rewards import TABLE
 
 
 METRICS = (

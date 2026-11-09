@@ -44,35 +44,21 @@ LAYOUT = Layout(strip=('kills_per_min', 'wall_quotient_per_min', 'hits_taken_per
 # Logged by tools/ppo_neural.py but never charted.
 HIDDEN = ('score', 'rules_episodes')
 
-# The reward terms, from the hunter's reward table (learning/hunter_rewards.py). A run records them as its rewards
-# summary rows (tools/ppo_neural.py reward_summary()), matched here by name; its shaping parameters (the still speed,
-# the boredom window) as its arguments.
+# The reward terms, from the hunter's reward table (learning/hunter_rewards.py), valued from the run's arguments as its
+# training pays them.
 REWARD_RULES = TABLE.reward_rules()
 
 
 def recorded(config):
-    """The values the run's "rewards" rows record, and its shaping parameters from its arguments. reward_summary() leaves
-    out zero terms, so a term without a row was off (0) in a run that has the rows; a config without them records
-    nothing."""
-    rows = config.get('rewards')
-    if not isinstance(rows, list):
+    """Each rule's value as the run trains with it: a reward's or penalty's points (its unit times its setting, or a
+    fixed term's own), a shaping parameter's setting. A run that records no settings has none."""
+    from tools import run_record
+    if not run_record.has_settings(config):
         return {}
-    by_name = {row.get('name'): row.get('value') for row in rows if isinstance(row, dict)}
-    args = config.get('args') or {}
-    found = {}
-    for term in TABLE.terms:
-        if term.pays:
-            value = next((by_name[n] for n in TABLE.row_names_of(term) if n in by_name), 0.)
-        elif term.kind is RewardKind.SHAPING:
-            value = args.get(TABLE.prefix + term.key)
-        else:
-            continue
-        # Summary values retain the setting's sign; the renderer applies the rule's reward/penalty direction.
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            found[term.rule_key] = value
-        elif term.pays:
-            found[term.rule_key] = 0.
-    return found
+    values = TABLE.from_args(run_record.arguments(config))
+    # The value keeps the setting's sign; the renderer applies the rule's reward/penalty direction.
+    return {term.rule_key: TABLE.points(term, values) if term.pays else values[term.key]
+            for term in TABLE.terms if term.kind is not RewardKind.SETTING}
 
 
 def _levels(levels):
@@ -91,7 +77,10 @@ def _levels(levels):
 
 def cards(config):
     """The old page's Hunter Episodes card, and the hunter's health, which its death penalty's row refers to."""
-    e, args, found = config.get('episode') or {}, config.get('args') or {}, recorded(config)
+    from tools import run_record
+    if not run_record.has_settings(config):
+        return []
+    e, args, found = run_record.episode(config), config['args'], recorded(config)
     out = []
     if e:
         text = (f"Up to {number(e.get('horizon_seconds'))} s of fighting, then up to {number(e.get('after_clear_seconds'))}"

@@ -91,21 +91,9 @@ def test_run_changes_compare_with_the_run_it_started_from(tmp_path):
     new = make_run(tmp_path, 'run2', 1)
     config = json.loads((new / 'config.json').read_text())
     config['args']['speed_penalty'] = 2.0
-    config['start'] = str(tmp_path / 'run1' / 'iter0000.npz')
+    config['args']['start'] = str(tmp_path / 'run1' / 'iter0000.npz')
     (new / 'config.json').write_text(json.dumps(config))
     from tools.trainer.runs import list_runs
     listed = list_runs(tmp_path, [])
     assert cli.run_changes(listed[1], [r.path for r in listed]) == [('speed_penalty', 3.0, 2.0)]
     assert cli.run_changes(listed[0], [r.path for r in listed]) == []
-
-
-def test_run_changes_count_recovered_values_but_not_guesses(tmp_path):
-    from tools.trainer.runs import list_runs
-    episode = {'episodes_per_iteration': 96, 'levels': [1, 2]}
-    for name, levels in (('run1', [1, 2]), ('run2', [1, 2, 3])):
-        (tmp_path / name).mkdir()
-        (tmp_path / name / 'iter0000.npz').write_bytes(b'')
-        (tmp_path / name / 'config.json').write_text(json.dumps(
-            {'start': str(tmp_path / 'run1' / 'iter0000.npz'), 'episode': {**episode, 'levels': levels}}))
-    listed = list_runs(tmp_path, [])
-    assert cli.run_changes(listed[1], [r.path for r in listed]) == [('levels', [1, 2], [1, 2, 3])]

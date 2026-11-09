@@ -1,19 +1,14 @@
 """A run's settings: the trainer's options, read back from any run, changed, and turned into a command line.
 
-Runs before run51 did not record every setting. A missing one is recovered from what the run did record (its
-rewards summary and episode block), else guessed from the newest run that recorded it, never taken from the
-trainer's own defaults, which are far from what recent runs use.
+A run's settings are its recorded arguments, their only copy (tools.run_record). An option added since the run
+started reads as the trainer's default for it. A run that records no arguments (before run51) has no settings.
 """
-import json
-import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from learning.tasks import UNTAGGED_TASK
-from tools import ppo_neural
+from tools import ppo_neural, run_record
 
 NOT_SETTINGS = {'start', 'out', 'resume', 'help', 'actor_scale'}
-DEFAULT_ITERATIONS = 1000     # what run52 uses: the guess for a run that never recorded its total
 
 # dest: (group, label). A trainer option missing here still appears, under Training.
 LABELS = {
@@ -42,18 +37,6 @@ for _table in _reward_tables().values():
     UNITS.update({_table.prefix + t.key: t.unit for t in _table.settable})
 
 
-# The rewards summary of older (hunter) runs, by row name: (dest, what the value was multiplied by). Rows are only
-# written when non-zero, so a run with a summary but no row for one of these trained with it at 0.
-def _reward_rows():
-    from learning.hunter_rewards import TABLE
-    return TABLE.summary_rows()
-
-# The episode block of older runs: its key -> dest.
-EPISODE_KEYS = {'episodes_per_iteration': 'episodes', 'learning_rate': 'lr', 'horizon_seconds': 'horizon',
-                'after_clear_seconds': 'after_clear', 'health': 'health',
-                'levels': 'levels', 'panic_score': 'panic_score', 'panic_temperature': 'panic_temperature'}
-
-
 @dataclass(frozen=True)
 class Setting:
     dest: str
@@ -70,7 +53,7 @@ class Setting:
 @dataclass(frozen=True)
 class Value:
     value: object
-    source: str        # 'recorded' | 'recovered' | 'guessed'
+    source: str        # 'recorded' | 'default' (an option added since the run started)
 
 
 def _kind(action):
@@ -121,80 +104,25 @@ BY_DEST = {s.dest: s for s in SETTINGS}
 
 def config_of(run_dir):
     """A run's config.json, or None when it has none or it does not read."""
-    try:
-        config = json.loads((Path(run_dir) / 'config.json').read_text())
-    except (OSError, ValueError):
-        return None
-    return config if isinstance(config, dict) else None
+    return run_record.load(run_dir)
 
 
-def _recorded(config):
-    """What a run's config records for certain: its arguments, else its shaping block."""
-    if not config:
-        return {}
-    if isinstance(config.get('args'), dict):
-        return {k: v for k, v in config['args'].items() if k in BY_DEST}
-    out = {}
-    for key, value in (config.get('shaping') or {}).items():
-        if key == 'random_start':
-            out['fixed_start'] = not value
-        elif key == 'pursue_hunter':
-            out['decoy_player'] = not value
-        elif key in BY_DEST:
-            out[key] = value
-    return out
+class NoSettings(run_record.NoSettings):
+    """The run records no settings."""
 
 
-def _recovered(config):
-    """What can be worked out from an older run's episode block and rewards summary."""
-    if not config:
-        return {}
-    from learning.dashboard import declaration
-    try:
-        out = declaration(config.get('task', UNTAGGED_TASK)).recovered_settings(config)
-    except ValueError:   # a task this trainer no longer knows
-        out = {}
-    for key, dest in EPISODE_KEYS.items():
-        if key in (config.get('episode') or {}):
-            out[dest] = config['episode'][key]
-    rewards = config.get('rewards')
-    if isinstance(rewards, list):
-        rows = {row.get('name'): row.get('value') for row in rewards if isinstance(row, dict)}
-        for name, (dest, factor) in _reward_rows().items():
-            out[dest] = rows.get(name, 0.0) / factor
-    return out
-
-
-def _number(run_dir):
-    match = re.fullmatch(r'run(\d+)', Path(run_dir).name)
-    return int(match.group(1)) if match else -1
-
-
-def read_settings(run_dir, all_runs):
-    """Every setting for the run in `run_dir`, each with where its value came from."""
+def read_settings(run_dir):
+    """Every setting for the run in `run_dir`, each with where its value came from. Raises NoSettings for a run that
+    records none."""
     config = config_of(run_dir)
-    recorded, recovered = _recorded(config), _recovered(config)
-    others = [{**_recovered(c), **_recorded(c)} for c in
-              (config_of(r) for r in sorted(all_runs, key=_number, reverse=True) if Path(r) != Path(run_dir))
-              if (c or {}).get('task', UNTAGGED_TASK) == (config or {}).get('task', UNTAGGED_TASK)]
-    out = {}
-    for s in SETTINGS:
-        if s.dest in recorded:
-            out[s.dest] = Value(_normal(s, recorded[s.dest]), 'recorded')
-        elif s.dest in recovered:
-            out[s.dest] = Value(_normal(s, recovered[s.dest]), 'recovered')
-        elif s.dest in ('gamma', 'gae_lambda') or (s.dest == 'bootstrap_epochs' and config is not None):
-            # Older runs used these hardcoded values; do not borrow a newer run's experiment.
-            out[s.dest] = Value(s.default, 'recovered')
-        else:
-            guess = next((o[s.dest] for o in others if s.dest in o), None)
-            if guess is not None or any(s.dest in o for o in others):
-                out[s.dest] = Value(_normal(s, guess), 'guessed')
-            elif s.dest == 'iterations':
-                out[s.dest] = Value(DEFAULT_ITERATIONS, 'guessed')
-            else:
-                out[s.dest] = Value(s.default, 'guessed')
-    return out
+    try:
+        args = vars(run_record.arguments(config))
+    except run_record.NoSettings:
+        raise NoSettings(f'{Path(run_dir).name} records no settings: it can be viewed, but not resumed or used as a '
+                         'settings source') from None
+    recorded = config['args']
+    return {s.dest: Value(_normal(s, args[s.dest]), 'recorded' if s.dest in recorded else 'default')
+            for s in SETTINGS}
 
 
 def _normal(setting, value):

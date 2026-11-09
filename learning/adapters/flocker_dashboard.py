@@ -1,6 +1,6 @@
 """Flocker outcome, coordination and rest metrics."""
 from learning.dashboard import Layout, Metric
-from learning.flocker_rewards import TABLE, recovered_settings  # noqa: F401 (recovered_settings: see learning.dashboard)
+from learning.flocker_rewards import TABLE
 
 METRICS = tuple(Metric(key,title,description,unit='%' if key in ('perch_success','accuracy','aim_accuracy') else '',section=section,higher_is_better=better) for key,title,description,section,better in (
     ('hits_per_minute','Hits / minute','Accepted projectile damage per minute.','Combat',True),

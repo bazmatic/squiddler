@@ -68,7 +68,7 @@ export function renderForm(){
   if(!S.SCHEMA)return;
   const groups=['Rewards','Episodes','Training'];
   $('form').innerHTML=groups.map(g=>`<fieldset><legend>${g}</legend>${S.SCHEMA.settings.filter(s=>s.dest!=='task' && s.group===g && (!s.tasks||s.tasks.includes($('task').value))).map(s=>{
-    const src=S.BASE[s.dest]?.source,tag=src&&src!=='recorded'?`<span class="tag" title="This run did not record it: ${src==='recovered'?'worked out from what it did record':'taken from the newest run that recorded it'}">${src}</span>`:'';
+    const src=S.BASE[s.dest]?.source,tag=src&&src!=='recorded'?`<span class="tag" title="This run started before this setting existed: it shows the trainer's default">${src}</span>`:'';
     const raw=edited(s),v=typeof raw==='number'?raw*(s.display_scale||1):raw,id=`set-${s.dest}`;
     const input=s.kind==='bool'?`<input type="checkbox" id="${id}" ${v?'checked':''}>`:s.kind==='levels'?'':`<input type="text" id="${id}" value="${esc(v===null||v===undefined?'none':v)}">`;
     return s.kind==='levels'?`<div class="setting levels" data-dest="${s.dest}"><span>${esc(s.label)} ${tag}</span>${levelPicker(s)}</div>`

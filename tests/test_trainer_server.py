@@ -149,8 +149,8 @@ def test_other_web_pages_cannot_drive_the_trainer(setup):
 def replayable(setup):
     run = setup['root'] / 'run52'
     config = json.loads((run / 'config.json').read_text())
-    config.update({'episode': {'episodes_per_iteration': 6, 'levels': [3, 16], 'rules_share': 0.0},
-                   'shaping': {'horizon': 60.0}, 'decision_frames': 6, 'turn_rate': 1.0})
+    config['args'].update(episodes=6, levels=[3, 16])
+    config.update({'decision_frames': 6, 'turn_rate': 1.0})
     (run / 'config.json').write_text(json.dumps(config))
     return run
 
@@ -166,6 +166,7 @@ def test_an_iterations_episodes_are_listed_with_their_levels(setup):
 
 
 def test_a_run_from_before_replays_says_so(setup):
+    (setup['root'] / 'run52' / 'config.json').write_text(json.dumps({'start': 'x.npz', 'rewards': []}))
     code, body = post(setup, '/api/episodes', {'run': 'run52', 'iteration': 1})
     assert code == 409 and body['error'].startswith('run52 cannot be replayed')
 
@@ -202,6 +203,7 @@ def test_watching_opens_the_episode_at_the_chosen_speed(setup):
 
 def test_runs_say_whether_they_can_be_replayed(setup):
     replayable(setup)
+    (setup['root'] / 'run51' / 'config.json').write_text(json.dumps({'start': 'x.npz', 'rewards': []}))
     assert [(r['name'], r['replayable']) for r in get_json(setup, '/api/runs')] == [('run51', False), ('run52', True)]
 
 
@@ -384,7 +386,7 @@ def test_a_new_task_plugs_in_without_changing_the_dashboard_or_trainer(setup, mo
     run = setup['root'] / 'run60'
     run.mkdir()
     (run / 'iter0000.npz').write_bytes(b'')
-    (run / 'config.json').write_text(json.dumps({'task': 'demo', 'shaping': {}, 'episode': {}}))
+    (run / 'config.json').write_text(json.dumps({'task': 'demo', 'args': {'task': 'demo'}}))
     with pytest.raises(control.TrainerError, match='^actor damping is supported only for '):
         control.start('run60', root=setup['root'], processes=[], launch=FakeLaunch(), actor_scale=.5)
     assert post(setup, '/api/episodes', {'run': 'run60', 'iteration': 0}) == \

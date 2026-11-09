@@ -134,8 +134,8 @@ def train(args):
             shutil.copyfile(args.opponent, out/'opponent.npz')
         (out/'initial.npz').parent.mkdir(parents=True, exist_ok=True)
         policy.save(out/'initial.npz')
-        record=dict(task=args.task, args=vars(args), manifest=expected,
-                    shaping=expected['rewards'],episode={'horizon_seconds':args.horizon},start=args.start)
+        # Its settings once (args), and its rules snapshot; tools.run_record derives the rest from them.
+        record=dict(task=args.task, args=vars(args), manifest=expected)
         if actor_scale!=1.:
             record['actor_initialization']={'action_head_scale':actor_scale,'aim_std':.35,
                 'preserved':'recurrent_backbone_and_normalization','applied':'once_before_first_iteration'}

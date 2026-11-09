@@ -115,15 +115,13 @@ def test_the_campaign_rewards_match_the_old_hand_written_sum():
         assert np.array_equal(old.astype(np.float32), new.astype(np.float32))
 
 
-def test_the_campaign_flags_and_recorded_rows_keep_their_names():
+def test_the_campaign_flags_keep_their_names_and_a_run_records_only_its_settings():
     from tools import ppo_neural
-    args = ppo_neural.build_parser().parse_args(['--task', 'campaign_hunter', '--shot', '-0.25'])
+    args = ppo_neural.build_parser().parse_args(['--task', 'campaign_hunter', '--shot', '-0.25', '--levels', '1-3'])
     assert {'own_kill', 'cleared_exit', 'score_out', 'compass_following', 'shot'} <= set(vars(args))
-    rows = {row['name']: row for row in ppo_neural.table_reward_summary(args)}
-    assert rows['Own kill'] == {'name': 'Own kill', 'sign': '+', 'value': 10.0,
-                                'unit': 'points per enemy the ship destroys itself'}
-    assert rows['Shot']['sign'] == '-' and rows['Shot']['value'] == 0.25
-    assert 'Compass following' not in rows                       # 0: not recorded
+    record = ppo_neural.run_record(args)
+    assert set(record) == {'task', 'args', 'observation_version', 'decision_frames', 'turn_rate'}
+    assert record['args']['shot'] == -0.25
     shaping = ppo_neural.shaping_from(args)
     assert shaping['shot'] == -0.25 and shaping['wall_crash'] == -1.0 and shaping['horizon'] == args.horizon
 
@@ -206,7 +204,6 @@ def test_the_inchworm_is_declared_in_a_table_with_its_flags_manifest_and_checks_
 
 
 def test_the_hunter_is_declared_in_a_table_with_its_fixed_and_scaled_terms():
-    from argparse import Namespace
     from experiments.score import Weights
     from learning.hunter_rewards import TABLE as HUNTER, KILL_REWARD_TOTAL
     from learning.tasks import task
@@ -221,17 +218,14 @@ def test_the_hunter_is_declared_in_a_table_with_its_fixed_and_scaled_terms():
     values = HUNTER.validate({'wall_scale': 2.0})
     assert HUNTER.points(HUNTER.by_key['wall_scale'], values) == 2.0 * Weights().quotient
     assert settings.BY_DEST['hit_scale'].display_scale == Weights().hit
-    # A run's rewards rows keep their names and signs: an unsigned table's sign is its kind's, its value as set.
-    args = Namespace(task='hunter', powerup_reward=-3.0, death_penalty=5.0, shot_price=.25)
-    rows = {row['name']: row for row in ppo_neural.reward_summary(args)}
-    assert rows['Kills'] == {'name': 'Kills', 'sign': '+', 'value': KILL_REWARD_TOTAL,
-                             'unit': 'points shared across all the enemies in an episode'}
-    assert (rows['Powerup collected']['sign'], rows['Powerup collected']['value']) == ('+', -3.0)
-    assert (rows['Death']['sign'], rows['Death']['value']) == ('-', 5.0)
-    assert rows['Wall impact']['value'] == Weights().quotient and 'Unaimed shot' in rows
-    # An older run's row recovers its setting by the current name only, over the unit.
-    assert HUNTER.summary_rows()['Wall impact'] == ('wall_scale', Weights().quotient)
-    assert HUNTER.row_names_of(HUNTER.by_key['shot_price']) == ('Unaimed shot', 'Shot with no enemy in sight')
+    # The dashboard shows each term's points as the run's settings pay them: a fixed term's own, a scaled one's in
+    # points, a setting's value with its own sign (the page draws the term's direction).
+    from learning.adapters import hunter_dashboard
+    args = vars(ppo_neural.build_parser().parse_args(['--powerup-reward', '-3', '--death-penalty', '5']))
+    shown = hunter_dashboard.recorded({'args': args})
+    assert shown['kills'] == KILL_REWARD_TOTAL and shown['wall'] == Weights().quotient
+    assert (shown['powerup'], shown['death'], shown['still_speed']) == (-3.0, 5.0, .15)
+    assert hunter_dashboard.recorded({'rewards': [{'name': 'Kills', 'value': 1.0}]}) == {}   # no settings: none
 
 
 def test_a_hunter_episode_pays_each_kill_its_share_of_the_kill_reward():
