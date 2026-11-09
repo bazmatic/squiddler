@@ -365,31 +365,39 @@ def table_reward_summary(args):
     return table.summary(table.from_args(args))
 
 
+# Shaping a run keeps for its whole life, whatever its settings later say: train_rl restores these on resume (and
+# records when a run first took random mazes), so editing a paused run's settings never rewrites them.
+RUN_RULES = ('duel_separation', 'random_maze', 'combat_ruleset', 'curved_walls', 'weapon_tuning')
+
+
+def run_config(args):
+    """What a run with these arguments records in its config.json, so the dashboard can list it and it can resume."""
+    recorded_args = {k: (list(v) if isinstance(v, tuple) else v) for k, v in vars(args).items()}
+    if args.task == 'campaign_hunter':
+        return {'task': args.task, 'rewards': table_reward_summary(args),
+                'episode': {'horizon_seconds': args.horizon, 'episodes_per_iteration': args.episodes,
+                            'learning_rate': args.lr, 'levels': list(args.levels)},
+                'start': str(args.start), 'shaping': shaping_from(args),
+                'observation_version': OBSERVATION_VERSION, 'decision_frames': 6, 'turn_rate': 1.0,
+                'args': recorded_args}
+    return {'rewards': reward_summary(args),
+            'episode': {'horizon_seconds': args.horizon, 'after_clear_seconds': args.after_clear,
+                        'episodes_per_iteration': args.episodes, 'learning_rate': args.lr,
+                        'health': args.health, 'wall_energy': _wall_energy() if args.health else 0,
+                        'levels': args.levels,
+                        'panic_score': args.panic_score, 'panic_temperature': args.panic_temperature},
+            'start': str(args.start), 'shaping': shaping_from(args),
+            'observation_version': OBSERVATION_VERSION,
+            'decision_frames': 6, 'turn_rate': 1.0,
+            'args': recorded_args}
+
+
 def write_run_config(args):
     """Record what this run trains on beside its log, so the dashboard can list it."""
     import json
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    if args.task == 'campaign_hunter':
-        (out / 'config.json').write_text(json.dumps({
-            'task': args.task, 'rewards': table_reward_summary(args),
-            'episode': {'horizon_seconds': args.horizon, 'episodes_per_iteration': args.episodes,
-                        'learning_rate': args.lr, 'levels': list(args.levels)},
-            'start': str(args.start), 'shaping': shaping_from(args),
-            'observation_version': OBSERVATION_VERSION, 'decision_frames': 6, 'turn_rate': 1.0,
-            'args': {k: (list(v) if isinstance(v, tuple) else v) for k, v in vars(args).items()}}, indent=1))
-        return
-    (out / 'config.json').write_text(json.dumps({
-        'rewards': reward_summary(args),
-        'episode': {'horizon_seconds': args.horizon, 'after_clear_seconds': args.after_clear,
-                    'episodes_per_iteration': args.episodes, 'learning_rate': args.lr,
-                    'health': args.health, 'wall_energy': _wall_energy() if args.health else 0,
-                    'levels': args.levels,
-                    'panic_score': args.panic_score, 'panic_temperature': args.panic_temperature},
-        'start': str(args.start), 'shaping': shaping_from(args),
-        'observation_version': OBSERVATION_VERSION,
-        'decision_frames': 6, 'turn_rate': 1.0,
-        'args': {k: (list(v) if isinstance(v, tuple) else v) for k, v in vars(args).items()}}, indent=1))
+    (out / 'config.json').write_text(json.dumps(run_config(args), indent=1))
 
 
 def unit_interval(value):

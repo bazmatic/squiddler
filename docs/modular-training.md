@@ -128,7 +128,7 @@ Open the dashboard with `./run-trainer.sh`; its default address is `http://local
 ./run-trainer.sh start --from run142/iter0576 --set task=wallcrawler_team
 ```
 
-Settings can carry forward from the source run. Inspect the new `config.json` instead of assuming fresh defaults. These commands are operational examples; writing this guide does not restart or modify a running session.
+Settings can carry forward from the source run. Inspect the new `config.json` instead of assuming fresh defaults. A paused run of any task can resume with edited settings (the dashboard's resume form, or `changes` to `resume`): the learning settings, and any setting its own task takes. `tools/trainer/resume_edits.py` recomputes what the run records about them (a hunter run's rewards rows, episode block and shaping; a creature run's manifest) with the code that recorded them, keeps the rules a run has for life, changes the saved optimiser's learning rate, logs the edits in `config.json`, and puts the run's files back if the launch fails. A creature run whose rules have changed since it started cannot take edits that change its manifest. These commands are operational examples; writing this guide does not restart or modify a running session.
 
 ### Replay and evaluation
 
