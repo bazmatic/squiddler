@@ -73,6 +73,7 @@ TASKS = {
         ('budget_seconds','seed'), 'learning.replay',
         'learning.adapters.flocker_replay', 'learning.adapters.flocker_dashboard', rewards='learning.flocker_rewards'),
     'hunter': Task('hunter', 'learning.adapters.hunter', 'Hunter', dashboard='learning.adapters.hunter_dashboard',
+        rewards='learning.hunter_rewards',
         capabilities=Capabilities(fresh_weights=False, actor_damping=False, replay_mode='builtin',
                                   settings_scope='unclaimed')),
     'wallcrawler_team': Task('wallcrawler_team', 'learning.adapters.crawler_scenario', 'Wallcrawler team',

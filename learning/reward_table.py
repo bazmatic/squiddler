@@ -26,6 +26,13 @@ class RewardKind(Enum):
         return self in (RewardKind.REWARD, RewardKind.PENALTY)
 
 
+class RowNames(Enum):
+    """What a task's rewards summary rows are named after: each term's key in words ("own_kill": "Own kill"), or its
+    title."""
+    KEY = 'key'
+    TITLE = 'title'
+
+
 @dataclass(frozen=True)
 class RewardTerm:
     """key: the setting (and trainer flag, with prefix) holding the points; kind: its RewardKind, always declared;
@@ -33,7 +40,12 @@ class RewardTerm:
     are paid for; event: the name of the per-decision episode count a reward or penalty multiplies (none for a
     shaping parameter or a setting). stages: the curriculum stages it applies in (empty: every stage). manifest: the
     (block, field) where the task records its value in a run's manifest, if it does. rule: its key on the dashboard,
-    when that is not its own key."""
+    when that is not its own key.
+
+    fixed: the term is not a run setting (no flag, no label): it always pays its default. unit: the points one unit of
+    the setting is worth, for a setting that scales a fixed weight (1: the setting is the points). recorded_as: older
+    names of its row in a run's rewards summary, which a run recorded before it was renamed.
+    """
     key: str
     kind: RewardKind
     default: float
@@ -43,6 +55,9 @@ class RewardTerm:
     stages: tuple = ()
     manifest: tuple | None = None
     rule: str | None = None
+    fixed: bool = False
+    unit: float = 1.
+    recorded_as: tuple = ()
 
     def __post_init__(self):
         if not isinstance(self.kind, RewardKind):
@@ -50,6 +65,14 @@ class RewardTerm:
         if (self.event is not None) != self.kind.pays:
             raise ValueError(f'reward term {self.key}: a {self.kind.value} term '
                              + ('pays on no event' if self.event is not None else 'needs the event it pays on'))
+        if self.fixed and not self.kind.pays:
+            raise ValueError(f'reward term {self.key}: only a reward or a penalty can be fixed')
+
+    @property
+    def rule_key(self):
+        """Its key on the dashboard."""
+        return self.rule or self.key
+
 
     @property
     def pays(self):
@@ -61,22 +84,29 @@ class RewardTable:
     dashes); help_prefix: put before each term's help on the trainer's command line.
 
     signed: a penalty's points are negative and added, as a Campaign Hunter's are (True); or they are its size and
-    subtracted, as a Jelly's are (False)."""
+    subtracted, as a Jelly's are (False). rule_defaults: whether the dashboard may show a run that does not record a
+    term at the term's default (False when older runs trained with other values than today's defaults). row_names: what
+    the rows of a run's rewards summary are named after (a RowNames)."""
 
-    def __init__(self, terms, prefix='', help_prefix='', signed=True):
+    def __init__(self, terms, prefix='', help_prefix='', signed=True, rule_defaults=True, row_names=RowNames.KEY):
+        if not isinstance(row_names, RowNames):
+            raise TypeError(f'reward table: row_names must be a RowNames, not {row_names!r}')
         self.terms = tuple(terms)
-        self.prefix, self.help_prefix, self.signed = prefix, help_prefix, signed
+        self.prefix, self.help_prefix, self.signed, self.row_names = prefix, help_prefix, signed, row_names
+        self.rule_defaults = rule_defaults
         self.paying = tuple(t for t in self.terms if t.pays)
+        self.settable = tuple(t for t in self.terms if not t.fixed)    # the terms that are run settings
         for what, names in (('key', [t.key for t in self.terms]), ('event', [t.event for t in self.paying])):
             repeated = sorted({n for n in names if names.count(n) > 1})
             if repeated:
                 raise ValueError(f'reward table: each term needs its own {what}; repeated: {", ".join(repeated)}')
-        self.by_key = {t.key: t for t in self.terms}
+        self.by_key = {t.key: t for t in self.settable}
 
     # --- the values ---
     @property
     def defaults(self):
-        return {t.key: t.default for t in self.terms}
+        """{key: default} for the terms that are run settings."""
+        return {t.key: t.default for t in self.settable}
 
     @property
     def events(self):
@@ -86,11 +116,11 @@ class RewardTable:
     @property
     def settings(self):
         """The trainer settings (argparse dests) holding the terms' points."""
-        return tuple(self.prefix + t.key for t in self.terms)
+        return tuple(self.prefix + t.key for t in self.settable)
 
     def shaping_class(self, name, doc=None):
-        """A dataclass with one field per term at its default, for code that passes the points around as one value."""
-        cls = make_dataclass(name, [(t.key, float, field(default=t.default)) for t in self.terms])
+        """A dataclass with one field per setting at its default, for code that passes the points around as one value."""
+        cls = make_dataclass(name, [(t.key, float, field(default=t.default)) for t in self.settable])
         cls.__doc__ = doc or cls.__doc__
         return cls
 
@@ -107,12 +137,12 @@ class RewardTable:
 
     def from_args(self, args):
         """The points a run's arguments (an argparse namespace, or anything with the settings as attributes) give."""
-        return self.validate({t.key: getattr(args, self.prefix + t.key, t.default) for t in self.terms})
+        return self.validate({t.key: getattr(args, self.prefix + t.key, t.default) for t in self.settable})
 
     # --- the trainer and its page ---
     def add_arguments(self, parser):
-        """One float flag per term: --<prefix><key> with underscores as dashes."""
-        for t in self.terms:
+        """One float flag per setting: --<prefix><key> with underscores as dashes."""
+        for t in self.settable:
             parser.add_argument('--' + (self.prefix + t.key).replace('_', '-'), type=float, default=t.default,
                                 help=self.help_prefix + self.described(t))
 
@@ -123,31 +153,64 @@ class RewardTable:
 
     def labels(self, group='Rewards'):
         """The settings form's (group, label) for each setting."""
-        return {self.prefix + t.key: (group, t.title) for t in self.terms}
+        return {self.prefix + t.key: (group, t.title) for t in self.settable}
 
-    def weight(self, term, value):
-        """What one count of the term's event pays: its points, or less its size for an unsigned table's penalty."""
-        return -value if term.kind is RewardKind.PENALTY and not self.signed else value
+    def points(self, term, values):
+        """The term's points at `values` (validated settings): its default when fixed, else its unit times its
+        setting."""
+        return term.default if term.fixed else term.unit * values[term.key]
+
+    def weight(self, term, values):
+        """What one count of the term's event pays at `values`: its points, or less its size for an unsigned table's
+        penalty."""
+        points = self.points(term, values)
+        return -points if term.kind is RewardKind.PENALTY and not self.signed else points
 
     def manifest_fields(self):
         """{key: (block, field, sign)} for the terms the task records in its manifest. sign: what the setting is
         multiplied by there (an unsigned table records a penalty as a negative reward)."""
         return {t.key: (*t.manifest, -1 if t.kind is RewardKind.PENALTY and not self.signed else 1)
-                for t in self.terms if t.manifest}
+                for t in self.settable if t.manifest}
 
     def reward_rules(self):
         """The dashboard's reward rules (a setting is not one). A penalty's value is its size: the page draws it with a
         minus sign."""
         from learning.dashboard import RewardRule
-        return tuple(RewardRule(t.rule or t.key, t.title, t.help, t.kind.value, tuple(t.stages), self.prefix + t.key,
-                                abs(t.default)) for t in self.terms if t.kind is not RewardKind.SETTING)
+        defaults = self.defaults
+        return tuple(RewardRule(t.rule_key, t.title, t.help, t.kind.value, tuple(t.stages),
+                                '' if t.fixed else self.prefix + t.key,
+                                abs(self.points(t, defaults)) if self.rule_defaults else None)
+                     for t in self.terms if t.kind is not RewardKind.SETTING)
+
+    def row_name(self, term):
+        """The name of the term's row in a run's rewards summary."""
+        return term.title if self.row_names is RowNames.TITLE else term.key.replace('_', ' ').capitalize()
+
+    def row_names_of(self, term):
+        """Every name the term's row has had, the current one first."""
+        return (self.row_name(term), *term.recorded_as)
 
     def summary(self, values):
-        """The rewards rows recorded in a run's config.json: name, sign, size and unit of each term that is not 0. A
-        row's name is its key in words ("own_kill": "Own kill"), as runs have always recorded it."""
+        """The rewards rows recorded in a run's config.json for each paying term whose points are not 0: name, sign,
+        value and unit. A signed table's row has the sign of its points and their size; an unsigned table's has the
+        sign its kind pays with (+ a reward, - a penalty) and its points as set."""
         values = self.validate(values)
-        return [{'name': t.key.replace('_', ' ').capitalize(), 'sign': '+' if self.weight(t, values[t.key]) > 0 else '-',
-                 'value': round(abs(values[t.key]), 4), 'unit': self.described(t)} for t in self.paying if values[t.key]]
+        rows = []
+        for t in self.paying:
+            points = self.points(t, values)
+            if not points:
+                continue
+            if self.signed:
+                sign, value = '+' if points > 0 else '-', abs(points)
+            else:
+                sign, value = '-' if t.kind is RewardKind.PENALTY else '+', points
+            rows.append({'name': self.row_name(t), 'sign': sign, 'value': round(value, 4), 'unit': self.described(t)})
+        return rows
+
+    def summary_rows(self):
+        """{row name: (setting, unit)} for each paying setting: how a run's rewards summary row recovers the setting
+        (the row's value over the unit). Only the current row names: an older name never recovers a setting."""
+        return {self.row_name(t): (self.prefix + t.key, t.unit) for t in self.paying if not t.fixed}
 
     # --- the episode ---
     def row(self):
@@ -160,16 +223,25 @@ class RewardTable:
         missing a term's event, or holding an event no term pays on, is an error, so a count and its points cannot
         drift apart. `values` may hold more than the table's settings (a task's own extras): only the table's are read."""
         import numpy as np
-        values = self.validate({key: value for key, value in values.items() if key in self.by_key})
         events = set(self.events)
-        rewards = np.zeros(len(rows), dtype=np.float64)
         for i, row in enumerate(rows):
             if set(row) != events:
                 missing, extra = sorted(events - set(row)), sorted(set(row) - events)
                 raise ValueError(f'decision {i}: event counts do not match the reward table '
                                  f'(missing {missing}, unpaid {extra})')
+        return self.pay_columns({e: np.asarray([row[e] for row in rows], dtype=np.float64) for e in self.events},
+                                values, len(rows))
+
+    def pay_columns(self, columns, values, n):
+        """pay() for `n` decisions whose event counts come as columns: {event: array of n counts}, one per event."""
+        import numpy as np
+        if set(columns) != set(self.events):
+            missing, extra = sorted(set(self.events) - set(columns)), sorted(set(columns) - set(self.events))
+            raise ValueError(f'event counts do not match the reward table (missing {missing}, unpaid {extra})')
+        values = self.validate({key: value for key, value in values.items() if key in self.by_key})
+        rewards = np.zeros(n, dtype=np.float64)
         for t in self.paying:
-            rewards += self.weight(t, values[t.key]) * np.asarray([row[t.event] for row in rows], dtype=np.float64)
+            rewards = rewards + self.weight(t, values) * np.asarray(columns[t.event], dtype=np.float64)
         return rewards
 
 

@@ -44,7 +44,8 @@ def _bounty_rewards(beaten_at, bounty, steps=4):
     for step in range(steps):
         recorder.senses.append(np.zeros(SENSE_SIZE, np.float32))
         recorder.controls.append((1, 0, 0))
-        recorder._events.append([0, 0, 0, 0.0, 0.0, 0.0, 0, 0.0, 0, 0])
+        recorder._events.append(rollout.TABLE.row())
+        recorder._kills.append(0)
         counter = _Counter()
         counter.rules_beaten = beaten_at is not None and step >= beaten_at
         recorder.counted(counter, step / 10.0)

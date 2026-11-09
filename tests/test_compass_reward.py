@@ -30,7 +30,8 @@ def rewards(senses, reward=10.0):
     for step, s in enumerate(senses):
         recorder.senses.append(s)
         recorder.controls.append((1, 0, 0))
-        recorder._events.append([0, 0, 0, 0.0, 0.0, 0.0, 0, 0.0, 0, 0])
+        recorder._events.append(rollout.TABLE.row())
+        recorder._kills.append(0)
         recorder.counted(_Counter(), step / 10.0)
     return recorder.arrays()[2]
 
@@ -66,7 +67,8 @@ def bored_rewards(views, seen=(), penalty=6.0, window=10.0):
     for step, view in enumerate(views):
         recorder.senses.append(sense(0.5, seen=step in seen))
         recorder.controls.append((1, 0, 0))
-        recorder._events.append([0, 0, 0, 0.0, 0.0, 0.0, 0, 0.0, 0, 0])
+        recorder._events.append(rollout.TABLE.row())
+        recorder._kills.append(0)
         recorder._views.append(frozenset(view))
         recorder.counted(_Counter(), step / 10.0)
     return recorder.arrays()[2]
@@ -112,7 +114,8 @@ def test_shots_fired_with_no_enemy_in_sight_cost_the_shot_price():
     for step, (seen, shots) in enumerate([(False, 1), (True, 2), (False, 0), (False, 3)]):
         recorder.senses.append(sense(0.5, seen=seen))
         recorder.controls.append((1, 0, 0))
-        recorder._events.append([0, 0, 0, 0.0, 0.0, 0.0, 0, 0.0, 0, 0])
+        recorder._events.append(rollout.TABLE.row())
+        recorder._kills.append(0)
         recorder._shots.append(shots)
         recorder.counted(_Counter(), step / 10.0)
     assert recorder.arrays()[2].tolist() == pytest.approx([-2.0, 0.0, 0.0, -6.0])
@@ -130,7 +133,8 @@ def test_a_shot_within_20_degrees_of_an_enemy_in_sight_is_free():
     for step, s in enumerate([aimed_at(15), aimed_at(-19), aimed_at(40), sense(0.5)]):
         recorder.senses.append(s)
         recorder.controls.append((1, 0, 0))
-        recorder._events.append([0, 0, 0, 0.0, 0.0, 0.0, 0, 0.0, 0, 0])
+        recorder._events.append(rollout.TABLE.row())
+        recorder._kills.append(0)
         recorder._shots.append(1)
         recorder.counted(_Counter(), step / 10.0)
     assert recorder.arrays()[2].tolist() == pytest.approx([0.0, 0.0, -2.0, -2.0])
@@ -142,7 +146,8 @@ def test_each_second_spent_turning_costs_the_turning_penalty():
     for step, turn in enumerate([0, 1, 2, 2]):                     # left, straight, right, right
         recorder.senses.append(sense(0.5))
         recorder.controls.append((turn, 1, 0))
-        recorder._events.append([0, 0, 0, 0.0, 0.0, 0.0, 0, 0.0, 0, 0])
+        recorder._events.append(rollout.TABLE.row())
+        recorder._kills.append(0)
         recorder.counted(_Counter(), step / 10.0)
     assert recorder.arrays()[2].tolist() == pytest.approx([-0.2, 0.0, -0.2, -0.2])   # 0.1 s a decision
 
@@ -153,7 +158,8 @@ def test_each_hit_on_an_enemy_pays_the_hit_reward():
     for step, hits in enumerate([0, 2, 1]):
         recorder.senses.append(sense(0.5))
         recorder.controls.append((1, 0, 0))
-        recorder._events.append([0, 0, 0, 0.0, 0.0, 0.0, 0, 0.0, 0, 0])
+        recorder._events.append(rollout.TABLE.row())
+        recorder._kills.append(0)
         recorder._hits.append(hits)
         recorder.counted(_Counter(), step / 10.0)
     assert recorder.arrays()[2].tolist() == pytest.approx([0.0, 6.0, 3.0])
@@ -186,7 +192,8 @@ def panicking_recorder(turn_cost, steps, threshold=-10.0):
     recorder._start_enemies = 1
     recorder._controller = SimpleNamespace(temperature=1.0)
     for step in range(steps):
-        recorder._events.append([0, 0, 0, 0.0, 0.0, 0.0, 0, 0.0, 0, 0])
+        recorder._events.append(rollout.TABLE.row())
+        recorder._kills.append(0)
         recorder._shots.append(0)
         recorder._hits.append(0)
         recorder._pending = True
@@ -209,7 +216,8 @@ def test_panic_is_off_by_default():
     recorder = rollout.RolloutRecorder(6, turning_penalty=50.0)
     recorder._controller = SimpleNamespace(temperature=1.0)
     for _ in range(30):
-        recorder._events.append([0, 0, 0, 0.0, 0.0, 0.0, 0, 0.0, 0, 0])
+        recorder._events.append(rollout.TABLE.row())
+        recorder._kills.append(0)
         recorder._shots.append(0)
         recorder._hits.append(0)
         recorder._pending = True
