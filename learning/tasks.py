@@ -2,7 +2,6 @@
 from dataclasses import dataclass, field
 import importlib
 
-from learning.inchworm_rewards import SETTINGS as INCHWORM_REWARD_SETTINGS
 
 
 REPLAY_MODES = ('hooks', 'builtin', None)
@@ -66,8 +65,9 @@ TASKS = {
     'inchworm': Task('inchworm', 'learning.adapters.inchworm_scenario', 'Inchworm',
         dict(horizon=120., workers=4, iterations=5000, episodes=24, bootstrap_episodes=80,
              bootstrap_epochs=4, lr=1e-4, gamma=.997, gae_lambda=.97, budget_seconds=7200, start='', seed=0),
-        ('budget_seconds','bootstrap_episodes','bootstrap_epochs','seed') + INCHWORM_REWARD_SETTINGS,
-        'learning.replay', 'learning.adapters.inchworm_replay', 'learning.adapters.inchworm_dashboard'),
+        ('budget_seconds','bootstrap_episodes','bootstrap_epochs','seed'),
+        'learning.replay', 'learning.adapters.inchworm_replay', 'learning.adapters.inchworm_dashboard',
+        rewards='learning.inchworm_rewards'),
     'flocker_team': Task('flocker_team', 'learning.adapters.flocker_scenario', 'Flocker team',
         dict(horizon=60., workers=4, iterations=10000, bootstrap_episodes=0),
         ('budget_seconds','seed'), 'learning.replay',

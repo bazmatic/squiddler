@@ -462,10 +462,6 @@ def build_parser():
     from learning.reward_table import tables
     for table in tables().values():          # the tasks that declare their rewards in a reward table
         table.add_arguments(parser)
-    from learning.inchworm_rewards import DEFAULTS as INCHWORM_DEFAULTS
-    for name, default in INCHWORM_DEFAULTS.items():
-        parser.add_argument('--inchworm-' + name.replace('_', '-'), type=float, default=default,
-                            help='Inchworm ' + name.replace('_', ' '))
     parser.add_argument('--start', default=str(DEFAULT_START))
     parser.add_argument('--out', default=str(DEFAULT_OUT))
     parser.add_argument('--iterations', type=int, default=100, help='training iterations; 0 means unlimited for creature teams')
