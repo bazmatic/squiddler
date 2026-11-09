@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from tools import ppo_neural
+from tools.trainer import lifecycle
 from tools.trainer.processes import REPO as ROOT, list_processes, training
 from tools.trainer.settings import config_of
 
@@ -19,7 +20,7 @@ class Run:
     name: str
     number: int
     path: Path
-    state: str                 # training | pausing | paused | interrupted | finished | stopped
+    state: lifecycle.State     # training | pausing | paused | interrupted | finished | stopped (as text, too)
     iterations_done: int
     total: int | None
     started_from: str | None
@@ -92,18 +93,6 @@ def _started_from(config, root):
     return str(start)
 
 
-def _state(path, pid):
-    if pid is not None:
-        return 'pausing' if (path / ppo_neural.PAUSE_FILE).exists() else 'training'
-    try:
-        recorded = json.loads((path / ppo_neural.STATE_FILE).read_text()).get('state')
-    except (OSError, ValueError, AttributeError):
-        recorded = None
-    if recorded in ('paused', 'finished', 'stopped'):
-        return recorded
-    return 'interrupted' if (path / ppo_neural.RESUME_FILE).exists() else 'stopped'
-
-
 _FOLDER_CACHE = {}            # run folder -> ((folder mtime_ns, config mtime_ns, config size), config, checkpoints)
 
 
@@ -128,7 +117,7 @@ def read_run(path, root, trained):
     total = ((config or {}).get('args') or {}).get('iterations')
     pid = trained.get(path.name)
     rows = log_rows(path)
-    return Run(name=path.name, number=int(path.name[3:]), path=path, state=_state(path, pid),
+    return Run(name=path.name, number=int(path.name[3:]), path=path, state=lifecycle.state_of(path, pid),
                iterations_done=len(rows), total=total, started_from=_started_from(config, root),
                checkpoints=checkpoints, pid=pid)
 
@@ -140,14 +129,14 @@ def list_runs(root=RL_ROOT, processes=None):
 
 
 def status(root=RL_ROOT, processes=None):
-    """What training is doing now: the active run (training, pausing, paused or interrupted), else the newest."""
+    """What training is doing now: the active run (training, pausing, paused or interrupted), else the newest, and
+    the commands it allows now (tools.trainer.lifecycle), which the page offers."""
     runs = list_runs(root, processes)
-    active = [r for r in runs if r.state in ('training', 'pausing')] or \
-             [r for r in runs if r.state in ('paused', 'interrupted')][-1:]
-    run = active[0] if active else (runs[-1] if runs else None)
+    active = lifecycle.active(runs)
+    run = active or (runs[-1] if runs else None)
     if run is None:
         return {'state': 'idle', 'phase': None, 'run': None, 'iteration': None, 'iterations': None,
-                'seconds_per_iteration': None, 'started': None, 'latest': {}}
+                'seconds_per_iteration': None, 'started': None, 'latest': {}, 'commands': []}
     rows = log_rows(run.path)
     last = rows[-1] if rows else {}
     try:
@@ -159,6 +148,7 @@ def status(root=RL_ROOT, processes=None):
     except (OSError, ValueError, AttributeError):
         phase = None
     return {'state': run.state if active else 'idle', 'phase': phase, 'run': run.name,
+            'commands': [str(c) for c in lifecycle.commands(active, phase)],
             'iteration': int(last['iteration']) if 'iteration' in last else None, 'iterations': run.total,
             'seconds_per_iteration': (last['rollout_s'] + last['update_s']) if 'rollout_s' in last else None,
             'started': started, 'latest': last, 'pid': run.pid,
