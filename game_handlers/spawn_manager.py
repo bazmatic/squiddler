@@ -6,6 +6,7 @@ in the start_level() method.
 
 from dataclasses import dataclass
 from typing import List, Tuple, Callable, Optional, TYPE_CHECKING
+import logging
 import os
 import random
 import math
@@ -104,13 +105,25 @@ class SpawnManager:
         used_positions: List[Tuple[float, float]] = []
         
         for pos in positions_to_use:
-            entity = self._create_entity(config, pos, command_recorder)
+            entity = self._create_entity(config, self._seat(config.kind, config.radius, pos), command_recorder)
             if config.post_create_hook:
                 config.post_create_hook(entity)
             self.roster.add(entity)
             used_positions.append(pos)
         
         return used_positions
+
+    def _seat(self, kind: str, radius: float, pos: Tuple[float, float]) -> Tuple[float, float]:
+        """Where to put an enemy chosen for pos: there if its whole body fits in open space, else the nearest spot where
+        it does. When no spot nearby has room for it, it goes at pos anyway, and the level says so."""
+        maze = self._maze
+        if maze is None or radius <= 0 or maze.is_open(pos, radius):
+            return pos
+        seat = maze.nearest_open(pos, radius, reach=2 * max(maze.cell_size_x, maze.cell_size_y))
+        if seat is None:
+            logging.getLogger(__name__).warning('No room for a %s near %s: it starts touching a wall', kind, pos)
+            return pos
+        return seat
 
     def _create_entity(
         self,
@@ -245,6 +258,9 @@ class SpawnManager:
             if kind in enemy_kinds.hunters():
                 hunters.append((kind, pos))
                 continue
+            if kind not in ('wallcrawler', 'inchworm'):
+                self._maze = maze
+                pos = self._seat(kind, enemy_kinds.kind(kind).spawn_radius, pos)
             enemy = make_enemy(kind, pos, level, command_recorder)
             if kind in ('wallcrawler', 'inchworm'):
                 self._place_layout_crawler(enemy, maze)

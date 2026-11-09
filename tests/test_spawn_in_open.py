@@ -95,3 +95,22 @@ def test_big_enemies_take_the_positions_with_room_for_them():
     SpawnManager(roster).spawn_all_enemies(
         1, [cramped, roomy], CommandRecorder(), counts, 0, 1, maze=maze)
     assert roster.of_kind('mother_boss')[0].get_pos() == roomy
+
+
+def test_an_authored_egg_too_near_a_wall_starts_where_its_whole_body_fits():
+    maze = Maze(1, MazeComplexity.EMPTY, 90)          # small cells: a cell's centre is nearer the wall than an egg is wide
+    for y in range(1, 89):
+        maze.grid[y][45] = 1
+    maze.rebuild_walls()
+    cell = (44, 45)        # the cell beside the wall: its centre is open, but an egg's body would overlap the rock
+    radius = enemy_kinds.kind('egg').spawn_radius
+    assert maze.is_open(maze.position_calculator.grid_center_to_screen(*cell), 1)
+    assert not maze.is_open(maze.position_calculator.grid_center_to_screen(*cell), radius)
+
+    class Layout:
+        enemies = [('egg', cell)]
+
+    roster = EnemyRoster()
+    SpawnManager(roster).spawn_from_layout(Layout, maze, 1, CommandRecorder())
+    egg, = roster.all()
+    assert maze.is_open(egg.get_pos(), radius)

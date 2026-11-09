@@ -580,6 +580,23 @@ class Maze:
                 return pos
         return origin
     
+    def nearest_open(self, origin: Tuple[float, float], radius: float, reach: float,
+                     step: float = 4.0) -> Optional[Tuple[float, float]]:
+        """The closest position to origin (within reach) where a circle of this radius sits in open space: origin itself
+        if it does, else the first open point on rings growing out from it; None when there is none."""
+        if self.is_open(origin, radius):
+            return origin
+        distance = step
+        while distance <= reach:
+            points = max(8, int(2 * math.pi * distance / step))
+            for n in range(points):
+                angle = 2 * math.pi * n / points
+                pos = (origin[0] + math.cos(angle) * distance, origin[1] + math.sin(angle) * distance)
+                if self.is_open(pos, radius):
+                    return pos
+            distance += step
+        return None
+
     def update(self, dt: float) -> None:
         """Advance the rock knocked loose by shots."""
         self.wall_debris.update(dt)
