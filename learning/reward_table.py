@@ -10,45 +10,50 @@ No pygame and no numpy at import: the trainer's server reads these tables.
 """
 import math
 from dataclasses import dataclass, make_dataclass, field
+from enum import Enum
 
 
-KINDS = ('reward', 'penalty', 'shaping', 'setting')
+class RewardKind(Enum):
+    """What a term is. A reward or a penalty pays on an event; a shaping parameter (a distance, a share) tunes other
+    terms, and a setting is a run setting kept beside the rewards (a lesson, a limit): neither pays."""
+    REWARD = 'reward'
+    PENALTY = 'penalty'
+    SHAPING = 'shaping'
+    SETTING = 'setting'
+
+    @property
+    def pays(self):
+        return self in (RewardKind.REWARD, RewardKind.PENALTY)
 
 
 @dataclass(frozen=True)
 class RewardTerm:
-    """key: the setting (and trainer flag, with prefix) holding the points; default: its value for a new run; title:
-    its name on the settings form and the dashboard; help: what the points are paid for; event: the name of the
-    per-decision episode count it multiplies.
-
-    kind: 'reward' or 'penalty' (left out: a negative default, or help saying "(negative", makes it a penalty); 'shaping' for a parameter of other
-    terms (a distance, a share), and 'setting' for a run setting kept beside the rewards that is not one (a lesson, a
-    limit): neither pays on an event. stages: the curriculum stages it applies in (empty: every stage). manifest: the
+    """key: the setting (and trainer flag, with prefix) holding the points; kind: its RewardKind, always declared;
+    default: its value for a new run; title: its name on the settings form and the dashboard; help: what the points
+    are paid for; event: the name of the per-decision episode count a reward or penalty multiplies (none for a
+    shaping parameter or a setting). stages: the curriculum stages it applies in (empty: every stage). manifest: the
     (block, field) where the task records its value in a run's manifest, if it does. rule: its key on the dashboard,
     when that is not its own key."""
     key: str
+    kind: RewardKind
     default: float
     title: str
     help: str
     event: str | None = None
-    kind: str | None = None
     stages: tuple = ()
     manifest: tuple | None = None
     rule: str | None = None
 
     def __post_init__(self):
-        if self.kind is None:
-            # A negative default, or one at 0 whose help says it is negative, is a penalty.
-            object.__setattr__(self, 'kind', 'penalty' if self.default < 0 or '(negative' in self.help else 'reward')
-        if self.kind not in KINDS:
-            raise ValueError(f'reward term {self.key}: kind must be one of {", ".join(KINDS)}, not {self.kind!r}')
-        if (self.event is None) != (self.kind in ('shaping', 'setting')):
-            raise ValueError(f'reward term {self.key}: a {self.kind} term '
-                             + ('needs the event it pays on' if self.event is None else 'pays on no event'))
+        if not isinstance(self.kind, RewardKind):
+            raise TypeError(f'reward term {self.key}: kind must be a RewardKind, not {self.kind!r}')
+        if (self.event is not None) != self.kind.pays:
+            raise ValueError(f'reward term {self.key}: a {self.kind.value} term '
+                             + ('pays on no event' if self.event is not None else 'needs the event it pays on'))
 
     @property
     def pays(self):
-        return self.event is not None
+        return self.kind.pays
 
 
 class RewardTable:
@@ -109,7 +114,12 @@ class RewardTable:
         """One float flag per term: --<prefix><key> with underscores as dashes."""
         for t in self.terms:
             parser.add_argument('--' + (self.prefix + t.key).replace('_', '-'), type=float, default=t.default,
-                                help=self.help_prefix + t.help)
+                                help=self.help_prefix + self.described(t))
+
+    def described(self, term):
+        """The term's help as the trainer's flags and a run's rewards rows give it: a signed table's penalty says
+        that its points are negative."""
+        return term.help + (' (negative: a penalty)' if self.signed and term.kind is RewardKind.PENALTY else '')
 
     def labels(self, group='Rewards'):
         """The settings form's (group, label) for each setting."""
@@ -117,27 +127,27 @@ class RewardTable:
 
     def weight(self, term, value):
         """What one count of the term's event pays: its points, or less its size for an unsigned table's penalty."""
-        return -value if term.kind == 'penalty' and not self.signed else value
+        return -value if term.kind is RewardKind.PENALTY and not self.signed else value
 
     def manifest_fields(self):
         """{key: (block, field, sign)} for the terms the task records in its manifest. sign: what the setting is
         multiplied by there (an unsigned table records a penalty as a negative reward)."""
-        return {t.key: (*t.manifest, -1 if t.kind == 'penalty' and not self.signed else 1)
+        return {t.key: (*t.manifest, -1 if t.kind is RewardKind.PENALTY and not self.signed else 1)
                 for t in self.terms if t.manifest}
 
     def reward_rules(self):
-        """The dashboard's reward rules (a 'setting' is not one). A penalty's value is its size: the page draws it with
-        a minus sign, and its help drops the "(negative: a penalty)" note."""
+        """The dashboard's reward rules (a setting is not one). A penalty's value is its size: the page draws it with a
+        minus sign."""
         from learning.dashboard import RewardRule
-        return tuple(RewardRule(t.rule or t.key, t.title, t.help.split(' (negative')[0], t.kind, tuple(t.stages),
-                                self.prefix + t.key, abs(t.default)) for t in self.terms if t.kind != 'setting')
+        return tuple(RewardRule(t.rule or t.key, t.title, t.help, t.kind.value, tuple(t.stages), self.prefix + t.key,
+                                abs(t.default)) for t in self.terms if t.kind is not RewardKind.SETTING)
 
     def summary(self, values):
         """The rewards rows recorded in a run's config.json: name, sign, size and unit of each term that is not 0. A
         row's name is its key in words ("own_kill": "Own kill"), as runs have always recorded it."""
         values = self.validate(values)
         return [{'name': t.key.replace('_', ' ').capitalize(), 'sign': '+' if self.weight(t, values[t.key]) > 0 else '-',
-                 'value': round(abs(values[t.key]), 4), 'unit': t.help} for t in self.paying if values[t.key]]
+                 'value': round(abs(values[t.key]), 4), 'unit': self.described(t)} for t in self.paying if values[t.key]]
 
     # --- the episode ---
     def row(self):
@@ -146,8 +156,9 @@ class RewardTable:
 
     def pay(self, rows, values):
         """Per decision (or per agent), the points its event counts earn: the sum over paying terms of each term's
-        weight times its event's count, matched by name. `rows` are dicts of event counts (as row() makes); a row missing a term's event, or
-        holding an event no term pays on, is an error, so a count and its points cannot drift apart."""
+        weight times its event's count, matched by name. `rows` are dicts of event counts (as row() makes); a row
+        missing a term's event, or holding an event no term pays on, is an error, so a count and its points cannot
+        drift apart."""
         import numpy as np
         values = self.validate(values)
         events = set(self.events)

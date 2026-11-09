@@ -2,6 +2,7 @@
 (tools/ppo_neural.py writes the PPO stats and mean_return beside them), and its reward points from
 the reward table in learning.campaign_rewards."""
 from learning.campaign_rewards import TABLE
+from learning.reward_table import RewardKind
 from learning.dashboard import Layout, Metric, number
 
 METRICS = (
@@ -36,8 +37,9 @@ REWARD_RULES = TABLE.reward_rules()
 def recorded(config):
     """The points config.json's args record, with a penalty's sign flipped so the page shows it as a penalty."""
     args = (config or {}).get('args') or {}
-    return {r.key: (-args[r.setting] if r.kind == 'penalty' else args[r.setting]) for r in REWARD_RULES
-            if isinstance(args.get(r.setting), (int, float)) and not isinstance(args.get(r.setting), bool)}
+    values = {t.key: args[t.key] for t in TABLE.terms
+              if isinstance(args.get(t.key), (int, float)) and not isinstance(args.get(t.key), bool)}
+    return {key: -value if TABLE.by_key[key].kind is RewardKind.PENALTY else value for key, value in values.items()}
 
 
 def cards(config):
