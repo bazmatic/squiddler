@@ -25,13 +25,14 @@ export function renderStatus(){
   const phase=(state==='training'||state==='pausing')?s.phase:null;
   const started=s.started?new Date(s.started).toLocaleString([], {weekday:'short',hour:'numeric',minute:'2-digit'}):'-';
   const facts=s.run?`<span class="facts"><b>${esc(s.run)}</b> · ${esc(taskLabel(currentTask()))} · iteration ${iter}${s.iterations?` of ${s.iterations}`:''}${state==='idle'?'':` · started ${esc(started)}`}${s.seconds_per_iteration&&(state==='training'||state==='pausing')?` · last iteration ${s.seconds_per_iteration.toFixed(1)} s`:''}</span>`:'<span class="facts">No runs yet</span>';
-  const buttons=(phase==='evaluating'||phase==='finished')?['stop']:({training:['pause','stop'],pausing:['stop'],paused:['resume','stop'],interrupted:['resume','stop'],idle:[]}[state]||[]);
-  const canResize=['paused','interrupted'].includes(state);
+  // The commands the run allows now, as the server's lifecycle says (tools/trainer/lifecycle.py), for every caller.
+  const buttons=s.commands||[];
+  const canResize=buttons.includes('resume');           // workers change as a paused run resumes
   const workers=s.workers!=null&&state!=='idle'?`<label for="active-workers">Workers</label><input id="active-workers" class="iter" type="number" min="1" step="1" value="${esc(s.workers)}" ${canResize?'':'disabled'}><span class="msg">${canResize?'Applied when you resume.':'Pause to change workers.'}</span>`:'';
   const label={pause:'Pause',resume:'Resume',stop:'Stop'};
   const note=phase==='evaluating'?'Running final evaluation; the iteration count stays fixed.':phase==='finished'?'Training finished; shutting down workers.':{pausing:'Pausing after this iteration…',paused:'Paused: resume to carry on where it stopped.',interrupted:'Interrupted (it ended without a pause or stop): resume to carry on from its last iteration.'}[state]||'';
   // The 5 s refresh only updates the numbers: rebuilding the strip would undo an armed Stop and clear a message.
-  const key=`${state}|${phase}|${s.run}|${s.workers}`;
+  const key=`${state}|${phase}|${s.run}|${s.workers}|${buttons.join()}`;
   if(key!==S.STATUS_KEY){
     S.STATUS_KEY=key;
     $('status').innerHTML=`<span class="badge ${state}">${phase==='evaluating'?'Evaluating':phase==='finished'?'Finishing':{training:'Training',pausing:'Pausing',paused:'Paused',interrupted:'Interrupted',idle:'Idle'}[state]}</span><span id="status-facts"></span>${note?`<span class="msg">${note}</span>`:''}<span class="msg" id="status-msg"></span>${workers}<span class="actions">${buttons.map(b=>`<button data-act="${b}" class="${b==='stop'?'danger':''}">${label[b]}</button>`).join('')}</span>`;

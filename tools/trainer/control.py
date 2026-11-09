@@ -1,24 +1,15 @@
-"""Starting, stopping, pausing and resuming training runs. One run trains at a time."""
-import contextlib
-import os
+"""Starting, stopping, pausing and resuming training runs. One run trains at a time: which command each run's state
+allows, and the files that carry it out, are tools.trainer.lifecycle's."""
 import subprocess
 import sys
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from tools import ppo_neural
+from tools.trainer import lifecycle, resume_edits
+from tools.trainer.lifecycle import TrainerError  # noqa: F401 (the callers' error, raised here and by lifecycle)
 from tools.trainer.processes import REPO, list_processes, terminate_tree
 from tools.trainer.runs import RL_ROOT, list_runs, log_rows, next_run_number
-from tools.trainer import resume_edits
 from tools.trainer.settings import NoSettings, apply_changes, changed, config_of, read_settings, to_argv
-
-LOCK = '.trainer.lock'
-STALE_LOCK_SECONDS = 60
-
-
-class TrainerError(Exception):
-    """A request that cannot be carried out; the message is for people."""
 
 
 @dataclass
@@ -36,43 +27,8 @@ def launch_process(command, log_path):
                                 start_new_session=True).pid
 
 
-@contextlib.contextmanager
-def _lock(root):
-    """Only one start or resume at a time, whoever asks (the page, the command line, an agent)."""
-    path = Path(root) / LOCK
-    path.parent.mkdir(parents=True, exist_ok=True)
-    for _ in range(2):
-        try:
-            os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
-            break
-        except FileExistsError:
-            try:
-                if time.time() - path.stat().st_mtime > STALE_LOCK_SECONDS:
-                    path.unlink()
-                    continue
-            except FileNotFoundError:
-                continue
-            raise TrainerError('a run is already starting; try again in a moment') from None
-    else:
-        raise TrainerError('a run is already starting; try again in a moment')
-    try:
-        yield
-    finally:
-        path.unlink(missing_ok=True)
-
-
 def _runs(root, processes):
     return list_runs(root, list_processes() if processes is None else processes)
-
-
-def _refuse_if_busy(runs):
-    for run in runs:
-        if run.state in ('training', 'pausing'):
-            raise TrainerError(f'{run.name} is training; stop or pause it first')
-        if run.state == 'paused':
-            raise TrainerError(f'{run.name} is paused; resume or stop it first')
-        if run.state == 'interrupted':
-            raise TrainerError(f'{run.name} was interrupted; resume or stop it first')
 
 
 def _source(from_, runs):
@@ -119,9 +75,9 @@ def start(from_=None, changes=None, root=RL_ROOT, processes=None, launch=None, a
         raise TrainerError('actor scale must be greater than zero and at most one')
     actor_options=['--actor-scale',str(actor_scale)] if actor_scale!=1 else []
     root = Path(root)
-    with _lock(root):
+    with lifecycle.lock(root):
         runs = _runs(root, processes)
-        _refuse_if_busy(runs)
+        lifecycle.may_start(runs)
         from learning.tasks import UNTAGGED_TASK, task
         requested_task = (changes or {}).get('task', UNTAGGED_TASK)
         try:
@@ -176,51 +132,28 @@ def _last_iteration(run):
 def stop(root=RL_ROOT, processes=None, terminate=terminate_tree):
     """End the training run (or a paused or interrupted one): it is finished, its checkpoints stay."""
     processes = list_processes() if processes is None else processes
-    runs = list_runs(root, processes)
-    active = [r for r in runs if r.state in ('training', 'pausing')] or \
-             [r for r in runs if r.state in ('paused', 'interrupted')][-1:]
-    if not active:
-        raise TrainerError('nothing is training')
-    run = active[0]
+    run = lifecycle.to_stop(list_runs(root, processes))
     if run.pid is not None:
         terminate(run.pid, processes)
-    ppo_neural.write_state(run.path, 'stopped', _last_iteration(run))
-    (run.path / ppo_neural.PAUSE_FILE).unlink(missing_ok=True)
+    lifecycle.mark_stopped(run.path, _last_iteration(run))
     return run.name
 
 
 def pause(root=RL_ROOT, processes=None):
     """Ask the training run to stop once its current iteration is saved; it can be resumed later."""
-    training = [r for r in _runs(root, processes) if r.state in ('training', 'pausing')]
-    if not training:
-        raise TrainerError('nothing is training')
-    run = training[0]
+    run = lifecycle.to_pause(_runs(root, processes))
     config = config_of(run.path)
     if config is not None and not isinstance(config.get('args'), dict):
         raise TrainerError(f'{run.name} was started before pausing existed; it can only be stopped')
-    (run.path / ppo_neural.PAUSE_FILE).touch()
+    lifecycle.request_pause(run.path)
     return run.name
 
 
 def resume(run=None, root=RL_ROOT, processes=None, launch=None, changes=None):
     """Carry on a paused or interrupted run in its own folder, as if it had never stopped."""
     root = Path(root)
-    with _lock(root):
-        runs = _runs(root, processes)
-        for other in runs:
-            if other.state in ('training', 'pausing'):
-                raise TrainerError(f'{other.name} is training; stop or pause it first')
-        resumable = [r for r in runs if r.state in ('paused', 'interrupted')]
-        if run is None:
-            if not resumable:
-                raise TrainerError('nothing to resume')
-            target = resumable[-1]
-        else:
-            target = next((r for r in runs if r.name == run), None)
-            if target is None:
-                raise TrainerError(f'there is no {run}')
-            if target.state not in ('paused', 'interrupted'):
-                raise TrainerError(f'{target.name} is {target.state}; only a paused or interrupted run can resume')
+    with lifecycle.lock(root):
+        target = lifecycle.to_resume(_runs(root, processes), run)
         args = (config_of(target.path) or {}).get('args')
         if not isinstance(args, dict):
             raise TrainerError(f'{target.name} was started before pausing existed; it cannot resume')
@@ -229,16 +162,8 @@ def resume(run=None, root=RL_ROOT, processes=None, launch=None, changes=None):
             edit = resume_edits.prepare(target.path, values, changes) if changes else resume_edits.Edit(values)
         except resume_edits.EditRefused as exc:
             raise TrainerError(str(exc)) from None
-        pause_file = target.path / ppo_neural.PAUSE_FILE
-        had_pause = pause_file.exists()
         command = [sys.executable, '-m', 'tools.ppo_neural', '--start', str(args['start']), '--out',
                    str(target.path), *to_argv(edit.values), '--resume']
-        try:
-            with resume_edits.applied(edit, target.path):
-                pause_file.unlink(missing_ok=True)
-                (launch or launch_process)(command, root / f'{target.name}.log')
-        except Exception:
-            if had_pause:
-                pause_file.touch()
-            raise
+        with lifecycle.resuming(target.path, edit.files):
+            (launch or launch_process)(command, root / f'{target.name}.log')
     return target.name

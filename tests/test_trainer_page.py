@@ -355,10 +355,13 @@ assert.deepEqual(p.S.EDITS,{flocker_hit_reward:5});
 def test_active_workers_control_requires_pause_and_preserves_input_on_poll():
     run_js(r"""
 const p=await page();
-p.S.STATUS={run:'run197',state:'training',workers:8};p.runs.renderStatus();
+p.S.STATUS={run:'run197',state:'training',workers:8,commands:['pause','stop']};p.runs.renderStatus();
 assert.match(p.el('status').innerHTML,/id="active-workers"[^>]*disabled/);
 assert.match(p.el('status').innerHTML,/Pause to change workers/);
-p.S.STATUS.state='paused';p.runs.renderStatus();
+assert.match(p.el('status').innerHTML,/>Pause<\/button>/);
+p.S.STATUS={...p.S.STATUS,state:'paused',commands:['resume','stop']};p.runs.renderStatus();
+assert.match(p.el('status').innerHTML,/>Resume<\/button>/);
+assert.doesNotMatch(p.el('status').innerHTML,/>Pause<\/button>/);
 assert.doesNotMatch(p.el('status').innerHTML,/id="active-workers"[^>]*disabled/);
 p.el('active-workers').value='10';p.runs.renderStatus();
 assert.equal(p.el('active-workers').value,'10');

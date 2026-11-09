@@ -4,10 +4,9 @@ A run's settings are its recorded arguments, their only copy (tools.run_record d
 run's manifest, its rules snapshot, is recomputed from the edited arguments by the code that wrote it at the start,
 never edited in step. This module owns the whole edit: checking the
 changes, refusing a setting the run's task does not take, recomputing the records, changing the learning rate in the
-saved optimiser, logging the edits in the run's config, and writing the files (after a backup, atomically, and back
-as they were if the launch fails).
+saved optimiser and logging the edits in the run's config; tools.trainer.lifecycle.resuming() writes the files (after
+a backup, atomically, and back as they were if the launch fails).
 """
-import contextlib
 import copy
 import io
 import json
@@ -30,7 +29,8 @@ class EditRefused(ValueError):
 
 @dataclass
 class Edit:
-    """The run's settings with the changes applied (tools.trainer.settings Values), and the files to write for them."""
+    """The run's settings with the changes applied (tools.trainer.settings Values), and the files to write for them
+    (see tools.trainer.lifecycle.resuming)."""
     values: dict
     files: dict = field(default_factory=dict)     # path -> bytes
     changes: list = field(default_factory=list)   # (setting, old, new)
@@ -38,7 +38,7 @@ class Edit:
 
 def prepare(path, base, changes):
     """The edit `changes` ({setting: value}) makes to the paused run in `path`, whose settings are `base`. Nothing is
-    written: see applied()."""
+    written: see tools.trainer.lifecycle.resuming()."""
     path = Path(path)
     if not isinstance(changes, dict):
         raise EditRefused('resume changes must be a settings object')
@@ -146,29 +146,3 @@ def _log(path, config, edits):
     config.setdefault('resume_settings_changes', []).append(dict(
         time=time.time(), after_iteration=state.get('iteration'),
         changes=[dict(setting=key, previous=old, value=new) for key, old, new in edits]))
-
-
-def _atomic(path, data):
-    temporary = path.with_name(path.name + '.resume-settings.tmp')
-    temporary.write_bytes(data)
-    temporary.replace(path)
-
-
-@contextlib.contextmanager
-def applied(edit, path):
-    """Write the edit's files into the run in `path` for the body (the launch), keeping a copy of its config first. If
-    the body raises, every file goes back as it was."""
-    path = Path(path)
-    if not edit.files:
-        yield
-        return
-    backups = {file: file.read_bytes() for file in edit.files}
-    _atomic(path / f'config-before-resume-{time.time_ns()}.json', (path / 'config.json').read_bytes())
-    try:
-        for file, data in edit.files.items():
-            _atomic(file, data)
-        yield
-    except BaseException:
-        for file, data in backups.items():
-            _atomic(file, data)
-        raise
