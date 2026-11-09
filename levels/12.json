@@ -6,7 +6,9 @@
   },
   "enemies": {
     "flocker": 6,
-    "split_boss": 1
+    "egg": 1,
+    "split_boss": 1,
+    "mother_boss": 1
   },
   "exit_policy": {
     "type": "all_cleared"

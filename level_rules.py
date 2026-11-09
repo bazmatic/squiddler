@@ -125,7 +125,7 @@ def _must_clear_all(level: int) -> bool:
 def get_boss_counts(level: int) -> Tuple[int, int]:
     """Get the bosses on a level without a level file.
 
-    Boss levels cycle through split bosses, a mother boss, then both. Each full
+    Every boss level carries a mother boss; the cycle varies how many mothers and split bosses. Each full
     turn of the cycle adds a boss, up to MAX_BOSSES on a level.
 
     Args:
@@ -140,7 +140,7 @@ def get_boss_counts(level: int) -> Tuple[int, int]:
     cycle = level // config.BOSS_LEVEL_INTERVAL - 5
     kind, turn = cycle % 3, max(0, cycle // 3)
     if kind == 0:
-        return (min(MAX_BOSSES, 2 + turn), 0)
+        return (min(MAX_BOSSES - 1, 2 + turn), 1)
     if kind == 1:
         return (0, min(MAX_BOSSES, 1 + turn))
     return (min(MAX_BOSSES - 1, 1 + turn), 1)
