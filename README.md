@@ -78,7 +78,7 @@ venv/bin/pip install -r requirements-train.txt
 | [Training creatures](docs/modular-training.md) | How the brains are trained: tasks, scenarios, PPO, runs and checkpoints |
 | [Inchworm](docs/neural-inchworm.md) · [Jelly](docs/neural-jelly.md) · [Wallcrawler](docs/wallcrawler.md) · [Flocker](docs/neural-flockers.md) | Meet each creature: how it moves, what it learned and where to find it |
 | [Hunter ally and trainer](docs/hunter.md) | The ally hunter and its pilots, the training manager, unattended runs |
-| [Demo videos](docs/demo-video.md) | Recording clips like the ones above from a training run |
+| [Demo videos](docs/demo-video.md) | Recording clips like the ones above from a training run, or a long video of Demo mode |
 | [ARCHITECTURE.md](ARCHITECTURE.md) · [GLOSSARY.md](GLOSSARY.md) | Code structure and vocabulary |
 
 ## License

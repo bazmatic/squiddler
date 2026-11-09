@@ -5,6 +5,8 @@ description: Make a demo movie of a trained creature (Inchworm, Jelly team, Floc
 
 # Demo video of a trained creature
 
+**The Campaign Hunter (newest run is often `campaign_hunter`) and "record the demo" or "a N minute demo":** use `venv/bin/python -m tools.record_demo OUT.mp4 SECONDS`, which films the game's Demo mode with sound (see `docs/demo-video.md`). The steps below are for the other creatures' training replays.
+
 Run from the repo root with the repo `venv` (system `python3` lacks pygame; `ffmpeg` must be on the PATH).
 
 1. **Pick the run.** Name under `.astrovoid-local/neural/rl` (e.g. `run208`) or a path. Use `mcp__astrovoid-trainer__training_status` or `list_runs` for the newest run of the creature. Training may continue while you render; use `--iteration N` to pin the newest episode drawn.
@@ -19,7 +21,7 @@ Run from the repo root with the repo `venv` (system `python3` lacks pygame; `ffm
 ## Failures and what they mean
 - `replay rules or schemas differ from the recorded run` — the code changed since the run (scenario version, physics, controller, adapter). Replays are only valid on the code that recorded them. Make the video from a newer run, or check out the old commit.
 - `no good episodes found` / a lesson is missing — the run hasn't passed that lesson, or no episode of it succeeded within the length window. Widen `--seconds`, lower `--iteration`, or add a `showcase` hook.
-- `recorded no episodes` — old run, nothing to replay. The Hunter task replays through a different (builtin) path and is not supported.
+- `recorded no episodes` — old run, nothing to replay. The Hunter task replays through a different (builtin) path and is not supported: use `tools.record_demo`.
 
 ## Caveats to state
 Clips come from different iterations, so they show typical successes, not one final policy or a failure rate. A clip is a recorded episode replayed exactly; it is not re-flown.

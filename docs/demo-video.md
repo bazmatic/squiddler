@@ -8,8 +8,8 @@ venv/bin/python -m tools.demo_video RUN --out DIR       # DIR/<task>-demo.mp4
 `RUN` is a run directory or a name under `.astrovoid-local/neural/rl`. It works
 for any task that replays through hooks (`learning/tasks.py`, `replay_mode='hooks'`):
 Inchworm, Jelly team, Flocker team, Wallcrawler team. Hunter uses the builtin
-replay path and is not supported; to film the Campaign Hunter, record the game's Demo mode instead:
-`venv/bin/python -m tools.record_demo OUT.mp4 SECONDS` (with sound, about 14 ms of wall clock per frame). The project skill `demo-video`
+replay path and is not supported; to film the Campaign Hunter, record the game's Demo mode with
+[`tools/record_demo.py`](#recording-demo-mode) instead. The project skill `demo-video`
 (`.claude/skills/demo-video/SKILL.md`) wraps these steps for Claude.
 
 ## How it works
@@ -51,3 +51,21 @@ Feed, Recover.
 - Offscreen rendering can differ from the real window; check a frame, and use
   the dashboard Watch button for a fullscreen check.
 - No sound. Titles come from `card()` in `tools/demo_video.py`.
+
+## Recording Demo mode (the Campaign Hunter)
+
+```
+venv/bin/python -m tools.record_demo demo-out/demo.mp4 600     # OUT.mp4 SECONDS
+```
+
+Runs the game's Demo (`AUTOPLAY=1`: the Campaign Hunter flies the ship, level after level) offscreen and writes an mp4
+with sound: 1352x878, 60 fps, stereo AAC. It needs `ffmpeg` on the PATH and uses the pilot installed in
+`assets/neural/campaign_hunter.npz`, so it films whatever Demo would play now, not a particular training run.
+
+- **Speed.** A fixed timestep with no real-time pacing: about 14 ms of wall clock per frame, so ten minutes of video
+  renders in about eight. Drawing the game is most of that.
+- **Sound.** pygame's mixer channels are replaced by a software mixer stepped once per video frame, so every sound
+  lands on the exact frame it fired. No loopback device or real-time capture is needed. Overlapping sounds can peak at
+  0 dB; lower the mix there if it sounds harsh.
+- **Output.** The mp4 is about 10 MB per minute. Write it to `demo-out/` (untracked) and don't commit long ones.
+- It prints the time each level began, so you can see how far the Hunter got.
