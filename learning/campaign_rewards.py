@@ -18,6 +18,7 @@ class CampaignShaping:
     idle: float = -0.05                  # per decision spent coasting at a crawl without thrust
     thrust: float = -0.02                # per decision with the thruster on (fuel is score), so coasting is worth learning
     shot: float = 0.0                    # per bullet fired (ammunition is score), so each shot is worth aiming
+    turn_change: float = 0.0             # per decision that turns the other way from the last, so pivoting doesn't shake
 
 
 DEFAULTS = {field.name: field.default for field in fields(CampaignShaping)}
@@ -33,5 +34,6 @@ HELP = {'own_kill': 'points per enemy the ship destroys itself',
         'exit_progress': 'points per maze width closer to the open exit by route (moving away costs the same)',
         'idle': 'points per decision spent coasting at a crawl with no thrust (negative: a penalty)',
         'thrust': 'points per decision with the thruster on (negative: a penalty)',
-        'shot': 'points per bullet fired (negative: a penalty)'}
+        'shot': 'points per bullet fired (negative: a penalty)',
+        'turn_change': 'points per decision that turns the opposite way from the one before (negative: a penalty)'}
 SETTINGS = tuple(DEFAULTS)            # the trainer's flags: --own-kill ... --compass-following

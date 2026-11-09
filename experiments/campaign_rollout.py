@@ -23,7 +23,7 @@ FOLLOW_DEGREES = 45.0      # the ship's flight follows a compass when its veloci
 START_TIME = 1000.0        # the episode clock's first reading, in seconds
 
 _INDEX = {name: i for i, name in enumerate(CAMPAIGN_FEATURE_NAMES)}
-_EVENTS = ('own_kills', 'pickups', 'beacon', 'wall_crashes', 'following', 'idle', 'exit_progress', 'hunt_progress', 'thrusting', 'shots')
+_EVENTS = ('own_kills', 'pickups', 'beacon', 'wall_crashes', 'following', 'idle', 'exit_progress', 'hunt_progress', 'thrusting', 'shots', 'turn_changes')
 
 
 @dataclass(frozen=True)
@@ -67,6 +67,7 @@ class _Recorder:
         self.senses, self.controls, self.temperatures, self.events = [], [], [], []
         self._observed = False
         self._routes, self._progress = MazeRoutes(), None
+        self._turn = None
         pilot.on_observed(self._observe)
 
     def _observe(self, senses, last_controls):
@@ -114,6 +115,8 @@ class _Recorder:
             self.controls.append((command.turn + 1, int(command.thrust), int(command.fire)))
             ship = game.ship
             self.events[-1]['thrusting'] = int(command.thrust)
+            self.events[-1]['turn_changes'] = int(self._turn is not None and command.turn != self._turn)
+            self._turn = command.turn
             self.events[-1]['idle'] = int(not command.thrust and math.hypot(ship.vx, ship.vy) < IDLE_SPEED)
         return command
 
@@ -128,7 +131,7 @@ class _Recorder:
         events = np.asarray([[row[e] for e in _EVENTS] for row in self.events[:n]], dtype=np.float64).reshape(n, len(_EVENTS))
         weights = np.array([shaping.own_kill, shaping.pickup, shaping.beacon, shaping.wall_crash,
                             shaping.compass_following, shaping.idle, shaping.exit_progress,
-                            shaping.hunt_progress, shaping.thrust, shaping.shot])
+                            shaping.hunt_progress, shaping.thrust, shaping.shot, shaping.turn_change])
         rewards = events @ weights
         if n:
             rewards[-1] += terminal

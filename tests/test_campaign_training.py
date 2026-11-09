@@ -31,8 +31,8 @@ def spec(tmp_path):
 class ScriptedPilot:
     """Holds still and runs `script(game, decision)` at each decision, reporting blank senses as a pilot would."""
 
-    def __init__(self, script=lambda game, decision: None, thrust=False):
-        self.script, self.thrust, self.decisions, self._listeners = script, thrust, 0, []
+    def __init__(self, script=lambda game, decision: None, thrust=False, turns=lambda decision: 0):
+        self.script, self.thrust, self.turns, self.decisions, self._listeners = script, thrust, turns, 0, []
 
     def on_observed(self, listener):
         self._listeners.append(listener)
@@ -41,8 +41,9 @@ class ScriptedPilot:
         for listener in self._listeners:
             listener(np.zeros(len(CAMPAIGN_FEATURE_NAMES), dtype=np.float32), (1, 0, 0))
         self.script(game, self.decisions)
+        turn = self.turns(self.decisions)
         self.decisions += 1
-        return ShipCommand(0, self.thrust, False)
+        return ShipCommand(turn, self.thrust, False)
 
 
 def into_the_open_exit(game):
@@ -91,6 +92,14 @@ def test_idling_costs_a_penalty_a_decision_and_thrusting_does_not(spec):
     thrusting = fly_campaign(1, 300, spec, horizon=0.3, pilot=ScriptedPilot(thrust=True),
                          shaping=CampaignShaping(exit_progress=0.0, hunt_progress=0.0, thrust=0.0))
     assert thrusting['rewards'].sum() == pytest.approx(0)
+
+
+def test_turning_the_other_way_costs_a_penalty_and_keeping_a_direction_does_not(spec):
+    shaping = CampaignShaping(exit_progress=0.0, hunt_progress=0.0, idle=0.0, thrust=0.0, turn_change=-0.5)
+    shaking = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot(turns=lambda n: 1 if n % 2 else -1), shaping=shaping)
+    assert shaking['rewards'].sum() == pytest.approx((len(shaking['rewards']) - 1) * shaping.turn_change)
+    steady = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot(turns=lambda n: 1), shaping=shaping)
+    assert steady['rewards'].sum() == pytest.approx(0)
 
 
 def test_the_thruster_costs_a_penalty_a_decision_and_coasting_does_not(spec):

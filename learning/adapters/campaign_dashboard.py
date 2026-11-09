@@ -32,11 +32,12 @@ LAYOUT = Layout(sections=('Training', 'Outcome', 'Flying', 'Policy'), strip=('ex
 
 _TITLES = dict(own_kill='Own kill', pickup='Pickup', beacon='Beacon', exit='Exit', cleared_exit='Cleared exit',
                score_out='Score out', wall_crash='Wall crash', compass_following='Compass following',
-               hunt_progress='Hunt progress', exit_progress='Exit progress', idle='Idling', thrust='Thrusting', shot='Shots fired')
+               hunt_progress='Hunt progress', exit_progress='Exit progress', idle='Idling', thrust='Thrusting', shot='Shots fired',
+               turn_change='Direction changes')
 
 
 def _kind(key):
-    return 'penalty' if DEFAULTS[key] < 0 else 'reward'
+    return 'penalty' if DEFAULTS[key] < 0 or '(negative' in HELP[key] else 'reward'
 
 
 # A penalty's value is its size: the page draws it with a minus sign. Help text drops the "(negative: a penalty)" note.
