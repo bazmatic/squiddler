@@ -103,7 +103,14 @@ class CampaignSurroundings:
         return self.game.hunter
 
 
+# Shooting through a wall block takes time the ship could spend flying, so the campaign pilot's routes (and the ground its
+# progress is paid for) count a hit point as this many cells: through a block only when the way round is much longer.
+CAMPAIGN_HIT_POINT_CELLS = 10.0
+
+
 class CampaignSenses(Senses):
+    hit_point_cells = CAMPAIGN_HIT_POINT_CELLS
+
     def perceive(self, body, surroundings, last_controls, now):
         """The hunter's vector for `body`, then the exit compass, `exit_open`, the beacon compass, the held weapon
         and the pickup shield."""

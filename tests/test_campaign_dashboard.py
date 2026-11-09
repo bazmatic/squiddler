@@ -1,6 +1,8 @@
 """The Campaign Hunter's dashboard: what the trainer page charts from its training log, and its rewards panel."""
 from types import SimpleNamespace
 
+import numpy as np
+
 from learning import dashboard
 from learning.adapters import campaign_hunter
 
@@ -9,8 +11,9 @@ PPO_KEYS = {'policy_loss', 'value_loss', 'kl', 'entropy', 'clip_fraction', 'iter
             'rollout_s', 'update_s'}
 
 
-def episode(end, cleared=False, own_kills=0):
-    return dict(result=SimpleNamespace(end=end, cleared=cleared, own_kills=own_kills))
+def episode(end, cleared=False, own_kills=0, thrusts=(1, 1), wall_crashes=0, shots=0):
+    controls = np.array([(1, t, 0) for t in thrusts], dtype=np.int8)
+    return dict(result=SimpleNamespace(end=end, cleared=cleared, own_kills=own_kills, wall_crashes=wall_crashes, shots=shots), controls=controls)
 
 
 def test_a_campaign_log_row_charts_exits_clears_score_outs_kills_and_the_shared_charts():
@@ -18,8 +21,23 @@ def test_a_campaign_log_row_charts_exits_clears_score_outs_kills_and_the_shared_
     keys = set(row) | PPO_KEYS
     charted = dashboard.charted('campaign_hunter', keys)
     assert [m['key'] for m in charted] == ['mean_return', 'exited', 'cleared_exit', 'scored_out', 'own_kills',
-                                           'kl', 'entropy']
+                                           'wall_crashes', 'shots', 'thrust', 'kl', 'entropy']
     assert dashboard.unclaimed('campaign_hunter', keys) == []   # nothing left over for "Other"
+
+
+def test_the_thrust_chart_is_the_share_of_decisions_with_the_thruster_on():
+    row = campaign_hunter.summary([episode('exited', thrusts=(1, 1, 0, 0)), episode('exited', thrusts=(1, 1, 1, 0))])
+    assert row['thrust'] == 0.625
+
+
+def test_the_wall_strikes_chart_is_the_average_strikes_per_episode():
+    row = campaign_hunter.summary([episode('exited', wall_crashes=2), episode('scored_out', wall_crashes=5)])
+    assert row['wall_crashes'] == 3.5
+
+
+def test_the_bullets_chart_is_the_average_bullets_fired_per_episode():
+    row = campaign_hunter.summary([episode('exited', shots=10), episode('scored_out', shots=30)])
+    assert row['shots'] == 20.0
 
 
 def test_a_row_missing_a_metric_charts_only_what_it_has():

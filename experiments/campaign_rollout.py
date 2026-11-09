@@ -13,9 +13,8 @@ import numpy as np
 
 from experiments import harness
 from experiments.harness import FPS
-from hunter.campaign_senses import CAMPAIGN_FEATURE_NAMES
+from hunter.campaign_senses import CAMPAIGN_FEATURE_NAMES, CAMPAIGN_HIT_POINT_CELLS
 from hunter.maze_route import MazeRoutes
-from hunter.senses import HIT_POINT_CELLS
 from learning.campaign_rewards import CampaignShaping
 
 PROGRESS_CAP = 0.2         # the most ground one decision can pay or cost, in maze widths
@@ -24,7 +23,7 @@ FOLLOW_DEGREES = 45.0      # the ship's flight follows a compass when its veloci
 START_TIME = 1000.0        # the episode clock's first reading, in seconds
 
 _INDEX = {name: i for i, name in enumerate(CAMPAIGN_FEATURE_NAMES)}
-_EVENTS = ('own_kills', 'pickups', 'beacon', 'wall_crashes', 'following', 'idle', 'exit_progress', 'hunt_progress')
+_EVENTS = ('own_kills', 'pickups', 'beacon', 'wall_crashes', 'following', 'idle', 'exit_progress', 'hunt_progress', 'thrusting', 'shots')
 
 
 @dataclass(frozen=True)
@@ -40,6 +39,8 @@ class CampaignResult:
     pickups: int              # crystals the ship collected
     beacon: bool              # the ship fetched an Ally beacon
     max_no_kill_gap: float    # the longest spell, in episode seconds, with enemies left and no kill by ship or ally
+    wall_crashes: int = 0     # times the ship struck a wall
+    shots: int = 0            # bullets the ship fired
 
 
 def _following(senses, game):
@@ -94,7 +95,7 @@ class _Recorder:
             return
         maze, ship = game.maze, game.ship
         origin = (ship.x, ship.y)
-        found = self._routes.cheapest_route(maze, origin, targets, HIT_POINT_CELLS)
+        found = self._routes.cheapest_route(maze, origin, targets, CAMPAIGN_HIT_POINT_CELLS)
         if found is None:
             target, route, extra = min(targets, key=lambda p: math.dist(origin, p)), [], 0.0
         else:
@@ -112,6 +113,7 @@ class _Recorder:
         if self._observed:
             self.controls.append((command.turn + 1, int(command.thrust), int(command.fire)))
             ship = game.ship
+            self.events[-1]['thrusting'] = int(command.thrust)
             self.events[-1]['idle'] = int(not command.thrust and math.hypot(ship.vx, ship.vy) < IDLE_SPEED)
         return command
 
@@ -126,7 +128,7 @@ class _Recorder:
         events = np.asarray([[row[e] for e in _EVENTS] for row in self.events[:n]], dtype=np.float64).reshape(n, len(_EVENTS))
         weights = np.array([shaping.own_kill, shaping.pickup, shaping.beacon, shaping.wall_crash,
                             shaping.compass_following, shaping.idle, shaping.exit_progress,
-                            shaping.hunt_progress])
+                            shaping.hunt_progress, shaping.thrust, shaping.shot])
         rewards = events @ weights
         if n:
             rewards[-1] += terminal
@@ -210,7 +212,7 @@ def fly_campaign(level, seed, spec, horizon=180.0, shaping=CampaignShaping(), gr
         game.ship_pilot = recorder
         scoring, handler = game.scoring, game.collision_handler
         enemies_at_start = len(game.roster.alive())
-        seen = dict(own=0, pickups=0, walls=0, kills=handler.level_kills)
+        seen = dict(own=0, pickups=0, walls=0, shots=0, kills=handler.level_kills)
         # Demo's no-kill skip, measured rather than applied: the clock waits while no enemy is left.
         last_kill, max_gap = now[0], 0.0
         flight, beacon, end, frames = game.hunter_flight, False, 'horizon', 0
@@ -221,7 +223,8 @@ def fly_campaign(level, seed, spec, horizon=180.0, shaping=CampaignShaping(), gr
             recorder.add('own_kills', scoring.enemies_destroyed - seen['own'])
             recorder.add('pickups', scoring.powerup_crystals_collected - seen['pickups'])
             recorder.add('wall_crashes', scoring.wall_collisions - seen['walls'])
-            seen.update(own=scoring.enemies_destroyed, pickups=scoring.powerup_crystals_collected,
+            recorder.add('shots', scoring.shots_fired - seen['shots'])
+            seen.update(shots=scoring.shots_fired, own=scoring.enemies_destroyed, pickups=scoring.powerup_crystals_collected,
                         walls=scoring.wall_collisions)
             # The allied hunter arrives only when the ship fetches a beacon.
             if game.hunter_flight is not None and game.hunter_flight is not flight and not beacon:
@@ -246,7 +249,7 @@ def fly_campaign(level, seed, spec, horizon=180.0, shaping=CampaignShaping(), gr
         senses, controls, rewards, temperatures = recorder.arrays(shaping, terminal)
         result = CampaignResult(level, seed, end, frames / FPS, enemies_at_start, scoring.enemies_destroyed,
                                 handler.level_kills - scoring.enemies_destroyed, cleared,
-                                scoring.powerup_crystals_collected, beacon, max_gap)
+                                scoring.powerup_crystals_collected, beacon, max_gap, scoring.wall_collisions, scoring.shots_fired)
     finally:
         _restore(game)
         config.SETTINGS.game.lowGraphics = previous_graphics

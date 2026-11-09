@@ -17,13 +17,22 @@ METRICS = (
     Metric('own_kills', 'Own kills per episode',
            'Higher is better. Enemies the ship destroys itself, on average per episode.',
            section='Outcome', higher_is_better=True, short='Own kills', digits=1),
+    Metric('wall_crashes', 'Wall strikes per episode',
+           'Lower is better. Times the ship strikes a wall, on average per episode.',
+           section='Flying', higher_is_better=False, short='Wall strikes', digits=1, optional=True),
+    Metric('shots', 'Bullets fired per episode',
+           'Bullets the ship fires, on average per episode.',
+           section='Flying', short='Shots', digits=1, optional=True),
+    Metric('thrust', 'Thruster use',
+           'Share of the pilot\'s decisions with the thruster on. 1 means it never coasts.',
+           section='Flying', short='Thrust', optional=True),
 )
 
-LAYOUT = Layout(sections=('Training', 'Outcome', 'Policy'), strip=('exited', 'cleared_exit', 'own_kills'))
+LAYOUT = Layout(sections=('Training', 'Outcome', 'Flying', 'Policy'), strip=('exited', 'cleared_exit', 'own_kills'))
 
 _TITLES = dict(own_kill='Own kill', pickup='Pickup', beacon='Beacon', exit='Exit', cleared_exit='Cleared exit',
                score_out='Score out', wall_crash='Wall crash', compass_following='Compass following',
-               hunt_progress='Hunt progress', exit_progress='Exit progress', idle='Idling')
+               hunt_progress='Hunt progress', exit_progress='Exit progress', idle='Idling', thrust='Thrusting', shot='Shots fired')
 
 
 def _kind(key):

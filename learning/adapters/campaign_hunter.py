@@ -17,13 +17,16 @@ def default_levels():
 
 def summary(flown):
     """An iteration's numbers for the training log: the share of episodes that left by the exit, that left with no
-    enemy left, and that scored out, and the ship's own kills per episode."""
+    enemy left, and that scored out, the ship's own kills per episode, the wall strikes and bullets fired per episode, and the share of decisions with the thruster on."""
     import numpy as np
     results = [e['result'] for e in flown]
     return dict(exited=float(np.mean([r.end == 'exited' for r in results])),
                 cleared_exit=float(np.mean([r.end == 'exited' and r.cleared for r in results])),
                 scored_out=float(np.mean([r.end == 'scored_out' for r in results])),
-                own_kills=float(np.mean([r.own_kills for r in results])))
+                own_kills=float(np.mean([r.own_kills for r in results])),
+                wall_crashes=float(np.mean([r.wall_crashes for r in results])),
+                shots=float(np.mean([r.shots for r in results])),
+                thrust=float(np.mean([np.mean(e['controls'][:, 1]) for e in flown if len(e['controls'])] or [0.0])))
 
 
 def environment(**settings):

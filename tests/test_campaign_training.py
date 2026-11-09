@@ -11,7 +11,7 @@ from hunter.campaign_senses import CAMPAIGN_FEATURE_NAMES
 from hunter.neural.loader import DEFAULT_PATH as HUNTER_POLICY_PATH
 from tools.migrate_policy import migrate
 
-SHAPING = CampaignShaping(idle=0.0)       # the terminal rewards read alone; an idle ship would add its penalty
+SHAPING = CampaignShaping(idle=0.0, thrust=0.0)       # the terminal rewards read alone; an idle ship would add its penalty
 
 
 @pytest.fixture(scope='module', autouse=True)
@@ -89,8 +89,14 @@ def test_idling_costs_a_penalty_a_decision_and_thrusting_does_not(spec):
     idle = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot(), shaping=CampaignShaping(exit_progress=0.0, hunt_progress=0.0))
     assert idle['rewards'].sum() == pytest.approx(len(idle['rewards']) * CampaignShaping().idle)
     thrusting = fly_campaign(1, 300, spec, horizon=0.3, pilot=ScriptedPilot(thrust=True),
-                         shaping=CampaignShaping(exit_progress=0.0, hunt_progress=0.0))
+                         shaping=CampaignShaping(exit_progress=0.0, hunt_progress=0.0, thrust=0.0))
     assert thrusting['rewards'].sum() == pytest.approx(0)
+
+
+def test_the_thruster_costs_a_penalty_a_decision_and_coasting_does_not(spec):
+    shaping = CampaignShaping(exit_progress=0.0, hunt_progress=0.0, idle=0.0)
+    thrusting = fly_campaign(1, 300, spec, horizon=0.3, pilot=ScriptedPilot(thrust=True), shaping=shaping)
+    assert thrusting['rewards'].sum() == pytest.approx(len(thrusting['rewards']) * shaping.thrust)
 
 
 def test_closing_on_the_open_exit_pays_and_standing_off_does_not(spec):
@@ -104,7 +110,7 @@ def test_closing_on_the_open_exit_pays_and_standing_off_does_not(spec):
             game.ship.x, game.ship.y = x + game.maze.cell_size_x, y
             game.ship.vx = game.ship.vy = 0.0
 
-    shaping = CampaignShaping(idle=0.0, compass_following=0.0)
+    shaping = CampaignShaping(idle=0.0, thrust=0.0, compass_following=0.0)
     closing = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot(open_then_jump), shaping=shaping)
     standing = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot(lambda g, d: d == 1 and (list(map(g.encounter.kill, g.roster.alive())), setattr(g, 'exit_opened', True))),
                             shaping=shaping)
@@ -123,7 +129,7 @@ def test_closing_on_the_nearest_enemy_pays_and_a_kill_is_not_ground_lost(spec):
         if decision == 4:
             game.encounter.kill(game.roster.alive()[0])
 
-    shaping = CampaignShaping(idle=0.0, compass_following=0.0, own_kill=0.0)
+    shaping = CampaignShaping(idle=0.0, thrust=0.0, compass_following=0.0, own_kill=0.0)
     closing = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot(jump_to_an_enemy), shaping=shaping)
     killing = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot(kill_one), shaping=shaping)
     assert closing['rewards'].sum() > 0
