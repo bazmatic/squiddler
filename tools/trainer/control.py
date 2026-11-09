@@ -1,6 +1,5 @@
 """Starting, stopping, pausing and resuming training runs. One run trains at a time."""
 import contextlib
-import json
 import os
 import subprocess
 import sys
@@ -11,6 +10,7 @@ from pathlib import Path
 from tools import ppo_neural
 from tools.trainer.processes import REPO, list_processes, terminate_tree
 from tools.trainer.runs import RL_ROOT, list_runs, log_rows, next_run_number, run_folders
+from tools.trainer import resume_edits
 from tools.trainer.settings import apply_changes, changed, config_of, read_settings, to_argv
 
 LOCK = '.trainer.lock'
@@ -199,113 +199,6 @@ def pause(root=RL_ROOT, processes=None):
     return run.name
 
 
-def _resume_setting_updates(path, base, changes):
-    """Validate the settings changed on resume: those the run's own task takes, and the learning ones for any run."""
-    import copy
-    import math
-    from types import SimpleNamespace
-    from learning import flocker_rewards
-    if not isinstance(changes, dict):
-        raise TrainerError('resume changes must be a settings object')
-    try:
-        values = apply_changes(base,changes)
-    except ValueError as exc:
-        raise TrainerError(str(exc)) from None
-    edits = changed(base,values)
-    if not edits:
-        return values,{}
-    config = copy.deepcopy(config_of(path))
-    if all(key == 'workers' for key, _, _ in edits):
-        workers = values['workers'].value
-        if workers < 1:
-            raise TrainerError('workers must be positive')
-        config['args']['workers'] = workers
-        _record_resume_edits(path, config, edits)
-        return values, {path/'config.json': json.dumps(config, indent=2).encode()}
-    flocker = config.get('task')=='flocker_team' and isinstance(config.get('manifest'),dict)
-    allowed = _resume_editable(config, flocker)
-    unsupported = [key for key,_,_ in edits if key not in allowed]
-    if unsupported:
-        raise TrainerError('These settings require a new run: '+', '.join(unsupported))
-    args = config['args']
-    for key,_,value in edits:
-        args[key]=value
-    if not math.isfinite(args['lr']) or args['lr']<=0:
-        raise TrainerError('learning rate must be finite and positive')
-    if args['workers']<1 or args['iterations']<0 or not math.isfinite(args['budget_seconds']) or args['budget_seconds']<0:
-        raise TrainerError('workers must be positive; iterations and budget must be nonnegative')
-    table = _reward_table(config)
-    if table is not None:
-        try:
-            table.from_args(SimpleNamespace(**args))
-        except ValueError as exc:
-            raise TrainerError(str(exc)) from None
-    if flocker:
-        try:
-            rewards = flocker_rewards.from_args(SimpleNamespace(**args))
-        except ValueError as exc:
-            raise TrainerError(str(exc)) from None
-        config['manifest']['rewards']=rewards
-        config['shaping']=rewards
-    elif isinstance(config.get('shaping'),dict):
-        # A run's recorded shaping names rewards as its args do (a campaign run's `wall_crash`): keep them in step.
-        for key,_,value in edits:
-            if key in config['shaping']:
-                config['shaping'][key]=value
-    updates={}
-    if any(key=='lr' for key,_,_ in edits):
-        import io
-        import torch
-        saved=torch.load(path/'resume.pt',map_location='cpu',weights_only=False)
-        for group in saved['optimiser']['param_groups']:
-            group['lr']=args['lr']
-            if 'initial_lr' in group:
-                group['initial_lr']=args['lr']
-        output=io.BytesIO();torch.save(saved,output)
-        updates[path/'resume.pt']=output.getvalue()
-        if isinstance(config.get('manifest'),dict):
-            config['manifest'].setdefault('training',{})['lr']=args['lr']
-    _record_resume_edits(path, config, edits)
-    updates[path/'config.json']=json.dumps(config,indent=2).encode()
-    return values,updates
-
-
-def _reward_table(config):
-    """The run's task's RewardTable, or None when its task declares rewards some other way (or is no longer known)."""
-    from learning.tasks import UNTAGGED_TASK, task
-    try:
-        return task(config.get('task', UNTAGGED_TASK)).reward_table()
-    except ValueError:
-        return None
-
-
-def _resume_editable(config, flocker):
-    """The settings a paused run may change on resume: the learning ones for any run, and every setting its own task
-    takes (its rewards, episodes and so on). A Flocker run's rewards are checked against its recorded rules."""
-    from learning import flocker_rewards
-    from learning.tasks import UNTAGGED_TASK
-    from tools.trainer import settings
-    editable = {'lr','workers','iterations','budget_seconds'}
-    if flocker:
-        return editable|set(flocker_rewards.SETTINGS)
-    task = config.get('task', UNTAGGED_TASK)
-    return editable|{dest for dest in settings.BY_DEST if dest!='task' and task in settings.applies_to(dest)}
-
-
-def _record_resume_edits(path, config, edits):
-    state_path=path/'state.json'
-    state=json.loads(state_path.read_text()) if state_path.exists() else {}
-    config.setdefault('resume_settings_changes',[]).append(dict(
-        time=time.time(),after_iteration=state.get('iteration'),
-        changes=[dict(setting=key,previous=old,value=new) for key,old,new in edits]))
-
-
-def _atomic_bytes(path, data):
-    temporary=path.with_name(path.name+'.resume-settings.tmp')
-    temporary.write_bytes(data)
-    temporary.replace(path)
-
-
 def resume(run=None, root=RL_ROOT, processes=None, launch=None, changes=None):
     """Carry on a paused or interrupted run in its own folder, as if it had never stopped."""
     root = Path(root)
@@ -329,25 +222,19 @@ def resume(run=None, root=RL_ROOT, processes=None, launch=None, changes=None):
         if not isinstance(args, dict):
             raise TrainerError(f'{target.name} was started before pausing existed; it cannot resume')
         values = read_settings(target.path, run_folders(root))
-        updates={}
-        if changes:
-            values,updates=_resume_setting_updates(target.path,values,changes)
-        backups={path:path.read_bytes() for path in updates}
-        pause_file=target.path/ppo_neural.PAUSE_FILE
-        had_pause=pause_file.exists()
-        command = [sys.executable, '-m', 'tools.ppo_neural', '--start', str(args['start']), '--out',
-                   str(target.path), *to_argv(values), '--resume']
         try:
-            if updates:
-                _atomic_bytes(target.path/f'config-before-resume-{time.time_ns()}.json',
-                              (target.path/'config.json').read_bytes())
-            for path,data in updates.items():
-                _atomic_bytes(path,data)
-            pause_file.unlink(missing_ok=True)
-            (launch or launch_process)(command, root / f'{target.name}.log')
+            edit = resume_edits.prepare(target.path, values, changes) if changes else resume_edits.Edit(values)
+        except resume_edits.EditRefused as exc:
+            raise TrainerError(str(exc)) from None
+        pause_file = target.path / ppo_neural.PAUSE_FILE
+        had_pause = pause_file.exists()
+        command = [sys.executable, '-m', 'tools.ppo_neural', '--start', str(args['start']), '--out',
+                   str(target.path), *to_argv(edit.values), '--resume']
+        try:
+            with resume_edits.applied(edit, target.path):
+                pause_file.unlink(missing_ok=True)
+                (launch or launch_process)(command, root / f'{target.name}.log')
         except Exception:
-            for path,data in backups.items():
-                _atomic_bytes(path,data)
             if had_pause:
                 pause_file.touch()
             raise

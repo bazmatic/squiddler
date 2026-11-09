@@ -1,5 +1,5 @@
 """Real-game Flocker team drills, staged recurrent PPO and measured volley credit."""
-from collections import Counter, deque
+from collections import Counter, defaultdict, deque
 from dataclasses import asdict, replace
 import hashlib
 import json
@@ -17,11 +17,15 @@ from learning.environment import Snapshot, Transition
 from learning.adapters.flocker import SPEC, CRITIC_SIZE, observe, critic, intention, enabled, load_transfer_policy
 from learning.adapters.crawler_scenario import TRAIN_LEVELS, HOLDOUT_LEVELS, SilentSound
 from learning import flocker_rewards
+from learning.flocker_rewards import TABLE
 
 INITIAL_STAGE = 1
 IMITATION_HEADS = ()
 SHIP_PILOT = Path(__file__).resolve().parents[2]/'assets/neural/hunter.npz'
 STAGES = ('pursuit', 'perching', 'aiming', 'volleys', 'combat', 'hunter')
+# Stage 1 only: a fixed bonus each time a bird comes within 100 px of a visible target. It is not a run setting (one
+# would change every recorded manifest), so it is paid beside the reward table rather than from it.
+APPROACH_REWARD = .5
 
 
 class VolleyTracker:
@@ -314,7 +318,7 @@ class FlockerEnvironment:
     def terminal(self):
         return not self.team.members() or bool(self.ships) and not any(s.active for s in self.ships)
 
-    def fly_shots(self, rewards):
+    def fly_shots(self, events):
         for shot in self.world.projectiles:
             shot.update(1)
             if not shot.active:
@@ -357,11 +361,11 @@ class FlockerEnvironment:
                     if self.contact_frame is None:
                         self.contact_frame = self.frames
                     self.agent_hits[i] += 1
-                    rewards[i] += self.rewards['hit_reward']
+                    events[i]['hits'] += 1
                     self.volley.hit(shot,t)
                     if not t.active:
                         self.counts['kills'] += 1
-                        rewards[i] += self.rewards['kill_reward']
+                        events[i]['kills'] += 1
                         if any(t is target for target in self.targets):
                             t.health, t.active = 8, True
                             t.generation += 1
@@ -370,7 +374,7 @@ class FlockerEnvironment:
                     break
         self.world.projectiles = [s for s in self.world.projectiles if s.active]
 
-    def register_shots(self, rewards):
+    def register_shots(self, events):
         members = {c.agent_id:c for c in self.team.members()}
         # The set retains only live shots: object identity is never serialized or allowed to be reused while tracked.
         self._known_shots.intersection_update(self.world.projectiles)
@@ -382,7 +386,7 @@ class FlockerEnvironment:
             if c is None:
                 continue
             self.counts['shots'] += 1
-            rewards[c.agent_id] -= self.rewards['shot_cost']
+            events[c.agent_id]['shots'] += 1
             t = getattr(shot,'flocker_target',None) or self.enc.target_entity_for(c)
             if t is None:
                 continue
@@ -394,7 +398,10 @@ class FlockerEnvironment:
     def step(self, actions):
         if self.finished:
             raise RuntimeError('step after episode ended')
-        rewards = Counter({i:0. for i in self.agent_ids})
+        # Per bird, the counts each reward term pays on (learning.flocker_rewards); paid once the decision ends. A bird
+        # that joins mid-decision gets its row when it first counts something.
+        events = self.event_rows(self.agent_ids)
+        approaches = Counter()
         members = self.team.members()
         before_wall_hits = {c.agent_id:c.flocker_hard_landings for c in self.enc.creatures()
                             if hasattr(c,'flocker_hard_landings') and hasattr(c,'agent_id')}
@@ -417,7 +424,7 @@ class FlockerEnvironment:
             shots = hostile_shots(self.enc)
             for c in members:
                 if any(danger(c,shot) for shot in shots):
-                    rewards[c.agent_id] -= self.rewards['threat_penalty']
+                    events[c.agent_id]['threatened_decisions'] += 1
                     self.counts['threat_decisions'] += 1
         if not self.scripted:
             self.team.commit({c.agent_id:intention(actions[c.agent_id],c.flocker_perched)
@@ -431,12 +438,12 @@ class FlockerEnvironment:
             for t in self.targets:
                 if t.active:
                     t.step(self.world.maze)
-            self.register_shots(rewards)
-            self.fly_shots(rewards)
+            self.register_shots(events)
+            self.fly_shots(events)
             for c in members:
                 lost = self.hp.setdefault(c.agent_id,c.hit_points)-c.hit_points
                 if lost > 0:
-                    rewards[c.agent_id] -= self.rewards['damage_penalty']*lost
+                    events[c.agent_id]['hit_points_lost'] += lost
                     self.counts['damage_taken'] += lost
                 self.hp[c.agent_id] = c.hit_points
             if self.obstacles:
@@ -444,7 +451,7 @@ class FlockerEnvironment:
                 self.world.maze.gate_segments = self.obstacles.segments()
             live = {c.agent_id for c in self.team.members()}
             for i in self.living-live:
-                rewards[i] -= self.rewards['death_penalty']
+                events[i]['deaths'] += 1
                 self.counts['deaths'] += 1
             self.living = live
             self.frames += 1
@@ -452,11 +459,11 @@ class FlockerEnvironment:
                 t.active = not self.regroup and (self.stage != 2 or self.frames % 600 >= 300)
             if self.stage==2 and self.frames%600==300:
                 self._reacquire_at = self.frames
-            self.volley.settle(self.frames,rewards,self.rewards['volley_reward'])
+            self._settle_volleys(self.frames,events)
             self.world.roster.update_dying(1)
             if self.render_frames is not None:
                 self.render_frames(self)
-            self.sample_motion(rewards)
+            self.sample_motion(events,approaches)
             if self.reinforcements and self.frames >= 120:
                 self.add_reinforcements()
         for c in self.team.members():
@@ -464,21 +471,20 @@ class FlockerEnvironment:
             if old:
                 # Hold the observed position fixed: only the bird's own progress
                 # counts, never target motion, waypoint teleportation or hidden tracking.
-                delta = old[1]-math.dist(c.get_pos(),old[0])
-                credit = self.rewards['progress_reward']*max(-20.,min(20.,delta))
-                rewards[c.agent_id] += credit
-                self.counts['pursuit_progress_reward'] += credit
+                closing = max(-20.,min(20.,old[1]-math.dist(c.get_pos(),old[0])))
+                events[c.agent_id]['closing_pixels'] += closing
+                self.counts['pursuit_progress_reward'] += self.rewards['progress_reward']*closing
             if c.agent_id in aim_before:
                 from learning.flocker_aim import normalized_error
                 point,error = aim_before[c.agent_id]
-                credit = self.rewards['aim_progress_reward']*(error-normalized_error(c,point))
-                rewards[c.agent_id] += credit
-                self.counts['aim_progress_reward'] += credit
+                improvement = error-normalized_error(c,point)
+                events[c.agent_id]['aim_improvement'] += improvement
+                self.counts['aim_progress_reward'] += self.rewards['aim_progress_reward']*improvement
             trail, pushes = self.trails[c.agent_id],self.pushes[c.agent_id]
             trail.append(c.get_pos())
             pushes.append(c.flocker_throttle>.1 and not c.flocker_perched)
             if len(trail)==11 and all(pushes) and math.dist(trail[0],trail[-1])<10:
-                rewards[c.agent_id] -= self.rewards['stuck_penalty']
+                events[c.agent_id]['stuck_decisions'] += 1
                 self.counts['stuck_agent_frames'] += DECISION_FRAMES
         for c in self.enc.creatures():
             if not hasattr(c,'flocker_hard_landings') or not hasattr(c,'agent_id'):
@@ -486,22 +492,46 @@ class FlockerEnvironment:
             hits = c.flocker_hard_landings-before_wall_hits.get(c.agent_id,0)
             cost = max(0,hits)*self.rewards['wall_collision_penalty']
             if cost:
-                rewards[c.agent_id] -= cost
+                events[c.agent_id]['wall_impacts'] += max(0,hits)
                 self.agent_wall_collision_costs[c.agent_id] += cost
+        rewards = self.paid(events,approaches)
         for i,r in rewards.items():
             self.agent_returns[i] += r
         terminated = self.terminal()
         truncated = self.frames >= self.horizon*60 and not terminated
         self.finished = terminated or truncated
         if self.finished:
-            final_credit = Counter()
-            self.volley.settle(self.frames+7,final_credit,self.rewards['volley_reward'])
-            for i,value in final_credit.items():
+            final_events = self.event_rows()
+            self._settle_volleys(self.frames+7,final_events)
+            for i,value in self.paid(final_events).items():
                 rewards[i] += value
                 self.agent_returns[i] += value
         return Transition(self.snapshot(),sum(rewards.values()),terminated,truncated,self.events(),dict(rewards))
 
-    def sample_motion(self, rewards):
+    def _settle_volleys(self, frame, events):
+        """Count each shooter's share of the volleys that are settled by `frame`."""
+        credit = Counter()
+        self.volley.settle(frame,credit,1.)
+        for i,share in credit.items():
+            events[i]['volley_credit'] += share
+
+    @staticmethod
+    def event_rows(birds=()):
+        """Per bird, a decision's event counts (learning.flocker_rewards), all 0; a bird not listed gets its row when it
+        first counts something."""
+        return defaultdict(TABLE.row, {i:TABLE.row() for i in birds})
+
+    def paid(self, events, approaches=None):
+        """{bird: what its counted events pay at this run's reward settings, plus its stage-1 approach bonuses}."""
+        ids = list(events)
+        paid = TABLE.pay([events[i] for i in ids],self.rewards)
+        rewards = Counter(dict(zip(ids,map(float,paid))))
+        for i,n in (approaches or {}).items():
+            rewards[i] += APPROACH_REWARD*n
+        return rewards
+
+    def sample_motion(self, events, approaches=None):
+        approaches = Counter() if approaches is None else approaches
         members = self.team.members()
         if self._reacquire_at is not None and any(visible(self.enc,c) for c in members):
             self.reacquire_times.append((self.frames-self._reacquire_at)/60)
@@ -521,7 +551,7 @@ class FlockerEnvironment:
             self.counts['bunched_frames'] += bunched
             self.counts['cohesive_frames'] += bool(near)
             if bunched:
-                rewards[i] -= self.rewards['bunch_penalty']/6
+                events[i]['bunched_decisions'] += 1/6
             else:
                 # Credit the bird's own movement towards a locally sensed neighbour.
                 # A target is unnecessary; passive convergence earns no progress credit.
@@ -532,7 +562,7 @@ class FlockerEnvironment:
                     distance, neighbour = min(neighbours,key=lambda item:item[0])
                     if distance>=100:
                         closing = ((neighbour.x-c.x)*c.vx+(neighbour.y-c.y)*c.vy)/max(distance,.001)
-                        rewards[i] += self.rewards['cohesion_reward']/6*max(-1.,min(1.,closing/max(c.max_speed,.01)))
+                        events[i]['cohesion'] += max(-1.,min(1.,closing/max(c.max_speed,.01)))/6
                     else:
                         close = [o for d,o in neighbours if d<100]
                         speed = math.hypot(c.vx,c.vy)
@@ -542,13 +572,13 @@ class FlockerEnvironment:
                                             for o in close if math.hypot(o.vx,o.vy)>.5)
                             alignment = max(0.,min(1.,agreement/len(close)))
                         self.counts['alignment_sum'] += alignment
-                        rewards[i] += self.rewards['cohesion_reward']/6*alignment
+                        events[i]['cohesion'] += alignment/6
             if c.flocker_perched:
                 self.counts['perched_frames'] += 1
                 if i not in self._perched:
                     self.counts['perches'] += 1
                     if not c.flocker_perch_paid:
-                        rewards[i] += self.rewards['perch_reward']
+                        events[i]['perches'] += 1
                         c.flocker_perch_paid = True
             self._perched = (self._perched | {i}) if c.flocker_perched else (self._perched-{i})
             if self.stage == 1:
@@ -558,7 +588,7 @@ class FlockerEnvironment:
                     self.counts['approaches'] += 1
                     if self.contact_frame is None:
                         self.contact_frame = self.frames
-                    rewards[i] += .5
+                    approaches[i] += 1
                     t.x,t.y = self.free_cell(250)
 
     def add_reinforcements(self):

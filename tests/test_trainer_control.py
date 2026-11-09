@@ -223,76 +223,7 @@ def test_actor_damping_is_offered_only_for_the_wallcrawler(root, task, allowed):
         assert fake.commands == []
 
 
-def test_resume_applies_flocker_reward_edits_to_command_and_recorded_rules(root):
-    from learning import flocker_rewards
-    path=root/'run52'
-    config=json.loads((path/'config.json').read_text())
-    config['task']='flocker_team'
-    config['args'].update(task='flocker_team',bootstrap_episodes=0,flocker_hit_reward=2.)
-    config['manifest']={'task':'flocker_team','rewards':flocker_rewards.validate({'hit_reward':2.}),
-                        'training':{'lr':config['args']['lr']}}
-    (path/'config.json').write_text(json.dumps(config))
-    (path/'resume.pt').write_text('unchanged optimizer')
-    (path/'state.json').write_text('{"state":"paused","iteration":2}')
-    launch=FakeLaunch()
-    resume('run52',root=root,processes=[],launch=launch,changes={'flocker_hit_reward':5.})
-    command=launch.commands[0]
-    assert command[command.index('--flocker-hit-reward')+1]=='5.0'
-    updated=json.loads((path/'config.json').read_text())
-    assert updated['args']['flocker_hit_reward']==5.
-    assert updated['manifest']['rewards']['hit_reward']==5.
-    assert updated['shaping']['hit_reward']==5.
-    assert (path/'resume.pt').read_text()=='unchanged optimizer'
-
-
-def test_resume_rejects_invalid_flocker_reward_edits_without_mutating_run(root):
-    from learning import flocker_rewards
-    path=root/'run52';config=json.loads((path/'config.json').read_text())
-    config['task']='flocker_team';config['args'].update(task='flocker_team',flocker_hit_reward=2.)
-    config['manifest']={'rewards':flocker_rewards.validate({'hit_reward':2.})}
-    (path/'config.json').write_text(json.dumps(config));before=(path/'config.json').read_bytes()
-    (path/'resume.pt').write_text('');(path/'state.json').write_text('{"state":"paused","iteration":2}')
-    with pytest.raises(TrainerError):
-        resume('run52',root=root,processes=[],launch=FakeLaunch(),changes={'flocker_hit_reward':-1.})
-    assert (path/'config.json').read_bytes()==before
-
-
-def _paused_campaign_run(root):
-    path = root/'run52'
-    config = json.loads((path/'config.json').read_text())
-    config.update(task='campaign_hunter', shaping=dict(beacon=5.0, wall_crash=-8.0))
-    config['args'].update(task='campaign_hunter', beacon=5.0, wall_crash=-8.0)
-    (path/'config.json').write_text(json.dumps(config))
-    (path/'resume.pt').write_text('unchanged optimizer')
-    (path/'state.json').write_text('{"state":"paused","iteration":2}')
-    return path
-
-
-def test_resume_changes_a_campaign_runs_reward_for_the_command_and_its_recorded_shaping(root):
-    path = _paused_campaign_run(root)
-    launch = FakeLaunch()
-    resume('run52', root=root, processes=[], launch=launch, changes={'beacon': 50})
-    command = launch.commands[0]
-    assert command[command.index('--beacon')+1] == '50.0'
-    updated = json.loads((path/'config.json').read_text())
-    assert updated['args']['beacon'] == 50.0 and updated['shaping'] == dict(beacon=50.0, wall_crash=-8.0)
-    assert (path/'resume.pt').read_text() == 'unchanged optimizer'
-
-
-def test_resume_refuses_a_campaign_reward_that_is_not_a_finite_number(root):
-    path = _paused_campaign_run(root)
-    before = (path/'config.json').read_bytes()
-    with pytest.raises(TrainerError, match='finite'):
-        resume('run52', root=root, processes=[], launch=FakeLaunch(), changes={'beacon': 'nan'})
-    assert (path/'config.json').read_bytes() == before
-
-
-def test_resume_refuses_a_setting_that_belongs_to_another_task(root):
-    path = _paused_campaign_run(root)
-    before = (path/'config.json').read_bytes()
-    with pytest.raises(TrainerError, match='require a new run'):
-        resume('run52', root=root, processes=[], launch=FakeLaunch(), changes={'flocker_hit_reward': 3})
-    assert (path/'config.json').read_bytes() == before
+# Resume-time edits of each task's settings: tests/test_resume_edits.py.
 
 
 @pytest.mark.parametrize('task', ['inchworm', 'hunter', 'wallcrawler_team', 'flocker_team'])

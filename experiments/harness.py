@@ -18,7 +18,7 @@ from hunter.rules_pilot import RulesClient
 from hunter.spawn import nearest_hunter_spawn
 
 FPS = 60
-IDLE_AFTER_SECONDS = 20.0
+from learning.hunter_rewards import IDLE_AFTER_SECONDS   # noqa: E402 (the idle cost's threshold, declared with it)
 DAMAGE_IMMUNITY_SECONDS = HunterSettings().damage_immunity  # one hit per window, as in the game
 SCREEN = (1352, 878)
 

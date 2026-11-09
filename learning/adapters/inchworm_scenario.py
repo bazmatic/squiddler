@@ -12,6 +12,7 @@ from learning.environment import Snapshot, Transition
 from learning.adapters.inchworm import (SPEC, CRITIC_SIZE, DECISION_FRAMES, INFERENCE_ACTION_MODE, observe, intention, bend_signs,
                                         action_for, enabled, load_policy)
 from learning import inchworm_rewards
+from learning.inchworm_rewards import TABLE
 from physics.inchworm import MAX_BEND
 
 INITIAL_STAGE = 1
@@ -307,7 +308,9 @@ class InchwormEnvironment:
         self.worm.worm_command = command
         old_bites = self.bites
         applied = np.asarray([*command.muscles,command.rear_grip,command.front_grip,command.bite])
-        reward = -self.rewards['action_change_cost']*float(np.mean((applied-self.previous)**2))
+        # The counts each reward term pays on (learning.inchworm_rewards); paid together once the decision ends.
+        events = TABLE.row()
+        events['action_change'] = float(np.mean((applied-self.previous)**2))
         self.previous = applied
         count = min(DECISION_FRAMES, max(0,math.ceil(self.horizon*60)-self.frames))
         backward_net = 0.
@@ -355,12 +358,12 @@ class InchwormEnvironment:
             scale = 1. if self.stage in (6,7) else alignment
             if self.curl_anchor_lost:
                 scale = 0.
-            reward += self.rewards['progress_reward']*(progress*scale if progress > 0 else progress)
+            events['progress_pixels'] += progress*scale if progress > 0 else progress
             # About-face starts facing away, where head-first progress pays nothing and crawling pays a penalty, so
             # turning needs its own reward: it is potential-based, so swinging back and forth earns nothing, and it needs the
             # body stretched out as well, since a body folded double over the goal is only half way through the turn.
             if self.stage == 8:
-                reward += self.rewards['turn_reward']*(self.turn_potential()-start_turn)
+                events['turn_progress'] += self.turn_potential()-start_turn
             touching = p.mouth_contact and self.worm.worm_rear_grip
             if self.stage == 6:
                 touching = self.distance() <= 12.
@@ -372,12 +375,13 @@ class InchwormEnvironment:
                 self.recovered_frames += 1
             self.effort_sum += p.effort
             self.airborne_frames += not grounded
-            pitch_cost = (self.rewards['end_pitch_cost']*self.end_pitch_excess()
-                          if self.stage == 1 or self.stage == 8 and self.goal_facing() > .3 else 0.)
-            reward -= (self.rewards['effort_cost']*p.effort+self.rewards['time_cost']
-                       +self.rewards['crawl_time_cost']*(self.stage in (1,9))
-                       +self.rewards['about_face_time_cost']*(self.stage == 8)
-                       +self.rewards['airborne_cost']*float(not grounded and self.worm.worm_stun == 0)+pitch_cost)/60.
+            if self.stage == 1 or self.stage == 8 and self.goal_facing() > .3:
+                events['end_pitch_seconds'] += self.end_pitch_excess()/60.
+            events['effort_seconds'] += p.effort/60.
+            events['seconds'] += 1/60.
+            events['crawl_seconds'] += (self.stage in (1,9))/60.
+            events['about_face_seconds'] += (self.stage == 8)/60.
+            events['airborne_seconds'] += float(not grounded and self.worm.worm_stun == 0)/60.
             self.frames += 1
             if self.stage in (1,8,9):
                 self.success = self.distance() < 14. and grounded
@@ -403,17 +407,18 @@ class InchwormEnvironment:
         backward = max(0.,max(0.,owed)-max(0.,self.backward_owed))
         self.backward_owed = owed
         self.backward_distance += backward
-        reward -= self.rewards['backward_cost']*backward
+        events['backward_pixels'] = backward
         # Positive progress is gated per physics frame by pre-movement facing.
         # Retreat always pays the full penalty, so a closed path cannot earn
         # positive progress reward by changing orientation on the return trip.
-        reward += self.rewards['bite_reward']*(self.bites-old_bites)
+        events['bites'] = self.bites-old_bites
         if self.success:
-            reward += self.rewards['success_reward']
+            events['successes'] = 1
             if self.stage in (1,9):
-                reward += self.rewards['speed_bonus']*max(0.,1.-self.frames/math.ceil(self.horizon*60))
+                events['time_left_on_arrival'] = max(0.,1.-self.frames/math.ceil(self.horizon*60))
         if not self.worm.active:
-            reward -= self.rewards['death_penalty']
+            events['deaths'] = 1
+        reward = float(TABLE.pay([events],self.rewards)[0])
         self.return_total += reward
         terminated = self.success or not self.worm.active or self.curl_anchor_lost
         truncated = not terminated and self.frames >= math.ceil(self.horizon*60)

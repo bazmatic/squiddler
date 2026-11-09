@@ -316,32 +316,10 @@ def write_state(out_dir, state, iteration):
 
 
 def reward_summary(args):
-    """The reward terms a run trains on, as plain numbers for the dashboard: (name, sign, value, unit) rows."""
-    from experiments.harness import IDLE_AFTER_SECONDS
-    from experiments.rollout import KILL_REWARD_TOTAL
-    from experiments.score import Weights
-    w = Weights()
-    rows = [('Kills', '+', KILL_REWARD_TOTAL, 'points shared across all the enemies in an episode'),
-            ('Powerup collected', '+', args.powerup_reward, 'points each'),
-            ('Gun upgraded', '+', args.upgrade_bonus, 'points per second with a hunter power boost'),
-            ('Wall impact', '-', w.quotient * args.wall_scale, 'points per full-speed hit (scales with the speed lost)'),
-            ('Enemy hit', '-', w.hit * args.hit_scale, 'points each'),
-            ('Idle', '-', w.idle / 60.0, f'points per second beyond {IDLE_AFTER_SECONDS:.0f} s without a kill, until the field is clear'),
-            ('Flying below top speed', '-', args.speed_penalty, 'points per second at a standstill, in proportion to the shortfall'),
-            ('Crawling under the still speed', '-', args.still_penalty, f'points per second below {args.still_speed:.0%} of top speed'),
-            ('Starting or reversing a turn', '-', args.turn_change_penalty, 'points each'),
-            ('Reversing a turn directly', '-', args.reversal_penalty, 'extra points each, left to right or back'),
-            ('Death', '-', args.death_penalty, f'points when the hunter is destroyed (it survives {args.health} hits)'),
-            ('Rules hunter destroyed', '+', args.rules_bounty, 'points, on top of its share of the kill reward'),
-            ('Following the enemy compass', '+', getattr(args, 'compass_reward', 0.0),
-             'points per maze width the route to the nearest enemy shortens while none is in sight'),
-            ('Hit on an enemy', '+', getattr(args, 'hit_reward', 0.0), 'points per shot that reaches an enemy'),
-            ('Turning', '-', getattr(args, 'turning_penalty', 0.0), 'points per second spent turning'),
-            ('Unaimed shot', '-', getattr(args, 'shot_price', 0.0),
-             'points each, unless within 20° of an enemy in sight'),
-            ('Boredom', '-', getattr(args, 'boredom_penalty', 0.0),
-             f'points per second with no enemy in sight in a cell visited in the last {getattr(args, "boredom_window", 10.0):g} s')]
-    return [{'name': n, 'sign': s, 'value': round(v, 4), 'unit': u} for n, s, v, u in rows if v]
+    """The reward terms a hunter run trains on, as plain numbers for the dashboard: its rewards rows (name, sign,
+    value, unit), from learning.hunter_rewards."""
+    from learning.hunter_rewards import TABLE
+    return TABLE.summary(TABLE.from_args(args))
 
 
 def _wall_energy():
@@ -361,32 +339,17 @@ def parse_levels(text):
 def shaping_from(args):
     """The episode shaping a run's arguments ask for: what fly_rollout (or the task's episode) is called with."""
     from learning.tasks import task
-    table = task(getattr(args, 'task', 'hunter')).reward_table()
-    if table is not None:
+    key = getattr(args, 'task', 'hunter')
+    table = task(key).reward_table()
+    if key != 'hunter':          # a task flown by the same student takes its rewards and horizon alone
         return {'horizon': args.horizon, **table.from_args(args)}
     from weapons.catalog import RULESET, CATALOG
-    return {'wall_scale': args.wall_scale,
-            'hit_scale': args.hit_scale,
-            'still_penalty': args.still_penalty,
+    return {**table.from_args(args),           # the hunter's rewards, learning.hunter_rewards
             'horizon': args.horizon,
             'random_start': not args.fixed_start,
-            'still_speed': args.still_speed,
-            'turn_change_penalty': args.turn_change_penalty,
-            'reversal_penalty': args.reversal_penalty,
             'health': args.health,
-            'death_penalty': args.death_penalty,
-            'speed_penalty': args.speed_penalty,
-            'powerup_reward': args.powerup_reward,
             'after_clear': args.after_clear,
-            'upgrade_bonus': args.upgrade_bonus,
             'pursue_hunter': not args.decoy_player,
-            'rules_bounty': args.rules_bounty,
-            'compass_reward': args.compass_reward,
-            'boredom_penalty': args.boredom_penalty,
-            'boredom_window': args.boredom_window,
-            'shot_price': args.shot_price,
-            'turning_penalty': args.turning_penalty,
-            'hit_reward': args.hit_reward,
             'panic_score': args.panic_score,
             'panic_temperature': args.panic_temperature,
             'duel_separation': True, 'random_maze': True,
@@ -402,31 +365,39 @@ def table_reward_summary(args):
     return table.summary(table.from_args(args))
 
 
+# Shaping a run keeps for its whole life, whatever its settings later say: train_rl restores these on resume (and
+# records when a run first took random mazes), so editing a paused run's settings never rewrites them.
+RUN_RULES = ('duel_separation', 'random_maze', 'combat_ruleset', 'curved_walls', 'weapon_tuning')
+
+
+def run_config(args):
+    """What a run with these arguments records in its config.json, so the dashboard can list it and it can resume."""
+    recorded_args = {k: (list(v) if isinstance(v, tuple) else v) for k, v in vars(args).items()}
+    if args.task == 'campaign_hunter':
+        return {'task': args.task, 'rewards': table_reward_summary(args),
+                'episode': {'horizon_seconds': args.horizon, 'episodes_per_iteration': args.episodes,
+                            'learning_rate': args.lr, 'levels': list(args.levels)},
+                'start': str(args.start), 'shaping': shaping_from(args),
+                'observation_version': OBSERVATION_VERSION, 'decision_frames': 6, 'turn_rate': 1.0,
+                'args': recorded_args}
+    return {'rewards': reward_summary(args),
+            'episode': {'horizon_seconds': args.horizon, 'after_clear_seconds': args.after_clear,
+                        'episodes_per_iteration': args.episodes, 'learning_rate': args.lr,
+                        'health': args.health, 'wall_energy': _wall_energy() if args.health else 0,
+                        'levels': args.levels,
+                        'panic_score': args.panic_score, 'panic_temperature': args.panic_temperature},
+            'start': str(args.start), 'shaping': shaping_from(args),
+            'observation_version': OBSERVATION_VERSION,
+            'decision_frames': 6, 'turn_rate': 1.0,
+            'args': recorded_args}
+
+
 def write_run_config(args):
     """Record what this run trains on beside its log, so the dashboard can list it."""
     import json
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    if args.task == 'campaign_hunter':
-        (out / 'config.json').write_text(json.dumps({
-            'task': args.task, 'rewards': table_reward_summary(args),
-            'episode': {'horizon_seconds': args.horizon, 'episodes_per_iteration': args.episodes,
-                        'learning_rate': args.lr, 'levels': list(args.levels)},
-            'start': str(args.start), 'shaping': shaping_from(args),
-            'observation_version': OBSERVATION_VERSION, 'decision_frames': 6, 'turn_rate': 1.0,
-            'args': {k: (list(v) if isinstance(v, tuple) else v) for k, v in vars(args).items()}}, indent=1))
-        return
-    (out / 'config.json').write_text(json.dumps({
-        'rewards': reward_summary(args),
-        'episode': {'horizon_seconds': args.horizon, 'after_clear_seconds': args.after_clear,
-                    'episodes_per_iteration': args.episodes, 'learning_rate': args.lr,
-                    'health': args.health, 'wall_energy': _wall_energy() if args.health else 0,
-                    'levels': args.levels,
-                    'panic_score': args.panic_score, 'panic_temperature': args.panic_temperature},
-        'start': str(args.start), 'shaping': shaping_from(args),
-        'observation_version': OBSERVATION_VERSION,
-        'decision_frames': 6, 'turn_rate': 1.0,
-        'args': {k: (list(v) if isinstance(v, tuple) else v) for k, v in vars(args).items()}}, indent=1))
+    (out / 'config.json').write_text(json.dumps(run_config(args), indent=1))
 
 
 def unit_interval(value):
@@ -459,18 +430,6 @@ def build_parser():
     parser.add_argument('--bootstrap-epochs', type=int, default=0,
                         help='passes over teacher demonstrations; 0 uses the task default')
     parser.add_argument('--seed', type=int, default=0, help='team model and training seed')
-    from learning.jelly_rewards import DEFAULTS
-    for name, default in DEFAULTS.items():
-        parser.add_argument('--jelly-' + name.replace('_', '-'), type=float, default=default,
-                            help='Jelly ' + name.replace('_', ' '))
-    from learning.flocker_rewards import DEFAULTS as FLOCKER_DEFAULTS
-    for name, default in FLOCKER_DEFAULTS.items():
-        parser.add_argument('--flocker-' + name.replace('_', '-'), type=float, default=default,
-                            help='Flocker ' + name.replace('_', ' '))
-    from learning.inchworm_rewards import DEFAULTS as INCHWORM_DEFAULTS
-    for name, default in INCHWORM_DEFAULTS.items():
-        parser.add_argument('--inchworm-' + name.replace('_', '-'), type=float, default=default,
-                            help='Inchworm ' + name.replace('_', ' '))
     from learning.reward_table import tables
     for table in tables().values():          # the tasks that declare their rewards in a reward table
         table.add_arguments(parser)
@@ -484,54 +443,20 @@ def build_parser():
                         help='future reward discount, 0–1; higher values give distant rewards more weight')
     parser.add_argument('--gae-lambda', type=unit_interval, default=0.95,
                         help='GAE credit assignment, 0–1; higher values carry credit further back with more noise')
-    parser.add_argument('--wall-scale', type=float, default=1.0,
-                        help='multiplies the wall-collision penalty in the training reward (the score is unchanged)')
     parser.add_argument('--fixed-start', action='store_true',
                         help='start the hunter beside the player on every episode instead of at a random open cell')
-    parser.add_argument('--still-speed', type=float, default=0.15,
-                        help='below this share of top speed counts as near-motionless')
-    parser.add_argument('--turn-change-penalty', type=float, default=0.0,
-                        help='points lost each time a turn starts or reverses')
     parser.add_argument('--health', type=int, default=0,
                         help='hits the hunter survives before it is destroyed and the episode ends (0: indestructible)')
-    parser.add_argument('--death-penalty', type=float, default=0.0,
-                        help='points lost when the hunter is destroyed (needs --health)')
-    parser.add_argument('--reversal-penalty', type=float, default=0.0,
-                        help='extra points lost each time the turn flips straight from left to right or back')
     parser.add_argument('--horizon', type=float, default=DEFAULT_HORIZON,
                         help='seconds of game time per training episode')
-    parser.add_argument('--still-penalty', type=float, default=0.0,
-                        help='points lost per second spent near-motionless in the training reward')
-    parser.add_argument('--speed-penalty', type=float, default=0.0,
-                        help='points lost per second at standstill, scaling down linearly to zero at top speed')
-    parser.add_argument('--powerup-reward', type=float, default=0.0,
-                        help='points gained per powerup crystal the hunter collects in the training reward')
-    parser.add_argument('--upgrade-bonus', type=float, default=0.0,
-                        help='points gained per second the hunter\'s guns are upgraded in the training reward')
     parser.add_argument('--decoy-player', action='store_true',
                         help='leave the parked player as a target for enemies (by default they chase only the hunter)')
     parser.add_argument('--after-clear', type=float, default=0.0,
                         help='seconds an episode keeps going after the last enemy dies (less if no crystal is left)')
-    parser.add_argument('--hit-scale', type=float, default=1.0,
-                        help='multiplies the enemy-hit penalty in the training reward (the score is unchanged)')
-    parser.add_argument('--rules-bounty', type=float, default=50.0,
-                        help='points gained for destroying the Rules hunter in the training reward')
-    parser.add_argument('--compass-reward', type=float, default=0.0,
-                        help='points per maze width the enemy compass route shortens while no enemy is in sight')
-    parser.add_argument('--boredom-penalty', type=float, default=0.0,
-                        help='points lost per second with no enemy in sight in a recently visited maze cell')
-    parser.add_argument('--boredom-window', type=float, default=10.0,
-                        help='seconds before a visited maze cell counts as new again')
-    parser.add_argument('--shot-price', type=float, default=0.0,
-                        help='points lost per shot not within 20 degrees of an enemy in sight')
     parser.add_argument('--panic-score', type=float, default=None,
                         help='panic once the last 5 s score below this (e.g. -10); off when not given')
     parser.add_argument('--panic-temperature', type=float, default=3.0,
                         help='the temperature choices are sampled at while panicking')
-    parser.add_argument('--hit-reward', type=float, default=0.0,
-                        help='points gained per hunter shot that reaches an enemy')
-    parser.add_argument('--turning-penalty', type=float, default=0.0,
-                        help='points lost per second spent turning (circling costs; a quick correction is cheap)')
     parser.add_argument('--levels', type=parse_levels, default=None,
                         help='levels to train on, e.g. 1-20 or 4,7,13 (default: the tune set)')
     parser.add_argument('--actor-scale', type=float, default=1.,
