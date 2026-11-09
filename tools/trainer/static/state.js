@@ -6,7 +6,7 @@ export const S={
   EPI:96,                         // episodes per iteration, from the viewed run's config
   STATUS_KEY:null,VIEW:null,STATUS:null,RUNS:[],SCHEMA:null,BASE:{},EDITS:{},FOLLOW:true,
   DEFAULT_RUN:null,
-  EPISODES:[],RP_KEY:'',EPISODE_REQUEST:null,LATEST_WAIT:null,
+  EPISODES:[],RP_KEY:'',EPISODE_REQUEST:null,STATUS_REQUEST:null,RUNS_REQUEST:null,LATEST_WAIT:null,
 };
 export const UNTAGGED='hunter';                 // the task of a run whose config names none
 export const taskOf=run=>run?.task||UNTAGGED;

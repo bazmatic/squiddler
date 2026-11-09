@@ -21,9 +21,9 @@ export const css=n=>getComputedStyle(document.documentElement).getPropertyValue(
 export function smooth(v,k=5){return v.map((_,i)=>{const s=v.slice(Math.max(0,i-k+1),i+1);return s.reduce((a,b)=>a+b,0)/s.length})}
 // rows: the rows in the chosen range; start: the first iteration of that range (the chart's left edge).
 export function chart({title,sub,key,ref,base,gate,wide,unit},rows=chartData(),start=S.CHART_START){
-  const D=rows;
+  const D=rows.filter(d=>key in d);                 // a metric added mid-run starts where it was first logged
   if(!D.length)return '';
-  if(D.length&&!(key in D.at(-1)))return '';        // a run that does not log this one
+  if(!(key in rows.at(-1)))return '';               // a run that does not log this one
   const W=960,H=300,m={l:44,r:10,t:10,b:22};
   const xs=D.map(d=>d.iteration),ys=D.map(d=>d[key]);
   const g=gate?D.filter(d=>'gate_score' in d):[];

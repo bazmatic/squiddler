@@ -21,6 +21,12 @@ class FireResult:
     weapon_id: str
     projectiles: tuple = ()
 
+def held_weapon(holder):
+    """The pickup weapon a creature fires in place of its own gun, or None once that weapon's ammo has run out."""
+    weapon = getattr(holder, 'weapon', None)
+    return weapon if weapon is not None and weapon.weapon_id != 'basic' else None
+
+
 class EquippedWeapon:
     def __init__(self, catalog=CATALOG):
         self.catalog = catalog

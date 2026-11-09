@@ -1,0 +1,227 @@
+"""Campaign episodes: the real ship flies one level headless, and is paid roughly as a good player would be."""
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+
+from experiments.campaign_rollout import CampaignShaping, fly_campaign
+from experiments.student import StudentSpec
+from hunter.campaign_pilot import ShipCommand
+from hunter.campaign_senses import CAMPAIGN_FEATURE_NAMES
+from hunter.neural.loader import DEFAULT_PATH as HUNTER_POLICY_PATH
+from tools.migrate_policy import migrate
+
+SHAPING = CampaignShaping(idle=0.0, thrust=0.0)       # the terminal rewards read alone; an idle ship would add its penalty
+
+
+@pytest.fixture(scope='module', autouse=True)
+def undo_harness_side_effects():
+    yield
+    from experiments import harness
+    harness.reset()
+
+
+@pytest.fixture
+def spec(tmp_path):
+    path = tmp_path / 'campaign.npz'
+    migrate(str(HUNTER_POLICY_PATH), str(path), CAMPAIGN_FEATURE_NAMES)
+    return StudentSpec(weights=str(path), greedy=False, sample_seed=1)
+
+
+class ScriptedPilot:
+    """Holds still and runs `script(game, decision)` at each decision, reporting blank senses as a pilot would."""
+
+    def __init__(self, script=lambda game, decision: None, thrust=False):
+        self.script, self.thrust, self.decisions, self._listeners = script, thrust, 0, []
+
+    def on_observed(self, listener):
+        self._listeners.append(listener)
+
+    def decide(self, game):
+        for listener in self._listeners:
+            listener(np.zeros(len(CAMPAIGN_FEATURE_NAMES), dtype=np.float32), (1, 0, 0))
+        self.script(game, self.decisions)
+        self.decisions += 1
+        return ShipCommand(0, self.thrust, False)
+
+
+def into_the_open_exit(game):
+    game.exit_opened = True
+    game.maze.exit.set_activated(True, game.sound_manager)
+    game.ship.x, game.ship.y = game.maze.exit.get_pos()
+    game.ship.vx = game.ship.vy = 0.0
+
+
+def test_a_campaign_episode_is_deterministic_and_well_formed(spec):
+    a = fly_campaign(1, 300, spec, horizon=3.0)
+    b = fly_campaign(1, 300, spec, horizon=3.0)
+    n = len(a['senses'])
+    assert n >= 25                                       # 3 s at 10 decisions a second
+    assert a['senses'].shape == (n, len(CAMPAIGN_FEATURE_NAMES)) and a['senses'].dtype == np.float32
+    assert a['controls'].shape == (n, 3) and a['controls'].dtype == np.int8
+    assert a['rewards'].shape == a['temperatures'].shape == (n,)
+    assert np.isfinite(a['rewards']).all()
+    for key in ('senses', 'controls', 'rewards', 'temperatures'):
+        assert np.array_equal(a[key], b[key])
+    assert a['result'] == b['result'] and a['result'].end == 'horizon'
+
+
+def test_exiting_pays_and_clearing_first_pays_more(spec):
+    def leave(game, decision):
+        if decision == 1:
+            into_the_open_exit(game)
+
+    def clear_then_leave(game, decision):
+        if decision == 1:
+            for enemy in game.roster.alive():
+                game.encounter.kill(enemy)
+            into_the_open_exit(game)
+
+    left = fly_campaign(1, 300, spec, horizon=5.0, pilot=ScriptedPilot(leave), shaping=SHAPING)
+    cleared = fly_campaign(1, 300, spec, horizon=5.0, pilot=ScriptedPilot(clear_then_leave), shaping=SHAPING)
+    assert left['result'].end == cleared['result'].end == 'exited'
+    assert left['result'].enemies_at_start > 0 and not left['result'].cleared and cleared['result'].cleared
+    assert left['rewards'][-1] == pytest.approx(SHAPING.exit)
+    assert cleared['rewards'][-1] == pytest.approx(SHAPING.exit + SHAPING.cleared_exit)
+
+
+def test_idling_costs_a_penalty_a_decision_and_thrusting_does_not(spec):
+    idle = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot(), shaping=CampaignShaping(exit_progress=0.0, hunt_progress=0.0))
+    assert idle['rewards'].sum() == pytest.approx(len(idle['rewards']) * CampaignShaping().idle)
+    thrusting = fly_campaign(1, 300, spec, horizon=0.3, pilot=ScriptedPilot(thrust=True),
+                         shaping=CampaignShaping(exit_progress=0.0, hunt_progress=0.0, thrust=0.0))
+    assert thrusting['rewards'].sum() == pytest.approx(0)
+
+
+def test_the_thruster_costs_a_penalty_a_decision_and_coasting_does_not(spec):
+    shaping = CampaignShaping(exit_progress=0.0, hunt_progress=0.0, idle=0.0)
+    thrusting = fly_campaign(1, 300, spec, horizon=0.3, pilot=ScriptedPilot(thrust=True), shaping=shaping)
+    assert thrusting['rewards'].sum() == pytest.approx(len(thrusting['rewards']) * shaping.thrust)
+
+
+def test_closing_on_the_open_exit_pays_and_standing_off_does_not(spec):
+    def open_then_jump(game, decision):
+        if decision == 1:
+            for enemy in game.roster.alive():
+                game.encounter.kill(enemy)
+            game.exit_opened = True
+        if decision == 4:                     # a cell from the exit, where the ship started far off
+            x, y = game.maze.exit.get_pos()
+            game.ship.x, game.ship.y = x + game.maze.cell_size_x, y
+            game.ship.vx = game.ship.vy = 0.0
+
+    shaping = CampaignShaping(idle=0.0, thrust=0.0, compass_following=0.0)
+    closing = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot(open_then_jump), shaping=shaping)
+    standing = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot(lambda g, d: d == 1 and (list(map(g.encounter.kill, g.roster.alive())), setattr(g, 'exit_opened', True))),
+                            shaping=shaping)
+    assert closing['result'].end == 'horizon' and closing['rewards'].sum() > 1
+    assert standing['rewards'].sum() == pytest.approx(0, abs=1e-6)
+
+
+def test_closing_on_the_nearest_enemy_pays_and_a_kill_is_not_ground_lost(spec):
+    def jump_to_an_enemy(game, decision):
+        if decision == 4:
+            enemy = game.roster.alive()[0]
+            game.ship.x, game.ship.y = enemy.x + 90, enemy.y
+            game.ship.vx = game.ship.vy = 0.0
+
+    def kill_one(game, decision):
+        if decision == 4:
+            game.encounter.kill(game.roster.alive()[0])
+
+    shaping = CampaignShaping(idle=0.0, thrust=0.0, compass_following=0.0, own_kill=0.0)
+    closing = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot(jump_to_an_enemy), shaping=shaping)
+    killing = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot(kill_one), shaping=shaping)
+    assert closing['rewards'].sum() > 0
+    assert killing['rewards'].min() >= 0
+
+
+def test_only_the_ships_own_kills_pay(spec):
+    def killed_by(source):
+        def script(game, decision):
+            if decision == 1:
+                game.encounter.kill(game.roster.alive()[0], SimpleNamespace(source=source, weapon_id=None))
+        return script
+
+    ally = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot(killed_by('hunter')))
+    own = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot(killed_by('player')))
+    assert (ally['result'].own_kills, ally['result'].ally_kills) == (0, 1)
+    assert (own['result'].own_kills, own['result'].ally_kills) == (1, 0)
+    assert own['rewards'].sum() - ally['rewards'].sum() == pytest.approx(SHAPING.own_kill)
+
+
+def test_the_longest_spell_without_a_kill_counts_only_while_enemies_remain(spec):
+    def ally_kills_one(game, decision):
+        if decision == 60:                                  # a second in (one call a frame)
+            game.encounter.kill(game.roster.alive()[0], SimpleNamespace(source='hunter', weapon_id=None))
+
+    def clears_the_level(game, decision):
+        if decision == 30:                                  # half a second in
+            for enemy in game.roster.alive():
+                game.encounter.kill(enemy, SimpleNamespace(source='player', weapon_id=None))
+
+    still = fly_campaign(1, 300, spec, horizon=2.0, pilot=ScriptedPilot())['result']
+    late = fly_campaign(1, 300, spec, horizon=2.5, pilot=ScriptedPilot(ally_kills_one))['result']
+    cleared = fly_campaign(1, 300, spec, horizon=2.0, pilot=ScriptedPilot(clears_the_level))['result']
+    assert still.enemies_at_start > 1 and still.own_kills == still.ally_kills == 0
+    assert still.max_no_kill_gap == pytest.approx(2.0, abs=0.05)
+    assert late.ally_kills == 1 and late.max_no_kill_gap == pytest.approx(1.5, abs=0.15)
+    assert cleared.cleared and cleared.max_no_kill_gap == pytest.approx(0.5, abs=0.15)
+
+
+def test_scoring_out_ends_the_episode_with_its_penalty(spec, monkeypatch):
+    from scoring.system import ScoringSystem
+    monkeypatch.setattr(ScoringSystem, 'calculate_current_potential_score',
+                        lambda self, *a, **k: {'potential_score': 0, 'score_percentage': 0.0})
+    r = fly_campaign(1, 300, spec, horizon=5.0, pilot=ScriptedPilot(), shaping=SHAPING)
+    assert r['result'].end == 'scored_out' and r['result'].elapsed < 1.0
+    assert r['rewards'][-1] == pytest.approx(SHAPING.score_out)
+
+
+def test_a_fetched_beacon_summons_the_neural_ally_whatever_the_setting(spec, monkeypatch):
+    # Jev's pilot reads wall time and calls out: an episode must not depend on it.
+    from config import SETTINGS
+    from entities.jev_beacon import JevBeacon
+    monkeypatch.setattr(SETTINGS.game, 'hunterPilot', 'jev')
+    allies = []
+
+    def fetch_beacon(game, decision):
+        if decision == 1:
+            game.powerup_crystals.append(JevBeacon((game.ship.x, game.ship.y)))
+        if decision == 120 and game.hunter_flight is not None:      # a beacon forms for 72 frames first
+            allies.append(getattr(game.hunter_flight.controller, 'kind', 'worker'))
+
+    r = fly_campaign(13, 300, spec, horizon=2.5, pilot=ScriptedPilot(fetch_beacon))
+    assert r['result'].beacon and allies == ['neural']
+    assert SETTINGS.game.hunterPilot == 'jev'
+
+
+def test_one_campaign_training_iteration_saves_a_campaign_policy(tmp_path):
+    pytest.importorskip('torch')
+    from hunter.neural.policy import NeuralPolicy
+    from tools import ppo_neural
+    lines = []
+    result = ppo_neural.train_rl(str(HUNTER_POLICY_PATH), tmp_path, iterations=1, episodes=2, workers=1,
+                                 task='campaign_hunter', levels=[1], horizon=2, log=lines.append)
+    NeuralPolicy.load(result['last'], CAMPAIGN_FEATURE_NAMES)        # raises InvalidPolicy if it is not one
+    assert result['last'].name == 'iter0000.npz'
+    for key in ('exited=', 'cleared_exit=', 'scored_out=', 'own_kills=', 'mean_return='):
+        assert key in lines[0]
+
+
+def test_the_campaign_rewards_are_trainer_settings_for_that_task_alone():
+    from dataclasses import fields
+    from tools import ppo_neural
+    from tools.trainer.settings import applies_to
+    args = ppo_neural.build_parser().parse_args(['--task', 'campaign_hunter'])
+    for field in fields(CampaignShaping):
+        assert getattr(args, field.name) == field.default
+        assert applies_to(field.name) == ('campaign_hunter',)
+
+
+def test_the_trainer_server_still_starts_without_pygame():
+    import subprocess
+    import sys
+    loaded = subprocess.run([sys.executable, '-c', "import sys, tools.trainer.server; print('pygame' in sys.modules)"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+    assert loaded == 'False'

@@ -257,6 +257,36 @@ def test_resume_rejects_invalid_flocker_reward_edits_without_mutating_run(root):
     assert (path/'config.json').read_bytes()==before
 
 
+def _paused_campaign_run(root):
+    path = root/'run52'
+    config = json.loads((path/'config.json').read_text())
+    config.update(task='campaign_hunter', shaping=dict(beacon=5.0, wall_crash=-8.0))
+    config['args'].update(task='campaign_hunter', beacon=5.0, wall_crash=-8.0)
+    (path/'config.json').write_text(json.dumps(config))
+    (path/'resume.pt').write_text('unchanged optimizer')
+    (path/'state.json').write_text('{"state":"paused","iteration":2}')
+    return path
+
+
+def test_resume_changes_a_campaign_runs_reward_for_the_command_and_its_recorded_shaping(root):
+    path = _paused_campaign_run(root)
+    launch = FakeLaunch()
+    resume('run52', root=root, processes=[], launch=launch, changes={'beacon': 50})
+    command = launch.commands[0]
+    assert command[command.index('--beacon')+1] == '50.0'
+    updated = json.loads((path/'config.json').read_text())
+    assert updated['args']['beacon'] == 50.0 and updated['shaping'] == dict(beacon=50.0, wall_crash=-8.0)
+    assert (path/'resume.pt').read_text() == 'unchanged optimizer'
+
+
+def test_resume_refuses_a_setting_that_belongs_to_another_task(root):
+    path = _paused_campaign_run(root)
+    before = (path/'config.json').read_bytes()
+    with pytest.raises(TrainerError, match='require a new run'):
+        resume('run52', root=root, processes=[], launch=FakeLaunch(), changes={'flocker_hit_reward': 3})
+    assert (path/'config.json').read_bytes() == before
+
+
 @pytest.mark.parametrize('task', ['inchworm', 'hunter', 'wallcrawler_team', 'flocker_team'])
 def test_resume_workers_preserves_learning_state_for_every_task(root, task):
     path = root/'run52'
@@ -298,3 +328,13 @@ def test_resume_worker_change_rolls_back_if_launch_fails(root):
     with pytest.raises(OSError):
         resume('run52', root=root, processes=[], launch=fail, changes={'workers':7})
     assert (path/'config.json').read_bytes() == before
+
+
+def test_a_new_campaign_hunter_run_starts_from_the_shipped_hunter_pilot(root):
+    fake = FakeLaunch()
+    started = start(changes={'task': 'campaign_hunter'}, root=root, processes=[], launch=fake)
+    command = fake.commands[0]
+    assert started.run == 'run53' and started.started_from == 'assets/neural/hunter.npz'
+    assert command[command.index('--start') + 1] == str(ppo.DEFAULT_START)
+    assert command[command.index('--task') + 1] == 'campaign_hunter'
+    assert command[command.index('--horizon') + 1] == '180.0'

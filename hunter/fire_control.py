@@ -10,6 +10,7 @@ import config
 from hunter.model import FiringSolution
 from hunter.pilot_sensors import firing_solution, nose_miss_distance, off_nose
 from hunter.visibility import visible_point
+from weapons.state import held_weapon
 
 
 def find_firing_solution(hunter, enemies, maze, settings):
@@ -19,10 +20,14 @@ def find_firing_solution(hunter, enemies, maze, settings):
     pilot, so the ship engages the enemy the pilot was looking at.
     """
     origin = hunter.get_pos()
-    boosted = (getattr(hunter, 'nonstacking_powerups', False)
-               and getattr(hunter, 'gun_upgrade_level', 0) > 0)
-    shot_speed = config.PROJECTILE_SPEED * (config.UPGRADED_PROJECTILE_SPEED_MULTIPLIER if boosted else 1)
-    shot_lifetime = config.PROJECTILE_LIFETIME
+    weapon = held_weapon(hunter)
+    if weapon is not None:
+        shot_speed = weapon.definition.base_speed * weapon.definition.speed
+        shot_lifetime = weapon.definition.lifetime
+    else:
+        boosted = getattr(hunter, 'gun_upgrade_level', 0) > 0
+        shot_speed = config.PROJECTILE_SPEED * (config.UPGRADED_PROJECTILE_SPEED_MULTIPLIER if boosted else 1)
+        shot_lifetime = config.PROJECTILE_LIFETIME
     sensor_range = settings.sensor_range(maze)
     in_range = sorted(
         (math.hypot(enemy.x - origin[0], enemy.y - origin[1]), index, enemy)

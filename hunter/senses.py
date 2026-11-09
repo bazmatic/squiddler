@@ -124,6 +124,8 @@ class Senses:
         self._crystal_memory = {}    # id -> (crystal, x, y, seen_at); held strongly so an id is not reused
         self._routes = MazeRoutes()
 
+    hit_point_cells = HIT_POINT_CELLS   # route cells one hit point of wall block counts as; a subclass may price blocks higher
+
     def reset(self):
         self._memory = weakref.WeakKeyDictionary()
         self._crystal_memory = {}
@@ -158,10 +160,13 @@ class Senses:
         out[_INDEX['cooldown']] = min(1.0, hunter.fire_remaining / max(hunter.fire_interval, 1e-6))
         out[_INDEX['burst']] = hunter.burst_remaining / max(self.settings.burst_size, 1)
         out[_INDEX['upgrade']] = min(1.0, hunter.gun_upgrade_level / UPGRADE_CAP)
-        out[_INDEX['power_boost']] = float(hunter.gun_upgrade_level > 0)
+        # A pickup weapon is a boost too, lasting as long as its ammo
+        from weapons.state import held_weapon  # here, not at the top: the weapons package loads pygame
+        weapon = held_weapon(hunter)
+        out[_INDEX['power_boost']] = float(hunter.gun_upgrade_level > 0 or weapon is not None)
         import config
-        out[_INDEX['power_boost_remaining']] = min(1.0, max(0.0,
-            getattr(hunter, 'upgrade_remaining', 0) / config.POWERUP_DURATION_SECONDS))
+        out[_INDEX['power_boost_remaining']] = (weapon.view.ammo_fraction if weapon is not None else min(1.0, max(0.0,
+            getattr(hunter, 'upgrade_remaining', 0) / config.POWERUP_DURATION_SECONDS)))
         out[_INDEX['enemies_present']] = 1.0 if any(e.active for e in enemies) else 0.0
 
         rays = ray_distances(origin, hunter.angle, starts, ends, reach) / reach
@@ -305,7 +310,7 @@ class Senses:
         alive = [e for e in enemies if e.active]
         if not alive:
             return
-        found = self._routes.cheapest_route(maze, origin, [(e.x, e.y) for e in alive], HIT_POINT_CELLS)
+        found = self._routes.cheapest_route(maze, origin, [(e.x, e.y) for e in alive], self.hit_point_cells)
         if found is None:
             target = min(((e.x, e.y) for e in alive), key=lambda p: math.dist(origin, p))
             waypoint, length = target, math.dist(origin, target)
@@ -319,7 +324,7 @@ class Senses:
             waypoint = points[k]
             # Straight to the waypoint, then along the rest of the route.
             legs = [tuple(origin)] + points[k::-1]
-            # Each hit point left in a block on the route counts as HIT_POINT_CELLS cells more to go.
+            # Each hit point left in a block on the route counts as hit_point_cells cells more to go.
             length = sum(math.dist(a, b) for a, b in zip(legs, legs[1:])) + extra
         rel = math.atan2(waypoint[1] - origin[1], waypoint[0] - origin[0]) - h
         out[_INDEX['enemy_compass_present']] = 1.0

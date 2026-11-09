@@ -60,6 +60,7 @@ from utils.math_utils import get_angle_to_point
 
 from creatures.creature import Creature
 from hunter.build import PilotSetup, make_hunter
+from hunter.campaign_pilot import CampaignPilot, load_campaign_policy
 from hunter.flight import HunterFlight, NeuralPilot, WorkerPilot
 from hunter.neural.loader import load_neural_policy
 from hunter.settings_for import hunter_settings_for
@@ -91,6 +92,9 @@ PAR_WARNING_SECONDS = 5.0  # The par star pulses for this long before par runs o
 class Game:
     """Main game class managing state and game loop."""
     autoplay = None  # An AutoplayDirector when the game runs unattended (AUTOPLAY=1)
+    ship_pilot = None  # Anything with decide(game) -> ShipCommand; when set it flies the player ship
+    clock = time.time  # Wall time for scoring and cooldowns; a training harness swaps in a frame clock
+    clock_ms = pygame.time.get_ticks  # The same, in milliseconds, for the fire cooldown
     CRITICAL_WARNING_THRESHOLD = config.SETTINGS.game.criticalWarningThreshold
     
     def __init__(self, screen: pygame.Surface):
@@ -100,7 +104,7 @@ class Game:
         self.combat_ruleset = RULESET
         self.grows_flora = config.FLORA.enabled     # living weed; training switches it off
         self.curved_walls = config.CAVE.enabled     # training runs recorded on square walls replay on square walls
-        self.clock = pygame.time.Clock()
+        self.frame_limiter = pygame.time.Clock()
         self.font = get_font(36)
         self.small_font = get_font(24)
         self.renderer = Renderer(screen)
@@ -238,37 +242,39 @@ class Game:
             self._start_autoplay()
 
     def _start_autoplay(self) -> None:
-        """Run unattended: skip the menus and let the hunter fly level after level."""
+        """Run unattended (Demo): skip the menus and let the Campaign Hunter fly the ship level after level."""
         settings = config.SETTINGS.autoplay
         self.autoplay = AutoplayDirector(
             settings.firstLevel, settings.lastLevel, settings.timeLimitSeconds,
             no_kill_seconds=settings.noKillSeconds)
+        self.ship_pilot = CampaignPilot(load_campaign_policy(), config.SETTINGS.game.neuralDecisionFrames)
         self._begin_autoplay_level()
 
+    def stop_autoplay(self) -> None:
+        """Leave Demo: the ship is the player's again."""
+        self.autoplay = None
+        self.ship_pilot = None
+
     def _begin_autoplay_level(self) -> None:
-        """Start the director's level with the player parked and a hunter beside it."""
+        """Start the director's level with the Campaign Hunter at the controls."""
         self.level = self.autoplay.level
         self.state = config.STATE_PLAYING
         self.start_level()
         # No first move will come from a person: open the level the way one would.
         self.player_has_moved = True
         self.ship.game_started = True
-        self._summon_hunter((self.ship.x, self.ship.y))
-        self.autoplay.start_level(
-            len(self.roster.alive()),
-            hunter_present=self.hunter is not None)
+        self.ship_pilot.reset()
+        self.autoplay.start_level(len(self.roster.alive()))
 
     def _hunter_sees_player(self) -> bool:
-        """Whether the hunter may perceive the player: not when autoplay hides the parked one."""
-        if self.ship is not None and self.ship.observer:
-            return False
-        return not (self.autoplay is not None and config.SETTINGS.autoplay.hidePlayer)
+        """Whether the hunter may perceive the player: not when the ship is only an observer."""
+        return not (self.ship is not None and self.ship.observer)
 
-    def _autoplay_level_over(self) -> bool:
-        """Move on to the next level when the director says this one is over."""
-        reason = self.autoplay.end_reason(
-            enemies_left=len(self.roster.alive()),
-            hunter_alive=self.hunter is not None and self.hunter.active)
+    def _autoplay_level_over(self, reason: Optional[str] = None) -> bool:
+        """Move on to the next level when this one is over: the ship left it (`reason` 'exited' or 'scored_out'),
+        or the director's safety nets say so."""
+        if reason is None:
+            reason = self.autoplay.end_reason(enemies_left=len(self.roster.alive()))
         if reason is None:
             return False
         logging.getLogger(__name__).info('Autoplay level %d over (%s)', self.level, reason)
@@ -302,8 +308,11 @@ class Game:
         replaying = self.replaying
         self.sound_manager.stop_all_sounds()
         self.scoring.total_score = self.total_score_before_level
-        self.state = config.STATE_PLAYING
-        self.start_level()
+        if self.autoplay is not None:
+            self._begin_autoplay_level()   # Demo: a fresh pilot and level timer, as at any Demo level's start
+        else:
+            self.state = config.STATE_PLAYING
+            self.start_level()
         # Retrying an ordinary clear replaces that attempt, even though the
         # first clear has already unlocked the next level in the profile.
         self.replaying = replaying
@@ -459,7 +468,7 @@ class Game:
             self.powerup_crystals.append(JevBeacon(beacon_pos))
         
         # Start scoring
-        current_time = time.time()
+        current_time = self.clock()
         self.scoring.start_level(current_time)
         self.level_start_time = current_time  # Record level start time to ignore initial SPACE press
         
@@ -517,6 +526,12 @@ class Game:
             pilot = WorkerPilot(self.hunter_worker)
         self.hunter_flight = make_hunter(pos, world=self, setup=PilotSetup(
             hunter_settings_for(mode), pilot, self.hunter_surroundings))
+        self.hunter_flight.on_event(self._sound_hunter_event)
+
+    def _sound_hunter_event(self, creature, name) -> None:
+        """The hunter's shots are heard."""
+        if name == 'fired':
+            self.sound_manager.play_hunter_shot(creature.fired_weapon_id)
 
     def _hunter_energy_reading(self):
         """(energy, most energy) of the hunter flying now, or None when there is none (or it has been destroyed)."""
@@ -597,7 +612,7 @@ class Game:
         beacon = next((c for c in self.powerup_crystals if isinstance(c, JevBeacon) and c.active), None)
         if beacon is not None:
             beacon.die()
-            self.sound_manager.play_powerup_activation()
+            self.sound_manager.play_powerup_activation('beacon')
             self._summon_hunter(beacon.get_pos())
         else:
             self._summon_hunter((self.ship.x, self.ship.y))
@@ -910,7 +925,7 @@ class Game:
         if self.game_over_active:
             if self.ship is not None and self.ship.is_dying:
                 self.ship.update_death(dt)
-            elapsed = time.time() - self.game_over_start_time
+            elapsed = self.clock() - self.game_over_start_time
             if elapsed >= self.game_over_death_duration + self.game_over_fade_duration + self.game_over_text_duration:
                 self.complete_level(success=False)
             return
@@ -926,7 +941,7 @@ class Game:
         
         if not self.ship or not self.maze:
             return
-        if self.autoplay is not None and self._autoplay_level_over():
+        if self.autoplay is not None and not self.exit_explosion_active and self._autoplay_level_over():
             return
         
         self.maze.update(dt)
@@ -964,7 +979,7 @@ class Game:
                     self.ship.vy *= scale
         
         # Ignore input for a short period after level start to avoid counting menu key presses
-        current_time = time.time()
+        current_time = self.clock()
         ignore_input_duration = 0.5  # Ignore input for 0.5 seconds after level start
         ignore_input = (current_time - self.level_start_time) < ignore_input_duration
         
@@ -1009,12 +1024,19 @@ class Game:
             # Update the set
             self.keys_pressed_at_start = keys_still_pressed
         
-        if self.autoplay is not None:
-            commands = []  # Nobody is flying the player: it stays parked
+        if self.ship_pilot is not None:
+            pilot_command = self.ship_pilot.decide(self)
+            commands = []
+            if pilot_command.turn < 0:
+                commands.append(CommandType.ROTATE_LEFT)
+            elif pilot_command.turn > 0:
+                commands.append(CommandType.ROTATE_RIGHT)
+            if pilot_command.thrust:
+                commands.append(CommandType.APPLY_THRUST)
 
         # Filter out ALL movement commands if we should ignore input
         # This prevents keys pressed at menu from affecting gameplay
-        if should_filter_commands:
+        if should_filter_commands and self.ship_pilot is None:
             # Filter out all movement commands (thrust, rotate)
             commands = [cmd for cmd in commands if cmd not in (
                 CommandType.APPLY_THRUST,
@@ -1043,7 +1065,9 @@ class Game:
         space_still_pressed = pygame.K_SPACE in self.keys_pressed_at_start
         should_ignore_fire = ignore_input or space_still_pressed or self.autoplay is not None
         
-        if not should_ignore_fire:
+        if self.ship_pilot is not None:
+            fire_key_pressed = pilot_command.fire
+        elif not should_ignore_fire:
             try:
                 fire_key_pressed = keys[pygame.K_SPACE]
             except (IndexError, KeyError):
@@ -1077,7 +1101,7 @@ class Game:
         if fire_pressed:
             if not hasattr(self, 'last_shot_time'):
                 self.last_shot_time = 0
-            current_time = pygame.time.get_ticks()
+            current_time = self.clock_ms()
             fire_cooldown = calculate_fire_cooldown(self.ship)
             
             if self.ship.weapon is not None or current_time - self.last_shot_time > fire_cooldown:
@@ -1174,7 +1198,7 @@ class Game:
         self._update_powerup_crystals(dt)
         
         # Check exit reached
-        if self.autoplay is None and self.maze.check_exit_reached((self.ship.x, self.ship.y), self.ship.radius):
+        if self.maze.check_exit_reached((self.ship.x, self.ship.y), self.ship.radius):
             if not self.exit_explosion_active:
                 # Start exit explosion; nothing after this changes the stars
                 self.finish_tally = self.star_tally()
@@ -1193,7 +1217,7 @@ class Game:
             return  # Don't update game during explosion
         
         # Check if score has reached zero (level failed)
-        current_time = time.time()
+        current_time = self.clock()
         potential = self.scoring.calculate_current_potential_score(
             current_time,
             self.ship.fuel,
@@ -1204,7 +1228,7 @@ class Game:
         self.ship.low_power = potential['score_percentage'] <= LOW_POWER_THRESHOLD
 
         # When score reaches zero, freeze all action and start fade
-        if potential_score <= 0 and not self.game_frozen and self.autoplay is None:
+        if potential_score <= 0 and not self.game_frozen:
             self.game_frozen = True
             self._start_game_over_sequence(current_time)
         
@@ -1247,8 +1271,12 @@ class Game:
             success: True if level was completed successfully (reached exit),
                      False if level failed (score reached zero)
         """
+        if self.autoplay is not None:
+            # Demo records nothing: the next level follows.
+            self._autoplay_level_over('exited' if success else 'scored_out')
+            return
         self._close_hunter()
-        current_time = time.time()
+        current_time = self.clock()
         completion_time = self.scoring.get_current_time(current_time)
         self.sound_manager.stop_critical_warning()
         self.critical_warning_active = False
@@ -1380,7 +1408,7 @@ class Game:
                     crystal.update(dt, nearest_friendly_pos(crystal, self.ship, self.hunter))
                 if isinstance(crystal, JevBeacon):
                     if crystal.check_circle_collision((self.ship.x, self.ship.y), self.ship.radius):
-                        self.sound_manager.play_powerup_activation()
+                        self.sound_manager.play_powerup_activation('beacon')
                         self._summon_hunter(crystal.get_pos())
                 else:
                     self.collision_handler.handle_ship_crystal_collision(self.ship, crystal, self.scoring)
@@ -1427,9 +1455,8 @@ class Game:
         for projectile in self.projectiles:
             projectile.draw(self.screen)
         
-        # Hide the parked player in autoplay; an observer otherwise shows faintly.
-        hide_player = self.autoplay is not None and config.SETTINGS.autoplay.hidePlayer
-        if not self.exit_explosion_active and not hide_player:
+        # An observer shows faintly.
+        if not self.exit_explosion_active:
             if self.ship.observer:
                 self.ship.draw_as_observer(self.screen)
             else:
@@ -1437,7 +1464,7 @@ class Game:
         
         # Draw UI (hide during exit explosion)
         if not self.exit_explosion_active:
-            current_time = time.time()
+            current_time = self.clock()
             potential = self.scoring.calculate_current_potential_score(
                 current_time,
                 self.ship.fuel,
@@ -1486,7 +1513,7 @@ class Game:
 
     def _draw_game_over_sequence(self) -> None:
         """Draw game over sequence: fade to black and GAME OVER text."""
-        current_time = time.time()
+        current_time = self.clock()
         elapsed = max(0.0, current_time - self.game_over_start_time - self.game_over_death_duration)
         
         # Calculate fade progress (0.0 to 1.0)
@@ -1609,7 +1636,7 @@ class Game:
         """Main game loop."""
         try:
             while self.running:
-                dt_ms = self.clock.tick(config.FPS)
+                dt_ms = self.frame_limiter.tick(config.FPS)
                 # Normalize delta time: 1.0 = 60fps, scales movement for frame independence
                 dt = dt_ms / (1000.0 / config.FPS)
             

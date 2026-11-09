@@ -1,32 +1,58 @@
 """Carry a trained policy over to a longer senses layout: python -m tools.migrate_policy OLD.npz NEW.npz
 
-The old layout must be a prefix of the current one (new senses are only ever added at the end). The new inputs
+The old layout must be a prefix of the target one (--layout hunter, the default, or campaign) (new senses are only ever added at the end). The new inputs
 get zero weights, so the migrated pilot flies exactly as the old one did until training teaches it to use them.
 """
+import io
 import sys
 import numpy as np
-from hunter.senses import FEATURE_NAMES, SENSE_SIZE
+from hunter.senses import FEATURE_NAMES
 from hunter.neural.policy import NeuralPolicy
 
 
-def migrate(old_path, new_path):
+def migrate(old_path, new_path, feature_names=FEATURE_NAMES):
+    data, added = _carried_over(old_path, feature_names)
+    np.savez(new_path, **data)
+    NeuralPolicy.load(new_path, feature_names)              # raises InvalidPolicy if the result does not fit
+    return added
+
+
+def migrated(old_path, feature_names=FEATURE_NAMES):
+    """The policy in `old_path` carried over to `feature_names` in memory, with no file written."""
+    data, _ = _carried_over(old_path, feature_names)
+    buffer = io.BytesIO()
+    np.savez(buffer, **data)
+    buffer.seek(0)
+    return NeuralPolicy.load(buffer, feature_names)
+
+
+def _carried_over(old_path, feature_names):
     data = dict(np.load(old_path, allow_pickle=False))
     old_names = tuple(str(n) for n in data['feature_names'])
-    if old_names != FEATURE_NAMES[:len(old_names)]:
+    if old_names != feature_names[:len(old_names)]:
         raise ValueError('the old senses are not a prefix of the current layout; it cannot be migrated')
-    added = SENSE_SIZE - len(old_names)
+    added = len(feature_names) - len(old_names)
     if added:
         embed = data['embed_w']
         data['embed_w'] = np.concatenate([embed, np.zeros((embed.shape[0], added), embed.dtype)], axis=1)
         data['mean'] = np.concatenate([data['mean'], np.zeros(added, data['mean'].dtype)])
         data['scale'] = np.concatenate([data['scale'], np.ones(added, data['scale'].dtype)])
-    data['feature_names'] = np.array(FEATURE_NAMES)
-    np.savez(new_path, **data)
-    NeuralPolicy.load(new_path)               # raises InvalidPolicy if the result does not fit
-    return added
+    data['feature_names'] = np.array(feature_names)
+    return data, added
+
+
+def _layout(name):
+    if name == 'campaign':
+        from hunter.campaign_senses import CAMPAIGN_FEATURE_NAMES     # imports pygame-side modules: only on demand
+        return CAMPAIGN_FEATURE_NAMES
+    return FEATURE_NAMES
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 3:
+    args = sys.argv[1:]
+    layout = 'hunter'
+    if len(args) == 4 and args[2] == '--layout' and args[3] in ('hunter', 'campaign'):
+        layout, args = args[3], args[:2]
+    if len(args) != 2:
         sys.exit(__doc__)
-    print(f'migrated: {migrate(sys.argv[1], sys.argv[2])} new inputs, zero-weighted')
+    print(f'migrated: {migrate(args[0], args[1], _layout(layout))} new inputs, zero-weighted')

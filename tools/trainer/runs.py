@@ -2,6 +2,7 @@
 import datetime
 import json
 import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -37,10 +38,33 @@ def next_run_number(root):
     return int(folders[-1].name[3:]) + 1 if folders else 1
 
 
+_LOG_CACHE = {}               # train.log path -> ((mtime_ns, size), rows): a finished run's log never changes
+_LOG_CACHE_MAX = 1000
+_LOG_LOCK = threading.Lock()
+
+
 def log_rows(run_dir):
-    """The run's complete train.log lines, as numbers (and True/False)."""
+    """The run's complete train.log lines, as numbers (and True/False). Parsed again only when the file changed."""
+    path = Path(run_dir) / 'train.log'
     try:
-        text = (Path(run_dir) / 'train.log').read_text()
+        info = path.stat()
+    except OSError:
+        return []
+    key = (info.st_mtime_ns, info.st_size)
+    with _LOG_LOCK:
+        hit = _LOG_CACHE.get(path)
+    if hit is None or hit[0] != key:           # stat came first, so the rows are at least as new as the key
+        hit = (key, _parse_log(path))
+        with _LOG_LOCK:
+            if len(_LOG_CACHE) >= _LOG_CACHE_MAX and path not in _LOG_CACHE:
+                _LOG_CACHE.clear()
+            _LOG_CACHE[path] = hit
+    return list(hit[1])                        # the row dicts are shared: callers only read them
+
+
+def _parse_log(path):
+    try:
+        text = path.read_text()
     except OSError:
         return []
     lines = text.split('\n')[:-1]          # the last piece has no newline yet: a line still being written
@@ -79,14 +103,33 @@ def _state(path, pid):
     return 'interrupted' if (path / ppo_neural.RESUME_FILE).exists() else 'stopped'
 
 
+_FOLDER_CACHE = {}            # run folder -> ((folder mtime_ns, config mtime_ns, config size), config, checkpoints)
+
+
+def _config_and_checkpoints(path):
+    """The run's config and checkpoint names; a folder's mtime moves when a checkpoint is added or removed."""
+    try:
+        key = (path.stat().st_mtime_ns, *(lambda i: (i.st_mtime_ns, i.st_size))((path / 'config.json').stat()))
+    except OSError:
+        key = None
+    hit = _FOLDER_CACHE.get(path)
+    if key is None or hit is None or hit[0] != key:
+        hit = (key, config_of(path), sorted(p.stem for p in path.glob('iter[0-9]*.npz')))
+        if key is not None:
+            if len(_FOLDER_CACHE) >= _LOG_CACHE_MAX and path not in _FOLDER_CACHE:
+                _FOLDER_CACHE.clear()
+            _FOLDER_CACHE[path] = hit
+    return hit[1], list(hit[2])
+
+
 def read_run(path, root, trained):
-    config = config_of(path)
+    config, checkpoints = _config_and_checkpoints(path)
     total = ((config or {}).get('args') or {}).get('iterations')
     pid = trained.get(path.name)
     rows = log_rows(path)
     return Run(name=path.name, number=int(path.name[3:]), path=path, state=_state(path, pid),
                iterations_done=len(rows), total=total, started_from=_started_from(config, root),
-               checkpoints=sorted(p.stem for p in path.glob('iter[0-9]*.npz')), pid=pid)
+               checkpoints=checkpoints, pid=pid)
 
 
 def list_runs(root=RL_ROOT, processes=None):

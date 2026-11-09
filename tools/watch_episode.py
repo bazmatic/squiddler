@@ -5,7 +5,8 @@
 
 Episodes are not recorded but they are reproducible: each is fixed by its level, its seed, and the checkpoint and dice
 seed it flew with, which the run's config.json and checkpoints give back. RUN is a run directory written by
-tools.ppo_neural (it needs the 'shaping' its config.json has kept since panic was added).
+tools.ppo_neural (it needs the 'shaping' its config.json has kept since panic was added). A Campaign Hunter run's
+episodes replay the same way; listing them shows how each ended rather than panic.
 """
 import argparse
 import json
@@ -16,9 +17,15 @@ from pathlib import Path
 
 import numpy as np
 
+CAMPAIGN = 'campaign_hunter'
+
 
 def episode_jobs(run, iteration):
-    """The iteration's jobs, (level, seed, spec) each, exactly as training made them, and the run's shaping."""
+    """The iteration's jobs, (level, seed, spec) each, exactly as training made them, and the run's shaping. A
+    Campaign Hunter job also names its task, (level, seed, spec, 'campaign_hunter'), as training's do.
+
+    Iteration 0 flew the run's start, which a campaign run first migrated to its senses (into iter_start.npz, which
+    training deletes when the run ends): its jobs name the start, and flying one migrates it again."""
     from tools.ppo_neural import make_jobs
     config = json.loads((Path(run) / 'config.json').read_text())
     if 'shaping' not in config:
@@ -26,8 +33,13 @@ def episode_jobs(run, iteration):
     episode = config['episode']
     weights = Path(run) / f'iter{iteration - 1:04d}.npz' if iteration else Path(config['start'])
     levels = tuple(episode['levels']) if episode.get('levels') else None
+    task = config.get('task', 'hunter')
     jobs = make_jobs(iteration, episode['episodes_per_iteration'], weights, config.get('decision_frames', 6),
-                     config.get('turn_rate', 1.0), levels)
+                     config.get('turn_rate', 1.0), levels, task)
+    if task == CAMPAIGN:
+        # A resume that changed the episode count or levels rewrites config.episode: the iterations before it then
+        # list (and fly) as the new settings would have made them.
+        return jobs, dict(config['shaping'])
     # Historical runs recorded a separate Rules-level share. Reproduce those jobs exactly;
     # new training uses only the selected level cycle and never writes this field.
     share = episode.get('rules_share', 0.0)
@@ -46,10 +58,31 @@ def episode_jobs(run, iteration):
     return jobs, shaping
 
 
+def _fly_campaign(job, shaping, **watching):
+    """A campaign job flown as training flew it (see learning.adapters.campaign_hunter), its policy loaded as
+    training's start was: a hunter policy is migrated to the campaign senses in memory."""
+    from experiments.campaign_rollout import fly_campaign
+    from hunter.campaign_senses import CAMPAIGN_FEATURE_NAMES
+    from learning.adapters.campaign_hunter import DEFAULT_HORIZON
+    from learning.campaign_rewards import CampaignShaping
+    from tools.ppo_neural import start_policy
+    level, seed, spec, _ = job
+    rewards = dict(shaping)
+    horizon = rewards.pop('horizon', DEFAULT_HORIZON)
+    return fly_campaign(level, seed, spec, horizon=horizon, shaping=CampaignShaping(**rewards),
+                        policy=start_policy(spec.weights, CAMPAIGN_FEATURE_NAMES), **watching)
+
+
 def _fly(item):
+    """A job flown again: (level, panic share, return, kills, end, seconds), or for a campaign job
+    (level, end, return, own kills, seconds)."""
     job, shaping = item
     from experiments import run
     run._use_dummy_drivers()
+    if len(job) == 4:
+        flown = _fly_campaign(job, shaping)
+        result = flown['result']
+        return job[0], result.end, float(flown['rewards'].sum()), result.own_kills, result.elapsed
     from experiments.rollout import fly_rollout
     level, seed, spec = job
     flown = fly_rollout(level, seed, spec, **shaping)
@@ -59,7 +92,7 @@ def _fly(item):
 
 
 def fly_all(run, iteration, workers):
-    """Each of the iteration's episodes flown again: (level, panic share, return, kills, end, seconds)."""
+    """Each of the iteration's episodes flown again, as _fly reports it."""
     jobs, shaping = episode_jobs(run, iteration)
     with ProcessPoolExecutor(workers) as pool:
         return list(pool.map(_fly, [(job, shaping) for job in jobs]))
@@ -67,6 +100,11 @@ def fly_all(run, iteration, workers):
 
 def find(run, iteration, workers):
     rows = fly_all(run, iteration, workers)
+    if rows and isinstance(rows[0][1], str):          # a campaign run's: how each episode ended
+        print(f'{"episode":>7} {"level":>5} {"return":>7} {"kills":>5} {"seconds":>7}  end')
+        for index, (level, end, ret, kills, seconds) in enumerate(rows):
+            print(f'{index:7d} {level:5d} {ret:7.1f} {kills:5d} {seconds:7.1f}  {end}')
+        return
     print(f'{"episode":>7} {"level":>5} {"panic":>6} {"return":>7} {"kills":>5} {"seconds":>7}  end')
     for index, (level, panic, ret, kills, end, seconds) in sorted(enumerate(rows), key=lambda r: -r[1][1]):
         if panic > 0:
@@ -104,27 +142,19 @@ def _open_window():
     return show
 
 
-def watch(run, iteration, episode, speed):
+def _drawer(speed):
+    """Opens the window and gives back draw(game, text, alarm=False): the game's frame shown with `text` on top (on
+    red for an alarm), at `speed`. Esc or closing the window stops the replay."""
     import pygame
-    from experiments.rollout import fly_rollout
-    jobs, shaping = episode_jobs(run, iteration)
-    level, seed, spec = jobs[episode]
     show = _open_window()
     clock, font, flip = pygame.time.Clock(), None, pygame.display.flip
 
-    def frame(seconds, game, hunter):
+    def draw(game, text, alarm=False):
         nonlocal font
         for event in pygame.event.get():
             if event.type in (pygame.QUIT, pygame.WINDOWCLOSE) or (event.type == pygame.KEYDOWN
                                                                      and event.key == pygame.K_ESCAPE):
                 raise SystemExit
-        stub = game.scoring.calculate_current_potential_score
-        if not getattr(stub, 'for_drawing', False):
-            # The harness stands in a bare score; the HUD reads a couple more fields from it.
-            def for_drawing(*a, **k):
-                return {'max_score': 1000, 'final_score': 0, **stub(*a, **k)}
-            for_drawing.for_drawing = True
-            game.scoring.calculate_current_potential_score = for_drawing
         pygame.display.flip = lambda: None          # the overlay goes on before the frame is shown
         # Drawing draws random numbers (sparks, debris): put them back, or the episode would play out differently.
         states = random.getstate(), np.random.get_state()
@@ -135,17 +165,45 @@ def watch(run, iteration, episode, speed):
             random.setstate(states[0])
             np.random.set_state(states[1])
         font = font or pygame.font.SysFont(None, 34)
-        temperature = getattr(game.hunter_flight.controller, 'temperature', 1.0)
-        panic = temperature > 1.0
-        text = f'run {Path(run).name}  iteration {iteration}  episode {episode}  level {level}  {seconds:5.1f} s'
-        if panic:
-            text += f'   PANIC (temperature {temperature:g})'
         label = font.render(text, True, (255, 255, 255))
         screen = pygame.display.get_surface()
-        pygame.draw.rect(screen, (190, 30, 30) if panic else (20, 20, 30), (0, 0, label.get_width() + 24, 40))
+        pygame.draw.rect(screen, (190, 30, 30) if alarm else (20, 20, 30), (0, 0, label.get_width() + 24, 40))
         screen.blit(label, (12, 8))
         (show or flip)()
         clock.tick(60 * speed)
+    return draw
+
+
+def watch(run, iteration, episode, speed):
+    jobs, shaping = episode_jobs(run, iteration)
+    heading = f'run {Path(run).name}  iteration {iteration}  episode {episode}  level {jobs[episode][0]}'
+    if len(jobs[episode]) == 4:
+        draw = _drawer(speed)
+        # The window keeps the tentacles' drag physics; the episode does not depend on it.
+        flown = _fly_campaign(jobs[episode], shaping, low_graphics=False,
+                              trace=lambda seconds, game: draw(game, f'{heading}  {seconds:5.1f} s'))
+        result = flown['result']
+        print(f'episode {episode}: level {result.level}, {result.end}, own kills {result.own_kills}, '
+              f'return {flown["rewards"].sum():.1f}')
+        return
+    from experiments.rollout import fly_rollout
+    level, seed, spec = jobs[episode]
+    draw = _drawer(speed)
+
+    def frame(seconds, game, hunter):
+        stub = game.scoring.calculate_current_potential_score
+        if not getattr(stub, 'for_drawing', False):
+            # The harness stands in a bare score; the HUD reads a couple more fields from it.
+            def for_drawing(*a, **k):
+                return {'max_score': 1000, 'final_score': 0, **stub(*a, **k)}
+            for_drawing.for_drawing = True
+            game.scoring.calculate_current_potential_score = for_drawing
+        temperature = getattr(game.hunter_flight.controller, 'temperature', 1.0)
+        panic = temperature > 1.0
+        text = f'{heading}  {seconds:5.1f} s'
+        if panic:
+            text += f'   PANIC (temperature {temperature:g})'
+        draw(game, text, panic)
 
     # Training skips the tentacles' drag physics; a watched episode needs it, or they hang where they started.
     flown = fly_rollout(level, seed, spec, trace=frame, low_graphics=False, **shaping)

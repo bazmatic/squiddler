@@ -289,7 +289,6 @@
     "firstLevel": 1,
     "lastLevel": 40,
     "timeLimitSeconds": 240,
-    "hidePlayer": true,
     "noKillSeconds": 20
   },
   "obstacles": {

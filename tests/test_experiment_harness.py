@@ -269,6 +269,7 @@ def test_a_beacon_pickup_cannot_replace_the_hunter_mid_episode(monkeypatch):
 def test_results_do_not_depend_on_the_real_clock(monkeypatch):
     import random as stdlib_random
     import time
+    from game import Game
 
     def drifting_clock(drift_seed):
         rng = stdlib_random.Random(drift_seed)   # its own generator, not the game's
@@ -282,6 +283,10 @@ def test_results_do_not_depend_on_the_real_clock(monkeypatch):
     for drift_seed in (1, 2):
         monkeypatch.setattr(time, 'monotonic', drifting_clock(drift_seed))
         monkeypatch.setattr(time, 'time', drifting_clock(drift_seed + 100))
+        # The game reads wall time through Game.clock / clock_ms, bound when game.py was imported
+        monkeypatch.setattr(Game, 'clock', staticmethod(drifting_clock(drift_seed + 200)))
+        tick_ms = drifting_clock(drift_seed + 300)
+        monkeypatch.setattr(Game, 'clock_ms', staticmethod(lambda: int(tick_ms() * 1000)))
         runs.append(run_episode(13, 5, horizon=60.0))
     assert runs[0] == runs[1]
 

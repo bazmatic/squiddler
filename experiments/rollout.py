@@ -152,7 +152,8 @@ class RolloutRecorder:
             share = math.hypot(hunter.vx, hunter.vy) / hunter.max_speed
             self.speed_sum += min(share, 1.0)
             self.frames += 1
-            if getattr(hunter, 'gun_upgrade_level', 0):
+            from weapons.state import held_weapon  # here, not at the top: the weapons package loads pygame
+            if getattr(hunter, 'gun_upgrade_level', 0) or held_weapon(hunter) is not None:
                 self.upgraded_frames += 1
                 self._events[-1][7] += 1.0 / FPS
             shortfall = 1.0 - share

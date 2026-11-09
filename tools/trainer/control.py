@@ -128,7 +128,8 @@ def start(from_=None, changes=None, root=RL_ROOT, processes=None, launch=None, a
             definition = task(requested_task)
         except ValueError as e:
             raise TrainerError(str(e)) from None
-        if definition.capabilities.fresh_weights and from_ in (None, 'new', 'random'):
+        # A new run of a task with fresh weights, or one that starts from its own policy, like the Campaign Hunter.
+        if (definition.capabilities.fresh_weights or definition.start) and from_ in (None, 'new', 'random'):
             from tools.trainer.settings import SETTINGS, Value
             base = {s.dest: Value(s.default, 'recorded') for s in SETTINGS}
             for key, value in dict(task=requested_task, **definition.fresh_defaults).items():
@@ -140,9 +141,10 @@ def start(from_=None, changes=None, root=RL_ROOT, processes=None, launch=None, a
             name = f'run{next_run_number(root)}'
             out = root/name
             out.mkdir()
-            command = [sys.executable, '-m', 'tools.ppo_neural', '--start', '', '--out', str(out), *to_argv(values), *actor_options]
+            start_policy = str(REPO / definition.start) if definition.start else ''
+            command = [sys.executable, '-m', 'tools.ppo_neural', '--start', start_policy, '--out', str(out), *to_argv(values), *actor_options]
             (launch or launch_process)(command, root/f'{name}.log')
-            return Started(name, 'random', changed(base, values), command)
+            return Started(name, definition.start or 'random', changed(base, values), command)
         source, checkpoint = _source(from_, runs)
         base = read_settings(source.path, run_folders(root))
         source_task = (config_of(source.path) or {}).get('task', UNTAGGED_TASK)
@@ -198,7 +200,7 @@ def pause(root=RL_ROOT, processes=None):
 
 
 def _resume_setting_updates(path, base, changes):
-    """Validate worker changes for any task and editable Flocker training settings."""
+    """Validate the settings changed on resume: those the run's own task takes, and the learning ones for any run."""
     import copy
     import math
     from types import SimpleNamespace
@@ -220,9 +222,8 @@ def _resume_setting_updates(path, base, changes):
         config['args']['workers'] = workers
         _record_resume_edits(path, config, edits)
         return values, {path/'config.json': json.dumps(config, indent=2).encode()}
-    if config.get('task')!='flocker_team' or not isinstance(config.get('manifest'),dict):
-        raise TrainerError('Resume setting edits currently require a recorded Flocker run; use a new run for this task.')
-    allowed = set(flocker_rewards.SETTINGS)|{'lr','workers','iterations','budget_seconds'}
+    flocker = config.get('task')=='flocker_team' and isinstance(config.get('manifest'),dict)
+    allowed = _resume_editable(config, flocker)
     unsupported = [key for key,_,_ in edits if key not in allowed]
     if unsupported:
         raise TrainerError('These settings require a new run: '+', '.join(unsupported))
@@ -233,12 +234,18 @@ def _resume_setting_updates(path, base, changes):
         raise TrainerError('learning rate must be finite and positive')
     if args['workers']<1 or args['iterations']<0 or not math.isfinite(args['budget_seconds']) or args['budget_seconds']<0:
         raise TrainerError('workers must be positive; iterations and budget must be nonnegative')
-    try:
-        rewards = flocker_rewards.from_args(SimpleNamespace(**args))
-    except ValueError as exc:
-        raise TrainerError(str(exc)) from None
-    config['manifest']['rewards']=rewards
-    config['shaping']=rewards
+    if flocker:
+        try:
+            rewards = flocker_rewards.from_args(SimpleNamespace(**args))
+        except ValueError as exc:
+            raise TrainerError(str(exc)) from None
+        config['manifest']['rewards']=rewards
+        config['shaping']=rewards
+    elif isinstance(config.get('shaping'),dict):
+        # A run's recorded shaping names rewards as its args do (a campaign run's `wall_crash`): keep them in step.
+        for key,_,value in edits:
+            if key in config['shaping']:
+                config['shaping'][key]=value
     updates={}
     if any(key=='lr' for key,_,_ in edits):
         import io
@@ -250,10 +257,24 @@ def _resume_setting_updates(path, base, changes):
                 group['initial_lr']=args['lr']
         output=io.BytesIO();torch.save(saved,output)
         updates[path/'resume.pt']=output.getvalue()
-        config['manifest'].setdefault('training',{})['lr']=args['lr']
+        if isinstance(config.get('manifest'),dict):
+            config['manifest'].setdefault('training',{})['lr']=args['lr']
     _record_resume_edits(path, config, edits)
     updates[path/'config.json']=json.dumps(config,indent=2).encode()
     return values,updates
+
+
+def _resume_editable(config, flocker):
+    """The settings a paused run may change on resume: the learning ones for any run, and every setting its own task
+    takes (its rewards, episodes and so on). A Flocker run's rewards are checked against its recorded rules."""
+    from learning import flocker_rewards
+    from learning.tasks import UNTAGGED_TASK
+    from tools.trainer import settings
+    editable = {'lr','workers','iterations','budget_seconds'}
+    if flocker:
+        return editable|set(flocker_rewards.SETTINGS)
+    task = config.get('task', UNTAGGED_TASK)
+    return editable|{dest for dest in settings.BY_DEST if dest!='task' and task in settings.applies_to(dest)}
 
 
 def _record_resume_edits(path, config, edits):

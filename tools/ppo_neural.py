@@ -6,17 +6,18 @@ import sys
 import time
 from pathlib import Path
 import numpy as np
-from hunter.neural.policy import HEAD_SIZES, NeuralPolicy
+from hunter.neural.policy import HEAD_SIZES, InvalidPolicy, NeuralPolicy
 from hunter.senses import SENSE_SIZE, OBSERVATION_VERSION
-from tools.train_neural import _load_into, _torch_net_class, to_numpy_policy
+from tools.train_neural import _load_into, to_numpy_policy
 
 HEADS = ('turn', 'thrust', 'fire')
 REWARD_SCALE = 0.1            # keeps returns near 1 so one learning rate suits the policy and value heads
 
 
-def _net_class():
+def _net_class(features=SENSE_SIZE):
     import torch
-    base = _torch_net_class()
+    from learning.models import network_class
+    base = network_class(features, HEAD_SIZES)
 
     class PolicyValueNet(base):
         def __init__(self, hidden, embed):
@@ -33,7 +34,7 @@ def _net_class():
 
 def build_net(policy):
     """A torch net holding `policy`'s weights, plus a zeroed value head (training only)."""
-    net = _net_class()(policy.hidden, policy.params['embed_w'].shape[0])
+    net = _net_class(policy.params['embed_w'].shape[1])(policy.hidden, policy.params['embed_w'].shape[0])
     _load_into(net, policy)
     return net
 
@@ -43,18 +44,22 @@ from learning.ppo import pack, joint_logp, gae, _kl_and_entropy, improve
 
 def export(net, policy, path):
     """Save the net as a game policy file (the value head is left behind)."""
-    to_numpy_policy(net, policy.mean, policy.scale).save(path)
+    exported = to_numpy_policy(net, policy.mean, policy.scale)
+    exported.feature_names = policy.feature_names
+    exported.save(path)
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PPO_TASKS = ('hunter', 'campaign_hunter')     # the tasks this loop trains; the rest train in learning.run
 DEFAULT_START = ROOT / 'assets' / 'neural' / 'hunter.npz'
 DEFAULT_OUT = ROOT / '.astrovoid-local' / 'neural' / 'rl'
 TRAIN_SEEDS = 100             # seeds 300-399
 DEFAULT_HORIZON = 90.0        # seconds of game time per training episode unless the shaping says otherwise
 
 
-def make_jobs(iteration, count, weights, decision_frames, turn_rate, levels=None):
-    """One job per episode, cycling evenly through the selected levels (default: the tune set)."""
+def make_jobs(iteration, count, weights, decision_frames, turn_rate, levels=None, task='hunter'):
+    """One job per episode, cycling evenly through the selected levels (default: the tune set). Another task's jobs
+    name it after the student."""
     from experiments.run import TUNE_LEVELS
     from experiments.student import StudentSpec
     levels = tuple(levels or TUNE_LEVELS)
@@ -63,7 +68,7 @@ def make_jobs(iteration, count, weights, decision_frames, turn_rate, levels=None
         n = iteration * count + i
         spec = StudentSpec(weights=str(weights), decision_frames=decision_frames, turn_rate=turn_rate,
                            greedy=False, sample_seed=n)
-        jobs.append((levels[n % len(levels)], 300 + n % TRAIN_SEEDS, spec))
+        jobs.append((levels[n % len(levels)], 300 + n % TRAIN_SEEDS, spec) + (() if task == 'hunter' else (task,)))
     return jobs
 
 
@@ -75,9 +80,9 @@ def kl_coefficient(iteration, iterations, start=0.1, end=0.02, fade=0.5):
 def _rollout_job(job, shaping=None):
     import time
     from learning.tasks import task
-    level, seed, spec = job
+    level, seed, spec, *named = job                   # a hunter job does not name its task
     started = time.perf_counter()
-    flown = task('hunter').adapter().environment().run(level, seed, spec, **(shaping or {}))
+    flown = task(named[0] if named else 'hunter').adapter().environment().run(level, seed, spec, **(shaping or {}))
     flown['wall'] = time.perf_counter() - started
     return flown
 
@@ -119,8 +124,8 @@ class PoolRollout:
         for index, flown in pairs:
             results[index] = flown
         times = {}
-        for (level, _, _), flown in zip(jobs, results):
-            times.setdefault(level, []).append(flown.get('wall', 0.0))
+        for job, flown in zip(jobs, results):
+            times.setdefault(job[0], []).append(flown.get('wall', 0.0))
         self.estimates = {level: sum(t) / len(t) for level, t in times.items()}
         return results
 
@@ -137,15 +142,25 @@ def log_line(*parts):
 
 def train_rl(start, out_dir, iterations, episodes=96, workers=12, lr=1e-4, seed=0, decision_frames=6,
              turn_rate=1.0, rollout=None, log=log_line, shaping=None,
-             levels=None, resume=False, gamma=0.99, gae_lambda=0.95):
+             levels=None, resume=False, gamma=0.99, gae_lambda=0.95, task='hunter', horizon=None):
     """PPO on the lab's own score, with optional reward shaping. No gate: every iteration saves a checkpoint.
+
+    `task` is the hunter's or another task flown by the same student, such as 'campaign_hunter': its adapter flies the
+    episodes, its senses layout is the policy's (a start policy in the hunter's is migrated to it), and its levels are
+    the default. `horizon` overrides the shaping's.
 
     Each iteration also saves the resume state, and a PAUSE file in `out_dir` stops the run once the iteration is
     saved. With `resume`, the run in `out_dir` carries on from its resume state as if it had never stopped; `start`
     is still the run's original start, which the policy is held near."""
     import torch
     from experiments.score import mean_components
-    policy = NeuralPolicy.load(start)                  # raises InvalidPolicy: never train from nothing
+    from learning.tasks import task as task_named
+    adapter = task_named(task).adapter()
+    policy = start_policy(start, adapter.FEATURE_NAMES)   # raises InvalidPolicy: never train from nothing
+    if task != 'hunter':
+        levels = levels or adapter.default_levels()
+    if horizon is not None:
+        shaping = dict(shaping or {}, horizon=horizon)
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
     out_dir = Path(out_dir)
@@ -162,8 +177,8 @@ def train_rl(start, out_dir, iterations, episodes=96, workers=12, lr=1e-4, seed=
         old_weight = saved['net']['embed.weight']
         width = net.state_dict()['embed.weight'].shape[1]
         if old_weight.shape[1] < width:
-            from hunter.senses import FEATURE_NAMES
-            if old_weight.shape[1] != FEATURE_NAMES.index('power_boost'):
+            from hunter.neural.policy import older_layouts
+            if old_weight.shape[1] not in {len(names) for names in older_layouts(adapter.FEATURE_NAMES)}:
                 raise ValueError('unsupported resume observation schema')
             saved['net']['embed.weight'] = torch.nn.functional.pad(old_weight, (0, width-old_weight.shape[1]))
             parameter_ids = [key for group in saved['optimiser']['param_groups'] for key in group['params']]
@@ -183,7 +198,7 @@ def train_rl(start, out_dir, iterations, episodes=96, workers=12, lr=1e-4, seed=
             run_config = json.loads(config_path.read_text())
             # Combat rules/tuning are immutable within a run. Old runs keep legacy combat.
             prior = run_config.get('shaping', {})
-            if shaping is not None:
+            if shaping is not None and task == 'hunter':
                 shaping = dict(shaping)
                 shaping['combat_ruleset'] = prior.get('combat_ruleset', 'legacy')
                 shaping['curved_walls'] = prior.get('curved_walls', False)
@@ -209,35 +224,39 @@ def train_rl(start, out_dir, iterations, episodes=96, workers=12, lr=1e-4, seed=
     paused = False
     try:
         for iteration in range(first, iterations):
-            jobs = make_jobs(iteration, episodes, current, decision_frames, turn_rate, levels)
+            jobs = make_jobs(iteration, episodes, current, decision_frames, turn_rate, levels, task)
             t0 = time.perf_counter()
             flown = rollout(jobs, workers)
             t1 = time.perf_counter()
             stats = improve(net, ref, optimiser, flown, policy.mean, policy.scale,
                             kl_coefficient(iteration, iterations), rng, gamma=gamma, lam=gae_lambda)
-            summary = mean_components([e['result'] for e in flown])
-            stats.update(iteration=iteration, mean_return=float(np.mean([e['rewards'].sum() for e in flown])),
-                         score=summary['score'], kills_per_min=summary['kills_per_min'],
-                         wall_quotient_per_min=summary['wall_quotient_per_min'],
-                         hits_taken_per_min=summary['hits_taken_per_min'],
-                         speed_fraction=float(np.mean([e.get('speed_fraction', 0.0) for e in flown])),
-                         deaths_per_episode=float(np.mean([1.0 if e.get('died') else 0.0 for e in flown])),
-                         powerups_per_episode=float(np.mean([e.get('powerups', 0) for e in flown])),
-                         upgraded_fraction=float(np.mean([e.get('upgraded_fraction', 0.0) for e in flown])),
-                         rollout_s=t1 - t0, update_s=time.perf_counter() - t1)
-            arena = [e for e in flown if e.get('rules_arena')]
-            stats.update(rules_episodes=len(arena),
-                         rules_beaten=float(np.mean([1.0 if e.get('rules_beaten') else 0.0 for e in arena]))
-                         if arena else 0.0)
-            blind = sum(e.get('blind_steps', 0) for e in flown)
-            stats.update(compass_follow=sum(e.get('following_steps', 0) for e in flown) / blind if blind else 0.0)
-            unseen = sum(e.get('unseen_steps', 0) for e in flown)
-            steps = sum(len(e.get('temperatures', ())) for e in flown)
-            stats.update(panic_fraction=sum(int((np.asarray(e.get('temperatures', ())) > 1.0).sum()) for e in flown)
-                         / steps if steps else 0.0)
-            stats.update(hits_per_episode=float(np.mean([e.get('hits', 0) for e in flown])))
-            stats.update(unaimed_shots_per_episode=float(np.mean([e.get('unaimed_shots', 0) for e in flown])))
-            stats.update(bored_fraction=sum(e.get('bored_steps', 0) for e in flown) / unseen if unseen else 0.0)
+            if task == 'hunter':
+                summary = mean_components([e['result'] for e in flown])
+                stats.update(iteration=iteration, mean_return=float(np.mean([e['rewards'].sum() for e in flown])),
+                             score=summary['score'], kills_per_min=summary['kills_per_min'],
+                             wall_quotient_per_min=summary['wall_quotient_per_min'],
+                             hits_taken_per_min=summary['hits_taken_per_min'],
+                             speed_fraction=float(np.mean([e.get('speed_fraction', 0.0) for e in flown])),
+                             deaths_per_episode=float(np.mean([1.0 if e.get('died') else 0.0 for e in flown])),
+                             powerups_per_episode=float(np.mean([e.get('powerups', 0) for e in flown])),
+                             upgraded_fraction=float(np.mean([e.get('upgraded_fraction', 0.0) for e in flown])),
+                             rollout_s=t1 - t0, update_s=time.perf_counter() - t1)
+                arena = [e for e in flown if e.get('rules_arena')]
+                stats.update(rules_episodes=len(arena),
+                             rules_beaten=float(np.mean([1.0 if e.get('rules_beaten') else 0.0 for e in arena]))
+                             if arena else 0.0)
+                blind = sum(e.get('blind_steps', 0) for e in flown)
+                stats.update(compass_follow=sum(e.get('following_steps', 0) for e in flown) / blind if blind else 0.0)
+                unseen = sum(e.get('unseen_steps', 0) for e in flown)
+                steps = sum(len(e.get('temperatures', ())) for e in flown)
+                panicked = sum(int((np.asarray(e.get('temperatures', ())) > 1.0).sum()) for e in flown)
+                stats.update(panic_fraction=panicked / steps if steps else 0.0)
+                stats.update(hits_per_episode=float(np.mean([e.get('hits', 0) for e in flown])))
+                stats.update(unaimed_shots_per_episode=float(np.mean([e.get('unaimed_shots', 0) for e in flown])))
+                stats.update(bored_fraction=sum(e.get('bored_steps', 0) for e in flown) / unseen if unseen else 0.0)
+            else:
+                stats.update(iteration=iteration, mean_return=float(np.mean([e['rewards'].sum() for e in flown])),
+                             **adapter.summary(flown), rollout_s=t1 - t0, update_s=time.perf_counter() - t1)
             current = out_dir / f'iter{iteration:04d}.npz'
             export(net, policy, current)
             history.append(stats)
@@ -259,6 +278,20 @@ def train_rl(start, out_dir, iterations, episodes=96, workers=12, lr=1e-4, seed=
             pooled.close()
     (out_dir / 'iter_start.npz').unlink(missing_ok=True)
     return {'last': current if history else None, 'history': history, 'paused': paused}
+
+
+def start_policy(start, feature_names):
+    """The policy in `start` in the `feature_names` layout; a hunter policy is carried over to a longer layout, and a
+    policy in a known older version of the layout (such as the first campaign layout) loads padded to the current."""
+    from hunter.senses import FEATURE_NAMES
+    try:
+        return NeuralPolicy.load(start, feature_names)
+    except InvalidPolicy:
+        if feature_names == FEATURE_NAMES:
+            raise
+        NeuralPolicy.load(start)                       # raises InvalidPolicy unless it is a hunter policy
+        from tools.migrate_policy import migrated
+        return migrated(start, feature_names)
 
 
 RESUME_FILE = 'resume.pt'     # everything an iteration leaves behind that the next one needs
@@ -326,7 +359,10 @@ def parse_levels(text):
 
 
 def shaping_from(args):
-    """The episode shaping a run's arguments ask for: what fly_rollout is called with."""
+    """The episode shaping a run's arguments ask for: what fly_rollout (or the task's episode) is called with."""
+    if getattr(args, 'task', 'hunter') == 'campaign_hunter':
+        from learning.campaign_rewards import SETTINGS
+        return {'horizon': args.horizon, **{name: getattr(args, name) for name in SETTINGS}}
     from weapons.catalog import RULESET, CATALOG
     return {'wall_scale': args.wall_scale,
             'hit_scale': args.hit_scale,
@@ -358,11 +394,27 @@ def shaping_from(args):
             'weapon_tuning': CATALOG.snapshot()}
 
 
+def campaign_reward_summary(args):
+    """The Campaign Hunter's reward terms as reward_summary gives the hunter's."""
+    from learning.campaign_rewards import HELP, SETTINGS
+    rows = [(name.replace('_', ' ').capitalize(), getattr(args, name), HELP[name]) for name in SETTINGS]
+    return [{'name': n, 'sign': '+' if v > 0 else '-', 'value': round(abs(v), 4), 'unit': u} for n, v, u in rows if v]
+
+
 def write_run_config(args):
     """Record what this run trains on beside its log, so the dashboard can list it."""
     import json
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    if args.task == 'campaign_hunter':
+        (out / 'config.json').write_text(json.dumps({
+            'task': args.task, 'rewards': campaign_reward_summary(args),
+            'episode': {'horizon_seconds': args.horizon, 'episodes_per_iteration': args.episodes,
+                        'learning_rate': args.lr, 'levels': list(args.levels)},
+            'start': str(args.start), 'shaping': shaping_from(args),
+            'observation_version': OBSERVATION_VERSION, 'decision_frames': 6, 'turn_rate': 1.0,
+            'args': {k: (list(v) if isinstance(v, tuple) else v) for k, v in vars(args).items()}}, indent=1))
+        return
     (out / 'config.json').write_text(json.dumps({
         'rewards': reward_summary(args),
         'episode': {'horizon_seconds': args.horizon, 'after_clear_seconds': args.after_clear,
@@ -418,6 +470,10 @@ def build_parser():
     for name, default in INCHWORM_DEFAULTS.items():
         parser.add_argument('--inchworm-' + name.replace('_', '-'), type=float, default=default,
                             help='Inchworm ' + name.replace('_', ' '))
+    from learning.campaign_rewards import DEFAULTS as CAMPAIGN_DEFAULTS, HELP as CAMPAIGN_HELP
+    for name, default in CAMPAIGN_DEFAULTS.items():
+        parser.add_argument('--' + name.replace('_', '-'), type=float, default=default,
+                            help='Campaign Hunter: ' + CAMPAIGN_HELP[name])
     parser.add_argument('--start', default=str(DEFAULT_START))
     parser.add_argument('--out', default=str(DEFAULT_OUT))
     parser.add_argument('--iterations', type=int, default=100, help='training iterations; 0 means unlimited for creature teams')
@@ -487,9 +543,9 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    if not 0<args.actor_scale<=1 or (args.task=='hunter' and args.actor_scale!=1):
+    if not 0<args.actor_scale<=1 or (args.task in PPO_TASKS and args.actor_scale!=1):
         raise ValueError('actor scale requires a wallcrawler run and 0 < scale <= 1')
-    if args.task != 'hunter':
+    if args.task not in PPO_TASKS:
         from learning.run import train
         raw = sys.argv[1:] if argv is None else argv
         if not any(v.split('=')[0] == '--horizon' for v in raw):
@@ -500,13 +556,20 @@ def main(argv=None):
         result = train(args)
         print('paused' if result['paused'] else 'done', '| checkpoint:', result['last'])
         return
+    if args.task == 'campaign_hunter':
+        from learning.tasks import task
+        raw = sys.argv[1:] if argv is None else argv
+        if not any(v.split('=')[0] == '--horizon' for v in raw):
+            args.horizon = task(args.task).fresh_defaults['horizon']
+        args.levels = args.levels or task(args.task).adapter().default_levels()
     if not args.resume:
         write_run_config(args)
     from experiments import run
     run._use_dummy_drivers()
     result = train_rl(args.start, args.out, args.iterations, args.episodes, args.workers, lr=args.lr,
                       shaping=shaping_from(args),
-                      levels=args.levels, resume=args.resume, gamma=args.gamma, gae_lambda=args.gae_lambda)
+                      levels=args.levels, resume=args.resume, gamma=args.gamma, gae_lambda=args.gae_lambda,
+                      task=args.task)
     if result['paused']:
         print('paused | at iteration', result['history'][-1]['iteration'] if result['history'] else '-')
     else:
