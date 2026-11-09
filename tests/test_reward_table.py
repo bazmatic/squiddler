@@ -70,11 +70,11 @@ def test_each_term_pays_its_own_points_on_its_own_event(key):
     """A term's event and weight are aligned: one count of a term's event, and nothing else, pays exactly that term's
     points. Every term gets distinct points, so a weight paid on another term's event shows."""
     table = tables()[key]
-    values = {t.key: float(i + 2) * (1 if i % 2 else -1) for i, t in enumerate(table.terms)}
+    values = {t.key: float(i + 2) * (1 if i % 2 else -1) for i, t in enumerate(table.settable)}
     for term in table.paying:
         row = table.row()
         row[term.event] = 1
-        assert table.pay([row], values)[0] == table.weight(term, values[term.key]), term.key
+        assert table.pay([row], values)[0] == table.weight(term, table.validate(values)), term.key
 
 
 def test_the_campaign_hunter_is_declared_in_a_table_and_its_rollout_counts_only_its_events():
@@ -203,3 +203,46 @@ def test_the_inchworm_is_declared_in_a_table_with_its_flags_manifest_and_checks_
     row = table.row()
     row.update(bites=1, deaths=1)
     assert table.pay([row], inchworm_rewards.DEFAULTS)[0] == pytest.approx(2. - 5.)
+
+
+def test_the_hunter_is_declared_in_a_table_with_its_fixed_and_scaled_terms():
+    from argparse import Namespace
+    from experiments.score import Weights
+    from learning.hunter_rewards import TABLE as HUNTER, KILL_REWARD_TOTAL
+    from learning.tasks import task
+    from tools import ppo_neural
+    from tools.trainer import settings
+    assert task('hunter').reward_table() is HUNTER
+    # The kill reward and the idle cost are fixed: no setting, no flag.
+    assert 'kills' not in HUNTER.settings and 'idle' not in HUNTER.settings
+    flags = {a.dest for a in ppo_neural.build_parser()._actions}
+    assert set(HUNTER.settings) <= flags and 'kills' not in flags
+    # The wall and enemy-hit settings scale the score's own weights; the settings form shows them in points.
+    values = HUNTER.validate({'wall_scale': 2.0})
+    assert HUNTER.points(HUNTER.by_key['wall_scale'], values) == 2.0 * Weights().quotient
+    assert settings.BY_DEST['hit_scale'].display_scale == Weights().hit
+    # A run's rewards rows keep their names and signs: an unsigned table's sign is its kind's, its value as set.
+    args = Namespace(task='hunter', powerup_reward=-3.0, death_penalty=5.0, shot_price=.25)
+    rows = {row['name']: row for row in ppo_neural.reward_summary(args)}
+    assert rows['Kills'] == {'name': 'Kills', 'sign': '+', 'value': KILL_REWARD_TOTAL,
+                             'unit': 'points shared across all the enemies in an episode'}
+    assert (rows['Powerup collected']['sign'], rows['Powerup collected']['value']) == ('+', -3.0)
+    assert (rows['Death']['sign'], rows['Death']['value']) == ('-', 5.0)
+    assert rows['Wall impact']['value'] == Weights().quotient and 'Unaimed shot' in rows
+    # An older run's row recovers its setting by the current name only, over the unit.
+    assert HUNTER.summary_rows()['Wall impact'] == ('wall_scale', Weights().quotient)
+    assert HUNTER.row_names_of(HUNTER.by_key['shot_price']) == ('Unaimed shot', 'Shot with no enemy in sight')
+
+
+def test_a_hunter_episode_pays_each_kill_its_share_of_the_kill_reward():
+    import numpy as np
+    from experiments import rollout
+    from hunter.senses import SENSE_SIZE
+    recorder = rollout.RolloutRecorder(6, wall_scale=0.0)
+    recorder._start_enemies = 4
+    for kills in (1, 0, 2):
+        recorder.senses.append(np.zeros(SENSE_SIZE, np.float32))
+        recorder.controls.append((1, 0, 0))
+        recorder._events.append(rollout.TABLE.row())
+        recorder._kills.append(kills)
+    assert list(recorder.arrays()[2]) == pytest.approx([25.0, 0.0, 50.0])

@@ -2,11 +2,9 @@
 import math
 import numpy as np
 from experiments.harness import FPS, run_episode
-from experiments.score import Weights
 from hunter.rule_params import RULES
 from hunter.senses import FEATURE_NAMES, HIT_POINT_CELLS, SENSE_SIZE, blocked, ray_hits
-
-KILL_REWARD_TOTAL = 100.0       # shared across every enemy that existed in the episode
+from learning.hunter_rewards import KILL_REWARD_TOTAL, TABLE  # noqa: F401 (KILL_REWARD_TOTAL: still read from here)
 BOREDOM_GRACE = 1.0             # seconds with nothing new in view before the hunter is bored
 VIEW_CELLS = 3.0                # walls further than this many cells do not count as in view for boredom: far off, a
                                 # slight move makes the rays land on different blocks, which would look new
@@ -32,12 +30,10 @@ def compass_following(senses):
 class RolloutRecorder:
     """Per decision step: the senses, the controls the policy chose, and the events that followed."""
 
-    def __init__(self, decision_frames, wall_scale=1.0, hit_scale=1.0, still_penalty=0.0, still_speed=0.15,
-                 turn_change_penalty=0.0, speed_penalty=0.0, powerup_reward=0.0, upgrade_bonus=0.0,
-                 reversal_penalty=0.0, death_penalty=0.0, rules_bounty=0.0, compass_reward=0.0,
-                 boredom_penalty=0.0, boredom_window=10.0, shot_price=0.0, turning_penalty=0.0, hit_reward=0.0,
-                 panic_score=None, panic_temperature=1.0):
+    def __init__(self, decision_frames, panic_score=None, panic_temperature=1.0, **rewards):
+        """rewards: the hunter's reward settings (learning.hunter_rewards), the rest at their defaults."""
         self.decision_frames = decision_frames
+        self.rewards = TABLE.validate(rewards)
         # Panic: once the last PANIC_WINDOW seconds score below panic_score, choices are sampled at
         # panic_temperature until that score is back above zero. None leaves it off.
         self.panic_score, self.panic_temperature = panic_score, panic_temperature
@@ -45,38 +41,25 @@ class RolloutRecorder:
         self._temperatures = []                   # per step: the temperature its choice was sampled at
         self._stale = []                          # per step: nothing new in view for BOREDOM_GRACE (blind or not)
         self._view_memory = ({}, None)            # thing -> step last seen, and the step something was last new
-        self.boredom_penalty = boredom_penalty    # shaping: points lost per second blind with nothing new in view
-        self.boredom_window = boredom_window      # seconds before a thing seen counts as new again
         self._views = []                          # per step: the wall blocks and crystals in the hunter's view
-        self.shot_price = shot_price              # shaping: points lost per shot fired with no enemy in sight
-        self.turning_penalty = turning_penalty    # shaping: points lost per second spent turning
-        self.hit_reward = hit_reward              # shaping: points gained per hunter shot that reaches an enemy
         self._hits = []                           # per step: the hunter's shots that reached an enemy
         self._hits_before = 0
         self._shots = []                          # per step: shots the hunter fired
         self._shots_before = 0
-        self.compass_reward = compass_reward    # shaping: points per maze width the compass route shortens, while blind
+        self._kills = []                          # per step: enemies the hunter (or its fire) killed
         self.compass_step_cap = 0.05    # a larger change in one step is the nearest enemy changing, not the hunter moving
         self.compass_hit_cap = 0.05     # ...except a drop of up to one hit on a wall block on the compass route
-        self.wall_scale = wall_scale      # shaping: multiplies the wall-hit penalty in the reward only
-        self.hit_scale = hit_scale        # likewise for the enemy-hit penalty
-        self.still_penalty = still_penalty    # shaping: points lost per second spent slower than still_speed
-        self.still_speed = still_speed        # as a fraction of the hunter's top speed
-        self.turn_change_penalty = turn_change_penalty    # points lost each time a turn starts or reverses
-        self.speed_penalty = speed_penalty    # shaping: points lost per second at standstill, scaled by the shortfall from top speed
-        self.powerup_reward = powerup_reward    # shaping: points gained per powerup crystal the hunter collects
-        self.death_penalty = death_penalty    # shaping: points lost when a mortal hunter is destroyed
-        self.reversal_penalty = reversal_penalty    # shaping: extra points lost when the turn flips straight from left to right
-        self.rules_bounty = rules_bounty    # shaping: points gained when the last Rules hunter is destroyed
         self._rules_paid = False
-        self.upgrade_bonus = upgrade_bonus    # shaping: points gained per second the hunter's guns are upgraded
         self.upgraded_frames = 0
         self._weapon_kills = {}
         self._weapon_pickups = {}
         self._died = False
         self.senses, self.controls = [], []
         self.speed_sum, self.frames = 0.0, 0     # mean speed as a share of top speed, for the dashboard
-        self._events = []                 # per step: kills, wall impulse, enemy hits, idle seconds, near-still seconds, top-speed shortfall seconds, powerups, upgraded seconds, death, rules bounty
+        # Per step, the counts each reward term pays on (learning.hunter_rewards). Those that need the whole step's
+        # senses or controls (the kill share, turns, compass progress, hits, unaimed shots, boredom) are worked out
+        # when the steps are paid.
+        self._events = []
         self._pending = False
         self._controller = None
         self._counter = None
@@ -130,7 +113,8 @@ class RolloutRecorder:
         self._controller = game.hunter_flight.controller
         if self._controller.frames % self.decision_frames == 0:
             self._pending = True
-            self._events.append([0, 0, 0, 0.0, 0.0, 0.0, 0, 0.0, 0, 0])
+            self._events.append(TABLE.row())
+            self._kills.append(0)
             self._shots.append(0)
             self._hits.append(0)
             maze = getattr(game, 'maze', None)
@@ -146,8 +130,8 @@ class RolloutRecorder:
             fired = getattr(hunter, 'shots_fired', 0)
             self._shots[-1] += fired - self._shots_before
             self._shots_before = fired
-        if self._events and math.hypot(hunter.vx, hunter.vy) < self.still_speed * hunter.max_speed:
-            self._events[-1][4] += 1.0 / FPS
+        if self._events and math.hypot(hunter.vx, hunter.vy) < self.rewards['still_speed'] * hunter.max_speed:
+            self._events[-1]['still_seconds'] += 1.0 / FPS
         if self._events:
             share = math.hypot(hunter.vx, hunter.vy) / hunter.max_speed
             self.speed_sum += min(share, 1.0)
@@ -155,9 +139,9 @@ class RolloutRecorder:
             from weapons.state import held_weapon  # here, not at the top: the weapons package loads pygame
             if getattr(hunter, 'gun_upgrade_level', 0) or held_weapon(hunter) is not None:
                 self.upgraded_frames += 1
-                self._events[-1][7] += 1.0 / FPS
+                self._events[-1]['boosted_seconds'] += 1.0 / FPS
             shortfall = 1.0 - share
-            self._events[-1][5] += min(max(shortfall, 0.0), 1.0) / FPS
+            self._events[-1]['shortfall_seconds'] += min(max(shortfall, 0.0), 1.0) / FPS
 
     def add_frame(self, rotation, engine, trigger):
         pass
@@ -169,16 +153,20 @@ class RolloutRecorder:
 
     def counted(self, counter, elapsed):
         current = (counter.kills, counter.wall_impulse, counter.hits_taken, counter.idle_seconds)
-        for i, (now, before) in enumerate(zip(current, self._previous)):
-            self._events[-1][i] += now - before
+        kills, wall, hits_taken, idle = (now - before for now, before in zip(current, self._previous))
         self._previous = current
-        self._events[-1][6] += counter.powerups - self._previous_powerups
+        self._kills[-1] += kills
+        row = self._events[-1]
+        row['wall_impulse'] += wall
+        row['hits_taken'] += hits_taken
+        row['idle_seconds'] += idle
+        row['powerups'] += counter.powerups - self._previous_powerups
         self._previous_powerups = counter.powerups
         if counter.died and not self._died:
-            self._events[-1][8] = 1        # the step in which the hunter was destroyed
+            row['deaths'] = 1              # the step in which the hunter was destroyed
             self._died = True
         if getattr(counter, 'rules_beaten', False) and not self._rules_paid:
-            self._events[-1][9] = 1        # the step in which the last Rules hunter was destroyed
+            row['rules_hunters_beaten'] = 1    # the step in which the last Rules hunter was destroyed
             self._rules_paid = True
         self._counter = counter
 
@@ -187,7 +175,7 @@ class RolloutRecorder:
         n = min(len(self.senses), len(self.controls), len(self._events))
         senses = np.asarray(self.senses[:n], dtype=np.float32).reshape(n, SENSE_SIZE)
         controls = np.asarray(self.controls[:n], dtype=np.int8).reshape(n, 3)
-        bored = self._bored(senses, self._views[:n]) if self.boredom_penalty else np.zeros(n, dtype=bool)
+        bored = self._bored(senses, self._views[:n]) if self.rewards['boredom_penalty'] else np.zeros(n, dtype=bool)
         return senses, controls, self._step_rewards(0, n, senses, bored).astype(np.float32)
 
     def temperatures(self, n):
@@ -202,43 +190,34 @@ class RolloutRecorder:
         compass progress of the last step needs it); `bored` holds whether each of them was bored. The whole episode
         is scored this way at the end, and the last few seconds as it goes for panic."""
         m = hi - lo
+        rows = self._events[lo:hi]
+        columns = {e: np.asarray([row[e] for row in rows], dtype=np.float64).reshape(m) for e in TABLE.events}
+        # Each kill pays its share of the kill reward, shared across every enemy that existed in the episode.
         spawned = self._counter.spawned if self._counter is not None else 0
-        total = max(self._start_enemies + spawned, 1)
-        weights = Weights()
-        events = np.asarray(self._events[lo:hi], dtype=np.float64).reshape(m, 10)
-        rewards = (KILL_REWARD_TOTAL / total * events[:, 0] - weights.quotient * self.wall_scale * events[:, 1]
-                   - weights.hit * self.hit_scale * events[:, 2] - weights.idle / 60.0 * events[:, 3]
-                   - self.still_penalty * events[:, 4] - self.speed_penalty * events[:, 5]
-                   + self.powerup_reward * events[:, 6] + self.upgrade_bonus * events[:, 7]
-                   - self.death_penalty * events[:, 8] + self.rules_bounty * events[:, 9])
+        columns['kill_share'] = np.asarray(self._kills[lo:hi], dtype=np.float64).reshape(m) / max(self._start_enemies + spawned, 1)
         controls = np.asarray(self.controls[lo:hi], dtype=np.int8).reshape(m, 3)
         # Turn control: 0 left, 1 none, 2 right. A turn starts (from none) or reverses when it differs from the
         # previous decision's and is not 'none'; holding a turn, or stopping one, is free.
         before = self.controls[lo - 1][0] if lo > 0 else 1
         previous = np.concatenate([[before], controls[:-1, 0]]) if m else controls[:, 0]
         changes = (controls[:, 0] != 1) & (controls[:, 0] != previous)
-        rewards = rewards - self.turn_change_penalty * changes
-        reversals = changes & (previous != 1)             # the turn flipped straight over, with no pause between
-        rewards = rewards - self.reversal_penalty * reversals
+        columns['turn_starts'] = changes.astype(np.float64)
+        columns['turn_reversals'] = (changes & (previous != 1)).astype(np.float64)   # flipped straight over, no pause
         # Charged for the time spent turning, so circling costs every second while a quick correction is cheap.
-        rewards = rewards - self.turning_penalty * self.decision_frames / FPS * (controls[:, 0] != 1)
-        if self.compass_reward and len(senses) > 1:
-            rewards = rewards + self.compass_reward * self._compass_progress(senses)[:m]
-        if self.hit_reward:
-            hits = np.zeros(m)
-            counted = np.asarray(self._hits[lo:hi], dtype=np.float64)
-            hits[:len(counted)] = counted
-            rewards = rewards + self.hit_reward * hits
-        if self.shot_price:
-            rewards = rewards - self.shot_price * self.unaimed_shots(senses[:m], lo)
-        if self.boredom_penalty:
-            rewards = rewards - self.boredom_penalty * self.decision_frames / FPS * np.asarray(bored[:m], dtype=bool)
-        return rewards
+        columns['turning_seconds'] = self.decision_frames / FPS * (controls[:, 0] != 1)
+        columns['compass_progress'] = (self._compass_progress(senses)[:m] if len(senses) > 1 else np.zeros(m))
+        hits = np.zeros(m)
+        counted = np.asarray(self._hits[lo:hi], dtype=np.float64)
+        hits[:len(counted)] = counted
+        columns['hits'] = hits
+        columns['unaimed_shots'] = self.unaimed_shots(senses[:m], lo)
+        columns['bored_seconds'] = self.decision_frames / FPS * np.asarray(bored[:m], dtype=bool)
+        return TABLE.pay_columns(columns, self.rewards, m)
 
     def _remember_view(self, view):
         """Note what is in view this step; whether nothing new has come into view for BOREDOM_GRACE (see _bored)."""
         step = self.decision_frames / FPS
-        grace, window = round(BOREDOM_GRACE / step), round(self.boredom_window / step)
+        grace, window = round(BOREDOM_GRACE / step), round(self.rewards['boredom_window'] / step)
         last_seen, last_new = self._view_memory
         i = len(self._stale)
         if any(i - last_seen.get(thing, -10 ** 9) > window for thing in view):
@@ -275,7 +254,7 @@ class RolloutRecorder:
         for BOREDOM_GRACE, new meaning not seen in the last boredom_window. Spinning, circling or dithering keeps
         showing it the same walls; flying on shows it new ones."""
         step = self.decision_frames / FPS
-        grace, window = round(BOREDOM_GRACE / step), round(self.boredom_window / step)
+        grace, window = round(BOREDOM_GRACE / step), round(self.rewards['boredom_window'] / step)
         last_seen, last_new, bored = {}, None, np.zeros(len(views), dtype=bool)
         for i, view in enumerate(views):
             if any(i - last_seen.get(thing, -10 ** 9) > window for thing in view):
@@ -320,16 +299,12 @@ class RolloutRecorder:
         return progress
 
 
-def fly_rollout(level, seed, spec, horizon=90.0, wall_scale=1.0, hit_scale=1.0,
-                still_penalty=0.0, still_speed=0.15, random_start=False, turn_change_penalty=0.0,
-                speed_penalty=0.0, powerup_reward=0.0, after_clear=0.0, upgrade_bonus=0.0, pursue_hunter=True, reversal_penalty=0.0,
-                health=0, death_penalty=0.0, rules_bounty=0.0, compass_reward=0.0, boredom_penalty=0.0,
-                boredom_window=10.0, shot_price=0.0, turning_penalty=0.0, hit_reward=0.0, panic_score=None,
-                panic_temperature=1.0, duel_separation=False, trace=None, low_graphics=True, random_maze=False, combat_ruleset="legacy", weapon_tuning=None, curved_walls=False):
-    recorder = RolloutRecorder(spec.decision_frames, wall_scale, hit_scale, still_penalty, still_speed,
-                               turn_change_penalty, speed_penalty, powerup_reward, upgrade_bonus, reversal_penalty, death_penalty,
-                               rules_bounty, compass_reward, boredom_penalty, boredom_window, shot_price,
-                               turning_penalty, hit_reward, panic_score, panic_temperature)
+def fly_rollout(level, seed, spec, horizon=90.0, random_start=False, after_clear=0.0, pursue_hunter=True, health=0,
+                panic_score=None, panic_temperature=1.0, duel_separation=False, trace=None, low_graphics=True,
+                random_maze=False, combat_ruleset="legacy", weapon_tuning=None, curved_walls=False, **rewards):
+    """One episode flown by the student in `spec`, paid with `rewards` (learning.hunter_rewards settings, the rest at
+    their defaults)."""
+    recorder = RolloutRecorder(spec.decision_frames, panic_score, panic_temperature, **rewards)
     result = run_episode(level, seed, RULES, horizon, student=spec, recorder=recorder, random_start=random_start,
                          after_clear=after_clear, pursue_hunter=pursue_hunter, health=health, trace=trace,
                          duel_separation=duel_separation, low_graphics=low_graphics, random_maze=random_maze,

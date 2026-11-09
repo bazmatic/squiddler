@@ -18,23 +18,6 @@ DEFAULT_ITERATIONS = 1000     # what run52 uses: the guess for a run that never 
 # dest: (group, label). A trainer option missing here still appears, under Training.
 LABELS = {
     'bootstrap_epochs': ('Training', 'Teacher training passes (0: task default)'),
-    'powerup_reward': ('Rewards', 'Powerup collected'),
-    'upgrade_bonus': ('Rewards', 'Hunter power boost, per second'),
-    'rules_bounty': ('Rewards', 'Rules hunter destroyed'),
-    'compass_reward': ('Rewards', 'Following the enemy compass'),
-    'hit_reward': ('Rewards', 'Hit on an enemy'),
-    'wall_scale': ('Rewards', 'Wall impact scale'),
-    'hit_scale': ('Rewards', 'Enemy hit penalty (points)'),
-    'death_penalty': ('Rewards', 'Death'),
-    'speed_penalty': ('Rewards', 'Flying below top speed'),
-    'still_penalty': ('Rewards', 'Crawling under the still speed'),
-    'still_speed': ('Rewards', 'Still speed (share of top speed)'),
-    'turn_change_penalty': ('Rewards', 'Starting or reversing a turn'),
-    'reversal_penalty': ('Rewards', 'Reversing a turn directly'),
-    'turning_penalty': ('Rewards', 'Turning, per second'),
-    'shot_price': ('Rewards', 'Unaimed shot'),
-    'boredom_penalty': ('Rewards', 'Boredom, per second'),
-    'boredom_window': ('Rewards', 'Boredom window (s)'),
     'levels': ('Episodes', 'Levels'),
     'episodes': ('Episodes', 'Episodes per iteration'),
     'horizon': ('Episodes', 'Fighting time (s)'),
@@ -52,23 +35,18 @@ LABELS = {
 }
 
 from learning.reward_table import tables as _reward_tables
+# A reward setting's points per unit (a scale on a fixed weight): the settings form shows the setting in points.
+UNITS = {}
 for _table in _reward_tables().values():
     LABELS.update(_table.labels())
+    UNITS.update({_table.prefix + t.key: t.unit for t in _table.settable})
 
-# The rewards summary of older runs, by row name: (dest, what the value was multiplied by). Rows are only written
-# when non-zero, so a run with a summary but no row for one of these trained with it at 0.
+
+# The rewards summary of older (hunter) runs, by row name: (dest, what the value was multiplied by). Rows are only
+# written when non-zero, so a run with a summary but no row for one of these trained with it at 0.
 def _reward_rows():
-    from experiments.score import Weights
-    w = Weights()
-    return {'Powerup collected': ('powerup_reward', 1.0), 'Gun upgraded': ('upgrade_bonus', 1.0),
-            'Wall impact': ('wall_scale', w.quotient), 'Enemy hit': ('hit_scale', w.hit),
-            'Flying below top speed': ('speed_penalty', 1.0),
-            'Crawling under the still speed': ('still_penalty', 1.0),
-            'Starting or reversing a turn': ('turn_change_penalty', 1.0),
-            'Reversing a turn directly': ('reversal_penalty', 1.0), 'Death': ('death_penalty', 1.0),
-            'Rules hunter destroyed': ('rules_bounty', 1.0), 'Following the enemy compass': ('compass_reward', 1.0),
-            'Hit on an enemy': ('hit_reward', 1.0), 'Turning': ('turning_penalty', 1.0),
-            'Unaimed shot': ('shot_price', 1.0), 'Boredom': ('boredom_penalty', 1.0)}
+    from learning.hunter_rewards import TABLE
+    return TABLE.summary_rows()
 
 # The episode block of older runs: its key -> dest.
 EPISODE_KEYS = {'episodes_per_iteration': 'episodes', 'learning_rate': 'lr', 'horizon_seconds': 'horizon',
@@ -126,18 +104,14 @@ def scoped_settings():
 
 
 def _settings():
-    from experiments.score import Weights
     out = []
     for action in ppo_neural.build_parser()._actions:
         if action.dest in NOT_SETTINGS:
             continue
         group, label = LABELS.get(action.dest, ('Training', action.dest.replace('_', ' ').capitalize()))
         default = list(action.default) if isinstance(action.default, tuple) else action.default
-        help_text = ('Reward points lost per enemy collision or projectile hit; 0 disables this penalty.'
-                     if action.dest == 'hit_scale' else action.help or '')
-        out.append(Setting(action.dest, action.option_strings[0], _kind(action), default, help_text,
-                           group, label, Weights().hit if action.dest == 'hit_scale' else 1.0,
-                           applies_to(action.dest)))
+        out.append(Setting(action.dest, action.option_strings[0], _kind(action), default, action.help or '',
+                           group, label, UNITS.get(action.dest, 1.0), applies_to(action.dest)))
     return out
 
 
