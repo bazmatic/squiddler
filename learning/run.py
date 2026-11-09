@@ -76,6 +76,19 @@ def evaluate(pool, args, weights, cases, mode=None, muted=False):
     return dict(summary=adapter.metrics(rows),episodes=rows)
 
 
+def expected_manifest(args):
+    """The manifest a run with these arguments records: its task's rules (the adapter's metadata) and its training
+    settings. A run resumes only while its recorded manifest is still this; tools.trainer recomputes it when a paused
+    run's settings are edited."""
+    from learning.tasks import task
+    adapter = task(args.task).adapter()
+    expected = json.loads(json.dumps(adapter.metadata(args)))
+    expected['training'] = {k:getattr(args,k) for k in ('seed','lr','gamma','gae_lambda','episodes','bootstrap_episodes')}
+    if getattr(args, 'bootstrap_epochs', 0):
+        expected['training']['bootstrap_epochs'] = args.bootstrap_epochs
+    return expected
+
+
 def train(args):
     entered = time.monotonic()
     import torch
@@ -95,10 +108,7 @@ def train(args):
     bootstrap_epochs = getattr(args, 'bootstrap_epochs', 0)
     if bootstrap_epochs < 0:
         raise ValueError('bootstrap epochs must be nonnegative (0 uses the task default)')
-    expected = json.loads(json.dumps(adapter.metadata(args)))
-    expected['training'] = {k:getattr(args,k) for k in ('seed','lr','gamma','gae_lambda','episodes','bootstrap_episodes')}
-    if bootstrap_epochs:
-        expected['training']['bootstrap_epochs'] = bootstrap_epochs
+    expected = expected_manifest(args)
     config_path = out/'config.json'
     resume_path = out/'resume.pt'
     if args.resume:
