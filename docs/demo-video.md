@@ -8,7 +8,8 @@ venv/bin/python -m tools.demo_video RUN --out DIR       # DIR/<task>-demo.mp4
 `RUN` is a run directory or a name under `.astrovoid-local/neural/rl`. It works
 for any task that replays through hooks (`learning/tasks.py`, `replay_mode='hooks'`):
 Inchworm, Jelly team, Flocker team, Wallcrawler team. Hunter uses the builtin
-replay path and is not supported. The project skill `demo-video`
+replay path and is not supported; to film the Campaign Hunter, record the game's Demo mode instead:
+`venv/bin/python -m tools.record_demo OUT.mp4 SECONDS` (with sound, about 14 ms of wall clock per frame). The project skill `demo-video`
 (`.claude/skills/demo-video/SKILL.md`) wraps these steps for Claude.
 
 ## How it works
