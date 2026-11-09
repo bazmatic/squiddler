@@ -148,3 +148,31 @@ def test_the_jelly_is_declared_in_a_table_with_its_manifest_fields_and_flags_unc
     rules = {r.key: r for r in JELLY.reward_rules()}
     assert 'max_stage' not in rules and rules['flank_range'].kind == 'shaping'
     assert rules['flank'].stages == (2, 3) and rules['death'].kind == 'penalty'
+
+
+def test_the_flocker_is_declared_in_a_table_with_its_flags_manifest_and_checks_unchanged():
+    from learning import flocker_rewards
+    from learning.tasks import task
+    from tools import ppo_neural
+    table = flocker_rewards.TABLE
+    assert task('flocker_team').reward_table() is table
+    # The order a run's manifest records them in, as before.
+    assert tuple(flocker_rewards.DEFAULTS) == (
+        'hit_reward', 'kill_reward', 'shot_cost', 'death_penalty', 'progress_reward', 'aim_progress_reward',
+        'cohesion_reward', 'bunch_penalty', 'stuck_penalty', 'perch_reward', 'volley_reward', 'wall_collision_penalty',
+        'bunch_distance', 'contact_only', 'damage_penalty', 'threat_penalty')
+    kinds = {t.key: t.kind for t in table.terms}
+    assert {k for k, kind in kinds.items() if kind is RewardKind.PENALTY} == {
+        'shot_cost', 'death_penalty', 'bunch_penalty', 'stuck_penalty', 'wall_collision_penalty', 'damage_penalty',
+        'threat_penalty'}
+    assert {k for k, kind in kinds.items() if kind is RewardKind.SHAPING} == {'bunch_distance', 'contact_only'}
+    args = ppo_neural.build_parser().parse_args(['--task', 'flocker_team', '--flocker-shot-cost', '.2'])
+    assert flocker_rewards.from_args(args)['shot_cost'] == .2
+    with pytest.raises(ValueError, match='nonnegative'):
+        flocker_rewards.validate({'shot_cost': -1.})
+    with pytest.raises(ValueError, match='below one accepted hit'):
+        flocker_rewards.validate({'volley_reward': 2.})
+    # A Flocker's penalties are sizes: one shot and one hit pay the hit less the shot.
+    row = table.row()
+    row.update(hits=1, shots=1)
+    assert table.pay([row], flocker_rewards.DEFAULTS)[0] == pytest.approx(1. - .05)

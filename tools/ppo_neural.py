@@ -462,10 +462,6 @@ def build_parser():
     from learning.reward_table import tables
     for table in tables().values():          # the tasks that declare their rewards in a reward table
         table.add_arguments(parser)
-    from learning.flocker_rewards import DEFAULTS as FLOCKER_DEFAULTS
-    for name, default in FLOCKER_DEFAULTS.items():
-        parser.add_argument('--flocker-' + name.replace('_', '-'), type=float, default=default,
-                            help='Flocker ' + name.replace('_', ' '))
     from learning.inchworm_rewards import DEFAULTS as INCHWORM_DEFAULTS
     for name, default in INCHWORM_DEFAULTS.items():
         parser.add_argument('--inchworm-' + name.replace('_', '-'), type=float, default=default,
