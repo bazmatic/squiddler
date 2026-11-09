@@ -51,8 +51,6 @@ LABELS = {
     'workers': ('Training', 'Workers'),
 }
 
-from learning.inchworm_rewards import DEFAULTS as INCHWORM_REWARD_DEFAULTS
-LABELS.update({f'inchworm_{name}': ('Rewards', 'Inchworm ' + name.replace('_', ' ')) for name in INCHWORM_REWARD_DEFAULTS})
 from learning.reward_table import tables as _reward_tables
 for _table in _reward_tables().values():
     LABELS.update(_table.labels())

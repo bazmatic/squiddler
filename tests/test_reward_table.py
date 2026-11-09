@@ -176,3 +176,30 @@ def test_the_flocker_is_declared_in_a_table_with_its_flags_manifest_and_checks_u
     row = table.row()
     row.update(hits=1, shots=1)
     assert table.pay([row], flocker_rewards.DEFAULTS)[0] == pytest.approx(1. - .05)
+
+
+def test_the_inchworm_is_declared_in_a_table_with_its_flags_manifest_and_checks_unchanged():
+    from learning import inchworm_rewards
+    from learning.tasks import task
+    from tools import ppo_neural
+    table = inchworm_rewards.TABLE
+    assert task('inchworm').reward_table() is table
+    # The order a run's manifest records them in, as before.
+    assert tuple(inchworm_rewards.DEFAULTS) == (
+        'progress_reward', 'bite_reward', 'success_reward', 'death_penalty', 'effort_cost', 'airborne_cost',
+        'time_cost', 'action_change_cost', 'backward_cost', 'turn_reward', 'dagger_weight', 'speed_bonus',
+        'crawl_time_cost', 'about_face_time_cost', 'end_pitch_cost')
+    kinds = {t.key: t.kind for t in table.terms}
+    assert {k for k, kind in kinds.items() if kind is RewardKind.REWARD} == {
+        'progress_reward', 'bite_reward', 'success_reward', 'turn_reward', 'speed_bonus'}
+    assert kinds['dagger_weight'] is RewardKind.SHAPING          # a teacher weight, not a reward
+    args = ppo_neural.build_parser().parse_args(['--task', 'inchworm', '--inchworm-death-penalty', '7'])
+    assert inchworm_rewards.from_args(args)['death_penalty'] == 7.
+    with pytest.raises(ValueError, match='nonnegative'):
+        inchworm_rewards.validate({'time_cost': -1.})
+    with pytest.raises(ValueError, match='unknown'):
+        inchworm_rewards.validate({'spin_reward': 1.})
+    # An Inchworm's penalties are sizes: dying after one bite pays the bite less the death.
+    row = table.row()
+    row.update(bites=1, deaths=1)
+    assert table.pay([row], inchworm_rewards.DEFAULTS)[0] == pytest.approx(2. - 5.)
