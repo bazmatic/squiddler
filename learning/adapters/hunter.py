@@ -7,6 +7,85 @@ from learning.environment import Snapshot, Transition
 
 SPEC = PolicySpec('hunter', FEATURE_NAMES, tuple(HEAD_SIZES.items()), OBSERVATION_VERSION)
 
+# The rules a hunter run keeps for its whole life, recorded when it starts (config.json 'rules'), whatever its settings
+# or the code later say, each with the value a run older than that rule flew with. Random mazes are the exception that
+# a resume may take up (tools.ppo_neural.train_rl notes the iteration in the run's history).
+RUN_RULES = {'combat_ruleset': 'legacy', 'curved_walls': False, 'weapon_tuning': None, 'random_maze': False}
+
+
+def add_arguments(parser):
+    """The hunter's own options on the trainer's command line (its rewards come from learning.hunter_rewards)."""
+    parser.add_argument('--fixed-start', action='store_true',
+                        help='start the hunter beside the player on every episode instead of at a random open cell')
+    parser.add_argument('--health', type=int, default=0,
+                        help='hits the hunter survives before it is destroyed and the episode ends (0: indestructible)')
+    parser.add_argument('--decoy-player', action='store_true',
+                        help='leave the parked player as a target for enemies (by default they chase only the hunter)')
+    parser.add_argument('--after-clear', type=float, default=0.0,
+                        help='seconds an episode keeps going after the last enemy dies (less if no crystal is left)')
+    parser.add_argument('--panic-score', type=float, default=None,
+                        help='panic once the last 5 s score below this (e.g. -10); off when not given')
+    parser.add_argument('--panic-temperature', type=float, default=3.0,
+                        help='the temperature choices are sampled at while panicking')
+
+
+def default_levels():
+    """None: the tune set (experiments.run.TUNE_LEVELS), which a run then records as no levels chosen."""
+    return None
+
+
+def shaping_from(args):
+    """The episode shaping a run's arguments ask for: what fly_rollout is called with."""
+    from learning.hunter_rewards import TABLE
+    from weapons.catalog import RULESET, CATALOG
+    return {**TABLE.from_args(args),
+            'horizon': args.horizon,
+            'random_start': not args.fixed_start,
+            'health': args.health,
+            'after_clear': args.after_clear,
+            'pursue_hunter': not args.decoy_player,
+            'panic_score': args.panic_score,
+            'panic_temperature': args.panic_temperature,
+            'duel_separation': True, 'random_maze': True,
+            'combat_ruleset': RULESET,
+            'curved_walls': True,
+            'weapon_tuning': CATALOG.snapshot()}
+
+
+def episode_block(args):
+    """A run's episode block, for its dashboard card and its replays."""
+    import config
+    return {'horizon_seconds': args.horizon, 'after_clear_seconds': args.after_clear,
+            'episodes_per_iteration': args.episodes, 'learning_rate': args.lr,
+            'health': args.health, 'wall_energy': config.SETTINGS.game.neuralWallEnergy if args.health else 0,
+            'levels': args.levels,
+            'panic_score': args.panic_score, 'panic_temperature': args.panic_temperature}
+
+
+def summary(flown):
+    """An iteration's numbers for the training log, which learning.adapters.hunter_dashboard charts."""
+    from experiments.score import mean_components
+    score = mean_components([e['result'] for e in flown])
+    arena = [e for e in flown if e.get('rules_arena')]
+    blind = sum(e.get('blind_steps', 0) for e in flown)
+    unseen = sum(e.get('unseen_steps', 0) for e in flown)
+    steps = sum(len(e.get('temperatures', ())) for e in flown)
+    panicked = sum(int((np.asarray(e.get('temperatures', ())) > 1.0).sum()) for e in flown)
+    return dict(score=score['score'], kills_per_min=score['kills_per_min'],
+                wall_quotient_per_min=score['wall_quotient_per_min'],
+                hits_taken_per_min=score['hits_taken_per_min'],
+                speed_fraction=float(np.mean([e.get('speed_fraction', 0.0) for e in flown])),
+                deaths_per_episode=float(np.mean([1.0 if e.get('died') else 0.0 for e in flown])),
+                powerups_per_episode=float(np.mean([e.get('powerups', 0) for e in flown])),
+                upgraded_fraction=float(np.mean([e.get('upgraded_fraction', 0.0) for e in flown])),
+                rules_episodes=len(arena),
+                rules_beaten=float(np.mean([1.0 if e.get('rules_beaten') else 0.0 for e in arena])) if arena else 0.0,
+                compass_follow=sum(e.get('following_steps', 0) for e in flown) / blind if blind else 0.0,
+                panic_fraction=panicked / steps if steps else 0.0,
+                hits_per_episode=float(np.mean([e.get('hits', 0) for e in flown])),
+                unaimed_shots_per_episode=float(np.mean([e.get('unaimed_shots', 0) for e in flown])),
+                bored_fraction=sum(e.get('bored_steps', 0) for e in flown) / unseen if unseen else 0.0)
+
 
 def environment(**kwargs):
     return HunterEnvironment(**kwargs)

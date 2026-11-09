@@ -67,17 +67,12 @@ def episodes(run, iteration, root=RL_ROOT):
 def fly(run, iteration, root=RL_ROOT, workers=8):
     """The iteration's episodes flown again, with how each went. Takes a while, and slows any training (the page
     never asks for it: a Campaign Hunter iteration is 96 episodes of up to 180 s each)."""
-    from tools.watch_episode import CAMPAIGN, fly_all
+    from tools.watch_episode import episode_rows
     path = _run_dir(root, run, iteration)
     if _replay_mode(path) == 'hooks':
         return _fly_apart(path, iteration)
     _jobs(path, iteration)
-    if _task(path).key == CAMPAIGN:      # its kills are the ship's own
-        return [{'episode': i, 'level': level, 'end': end, 'return': ret, 'kills': kills, 'seconds': seconds}
-                for i, (level, end, ret, kills, seconds) in enumerate(fly_all(path, iteration, workers))]
-    return [{'episode': i, 'level': level, 'panic': panic, 'return': ret, 'kills': kills, 'end': end,
-             'seconds': seconds}
-            for i, (level, panic, ret, kills, end, seconds) in enumerate(fly_all(path, iteration, workers))]
+    return episode_rows(path, iteration, workers)
 
 
 def _fly_apart(path, iteration):

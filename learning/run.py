@@ -76,6 +76,25 @@ def evaluate(pool, args, weights, cases, mode=None, muted=False):
     return dict(summary=adapter.metrics(rows),episodes=rows)
 
 
+def add_arguments(parser):
+    """This loop's own options on the trainer's command line (tools.ppo_neural)."""
+    from tools.ppo_neural import DEFAULT_START
+    parser.add_argument('--opponent', type=str, default=str(DEFAULT_START), help='frozen player weights for team training')
+    parser.add_argument('--budget-seconds', type=float, default=7200, help='total team training and evaluation wall time; 0 means no time limit')
+    parser.add_argument('--bootstrap-episodes', type=int, default=8, help='scripted imitation encounters for new team runs')
+    parser.add_argument('--bootstrap-epochs', type=int, default=0,
+                        help='passes over teacher demonstrations; 0 uses the task default')
+    parser.add_argument('--seed', type=int, default=0, help='team model and training seed')
+
+
+def train_task(args):
+    """A run of a task this loop trains (learning.tasks.Trainer.SCENARIO), from the trainer's command line."""
+    if args.workers < 1 or args.episodes < 1 or args.horizon <= 0 or args.budget_seconds < 0 or args.iterations < 0:
+        raise ValueError('workers, episodes and horizon must be positive; budget and iterations must be nonnegative')
+    result = train(args)
+    print('paused' if result['paused'] else 'done', '| checkpoint:', result['last'])
+
+
 def expected_manifest(args):
     """The manifest a run with these arguments records: its task's rules (the adapter's metadata) and its training
     settings. A run resumes only while its recorded manifest is still this; tools.trainer recomputes it when a paused

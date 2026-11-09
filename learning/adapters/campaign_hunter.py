@@ -3,16 +3,34 @@
 Its episodes come from experiments.campaign_rollout (imported only when an episode is flown) and its policies use the
 campaign senses layout; the hunter's PPO loop in tools.ppo_neural trains it.
 """
-from hunter.campaign_senses import CAMPAIGN_FEATURE_NAMES
-
-FEATURE_NAMES = CAMPAIGN_FEATURE_NAMES
 DEFAULT_HORIZON = 180.0       # seconds: long enough to clear a level and reach its exit
+
+
+def __getattr__(name):
+    """FEATURE_NAMES, the campaign senses layout, loaded when first asked for: the game's modules (and pygame) stay out
+    of the trainer's server, which reads this adapter's shaping and episode block."""
+    if name == 'FEATURE_NAMES':
+        from hunter.campaign_senses import CAMPAIGN_FEATURE_NAMES
+        return CAMPAIGN_FEATURE_NAMES
+    raise AttributeError(name)
 
 
 def default_levels():
     """The Demo's levels."""
     import config
     return tuple(range(config.SETTINGS.autoplay.firstLevel, config.SETTINGS.autoplay.lastLevel + 1))
+
+
+def shaping_from(args):
+    """The episode shaping a run's arguments ask for: its horizon and its rewards (learning.campaign_rewards)."""
+    from learning.campaign_rewards import TABLE
+    return {'horizon': args.horizon, **TABLE.from_args(args)}
+
+
+def episode_block(args):
+    """A run's episode block, for its dashboard card and its replays."""
+    return {'horizon_seconds': args.horizon, 'episodes_per_iteration': args.episodes, 'learning_rate': args.lr,
+            'levels': list(args.levels)}
 
 
 def summary(flown):

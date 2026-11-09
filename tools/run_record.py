@@ -6,9 +6,9 @@ trains it, so the dashboard, the trainer, replays and resumes all read the same 
 changing `args`.
 
 Beside its arguments a run records only what is not a setting:
-  rules     the rules a hunter run keeps for its whole life (tools.ppo_neural.RUN_RULES: its combat ruleset,
-            weapon tuning, curved walls and whether it flies random mazes), fixed when it starts (random mazes may
-            be taken up on a resume), whatever the code later defaults to;
+  rules     the rules a run keeps for its whole life, for a task that has some (its adapter's RUN_RULES: a hunter
+            run's combat ruleset, weapon tuning, curved walls and whether it flies random mazes), fixed when it
+            starts (random mazes may be taken up on a resume), whatever the code later defaults to;
   history   the iterations at which a hunter run took up something new (random mazes, a level cycle);
   manifest  a creature run's rules snapshot (learning.run), which resume and replay check the code against.
 
@@ -57,17 +57,23 @@ def arguments(config):
 
 def is_ppo(config):
     """Whether the run trains in the hunter's loop (tools.ppo_neural) rather than learning.run."""
-    from tools import ppo_neural
-    return task_of(config) in ppo_neural.PPO_TASKS
+    from learning.tasks import Trainer, task
+    return task(task_of(config)).trainer is Trainer.HUNTER_LOOP
+
+
+def _lifetime(config):
+    """The rules the run's task keeps for a run's life (its adapter's RUN_RULES), each with its value for a run older
+    than it; none for a task that has none."""
+    from learning.tasks import task
+    return getattr(task(task_of(config)).adapter(), 'RUN_RULES', {})
 
 
 def rules(config):
-    """The rules a hunter run keeps for life, tools.ppo_neural.RUN_RULES each: as it recorded them, and for one it
-    is older than, the value it flew with before that rule existed."""
-    from tools import ppo_neural
+    """The rules the run keeps for life (its task's RUN_RULES): as it recorded them, and for one it is older than, the
+    value it flew with before that rule existed. None for a task that has none."""
     config = config or {}
     recorded = config.get('rules') if isinstance(config.get('rules'), dict) else (config.get('shaping') or {})
-    return {key: recorded.get(key, before) for key, before in ppo_neural.RUN_RULES.items()}
+    return {key: recorded.get(key, before) for key, before in _lifetime(config).items()}
 
 
 def history(config):
@@ -91,15 +97,16 @@ def episode(config):
 
 def shaping(config, iteration=None):
     """What the run's episodes are flown with: for a hunter-loop run, tools.ppo_neural.shaping_from() its arguments,
-    a hunter run's with the rules it keeps for life (as of `iteration`, when given: before it took up random mazes it
-    flew without them); for a creature run, its manifest's rewards."""
+    with the rules it keeps for life (as of `iteration`, when given: before it took up random mazes it flew without
+    them); for a creature run, its manifest's rewards."""
     if not is_ppo(config):
         return dict((config.get('manifest') or {}).get('rewards') or {})
     from tools import ppo_neural
     out = ppo_neural.shaping_from(arguments(config))
-    if task_of(config) != 'hunter':
+    lifetime = rules(config)
+    if not lifetime:
         return out
-    out.update(rules(config))
+    out.update(lifetime)
     if iteration is not None and iteration < history(config).get('random_maze_from_iteration', 0):
         out['random_maze'] = False
     return out
@@ -115,14 +122,15 @@ DERIVED = ('shaping', 'rewards', 'episode', 'start')   # blocks older runs recor
 
 
 def migrated(config, lifetime_rules=None, run_history=None):
-    """The run's config as a run records it now: its arguments and what is not a setting (a hunter run's `rules`,
-    a hunter-loop run's `history` when it has any, a creature run's manifest), without the blocks older runs derived
+    """The run's config as a run records it now: its arguments and what is not a setting (its `rules` for life and
+    a hunter-loop run's `history`, when it has any; a creature run's manifest), without the blocks older runs derived
     from their arguments. `lifetime_rules` and `run_history` default to what the config records."""
     out = {key: value for key, value in config.items() if key not in DERIVED}
     out['task'] = task_of(config)
     if is_ppo(config):
-        if out['task'] == 'hunter':
-            out['rules'] = rules(config) if lifetime_rules is None else dict(lifetime_rules)
+        lifetime = rules(config) if lifetime_rules is None else dict(lifetime_rules)
+        if lifetime:
+            out['rules'] = lifetime
         else:
             out.pop('rules', None)
         taken = history(config) if run_history is None else run_history

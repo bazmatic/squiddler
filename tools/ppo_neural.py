@@ -50,7 +50,6 @@ def export(net, policy, path):
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PPO_TASKS = ('hunter', 'campaign_hunter')     # the tasks this loop trains; the rest train in learning.run
 DEFAULT_START = ROOT / 'assets' / 'neural' / 'hunter.npz'
 DEFAULT_OUT = ROOT / '.astrovoid-local' / 'neural' / 'rl'
 TRAIN_SEEDS = 100             # seeds 300-399
@@ -58,8 +57,8 @@ DEFAULT_HORIZON = 90.0        # seconds of game time per training episode unless
 
 
 def make_jobs(iteration, count, weights, decision_frames, turn_rate, levels=None, task='hunter'):
-    """One job per episode, cycling evenly through the selected levels (default: the tune set). Another task's jobs
-    name it after the student."""
+    """One job per episode, (level, seed, student, task), cycling evenly through the selected levels (default: the
+    tune set)."""
     from experiments.run import TUNE_LEVELS
     from experiments.student import StudentSpec
     levels = tuple(levels or TUNE_LEVELS)
@@ -68,7 +67,7 @@ def make_jobs(iteration, count, weights, decision_frames, turn_rate, levels=None
         n = iteration * count + i
         spec = StudentSpec(weights=str(weights), decision_frames=decision_frames, turn_rate=turn_rate,
                            greedy=False, sample_seed=n)
-        jobs.append((levels[n % len(levels)], 300 + n % TRAIN_SEEDS, spec) + (() if task == 'hunter' else (task,)))
+        jobs.append((levels[n % len(levels)], 300 + n % TRAIN_SEEDS, spec, task))
     return jobs
 
 
@@ -80,9 +79,9 @@ def kl_coefficient(iteration, iterations, start=0.1, end=0.02, fade=0.5):
 def _rollout_job(job, shaping=None):
     import time
     from learning.tasks import task
-    level, seed, spec, *named = job                   # a hunter job does not name its task
+    level, seed, spec, key = job
     started = time.perf_counter()
-    flown = task(named[0] if named else 'hunter').adapter().environment().run(level, seed, spec, **(shaping or {}))
+    flown = task(key).adapter().environment().run(level, seed, spec, **(shaping or {}))
     flown['wall'] = time.perf_counter() - started
     return flown
 
@@ -146,19 +145,18 @@ def train_rl(start, out_dir, iterations, episodes=96, workers=12, lr=1e-4, seed=
     """PPO on the lab's own score, with optional reward shaping. No gate: every iteration saves a checkpoint.
 
     `task` is the hunter's or another task flown by the same student, such as 'campaign_hunter': its adapter flies the
-    episodes, its senses layout is the policy's (a start policy in the hunter's is migrated to it), and its levels are
-    the default. `horizon` overrides the shaping's.
+    episodes, its senses layout is the policy's (a start policy in the hunter's is migrated to it), its levels are the
+    default, its RUN_RULES (if any) hold for the run's life, and its summary() gives each iteration's log numbers.
+    `horizon` overrides the shaping's.
 
     Each iteration also saves the resume state, and a PAUSE file in `out_dir` stops the run once the iteration is
     saved. With `resume`, the run in `out_dir` carries on from its resume state as if it had never stopped; `start`
     is still the run's original start, which the policy is held near."""
     import torch
-    from experiments.score import mean_components
     from learning.tasks import task as task_named
     adapter = task_named(task).adapter()
     policy = start_policy(start, adapter.FEATURE_NAMES)   # raises InvalidPolicy: never train from nothing
-    if task != 'hunter':
-        levels = levels or adapter.default_levels()
+    levels = levels or adapter.default_levels()
     if horizon is not None:
         shaping = dict(shaping or {}, horizon=horizon)
     torch.manual_seed(seed)
@@ -198,14 +196,14 @@ def train_rl(start, out_dir, iterations, episodes=96, workers=12, lr=1e-4, seed=
             from tools import run_record
             recorded = json.loads(config_path.read_text())
             rules, history = run_record.rules(recorded), run_record.history(recorded)
-            if shaping is not None and task == 'hunter':
+            if shaping is not None and rules:
                 # The rules a run keeps for life stay as it recorded them; random mazes it may take up now.
-                takes_mazes = bool(shaping.get('random_maze')) and not rules['random_maze']
                 shaping = {**shaping, **{k: v for k, v in rules.items() if k != 'random_maze'}}
-                if takes_mazes:
-                    history['random_maze_from_iteration'] = first
-                    rules['random_maze'] = True
-                shaping['random_maze'] = rules['random_maze']
+                if 'random_maze' in rules:
+                    if shaping.get('random_maze') and not rules['random_maze']:
+                        history['random_maze_from_iteration'] = first
+                        rules['random_maze'] = True
+                    shaping['random_maze'] = rules['random_maze']
             if history.get('rules_share') and 'level_cycle_from_iteration' not in history:
                 history['level_cycle_from_iteration'] = first
             config_path.write_text(json.dumps(run_record.migrated(recorded, rules, history), indent=1))
@@ -229,33 +227,8 @@ def train_rl(start, out_dir, iterations, episodes=96, workers=12, lr=1e-4, seed=
             t1 = time.perf_counter()
             stats = improve(net, ref, optimiser, flown, policy.mean, policy.scale,
                             kl_coefficient(iteration, iterations), rng, gamma=gamma, lam=gae_lambda)
-            if task == 'hunter':
-                summary = mean_components([e['result'] for e in flown])
-                stats.update(iteration=iteration, mean_return=float(np.mean([e['rewards'].sum() for e in flown])),
-                             score=summary['score'], kills_per_min=summary['kills_per_min'],
-                             wall_quotient_per_min=summary['wall_quotient_per_min'],
-                             hits_taken_per_min=summary['hits_taken_per_min'],
-                             speed_fraction=float(np.mean([e.get('speed_fraction', 0.0) for e in flown])),
-                             deaths_per_episode=float(np.mean([1.0 if e.get('died') else 0.0 for e in flown])),
-                             powerups_per_episode=float(np.mean([e.get('powerups', 0) for e in flown])),
-                             upgraded_fraction=float(np.mean([e.get('upgraded_fraction', 0.0) for e in flown])),
-                             rollout_s=t1 - t0, update_s=time.perf_counter() - t1)
-                arena = [e for e in flown if e.get('rules_arena')]
-                stats.update(rules_episodes=len(arena),
-                             rules_beaten=float(np.mean([1.0 if e.get('rules_beaten') else 0.0 for e in arena]))
-                             if arena else 0.0)
-                blind = sum(e.get('blind_steps', 0) for e in flown)
-                stats.update(compass_follow=sum(e.get('following_steps', 0) for e in flown) / blind if blind else 0.0)
-                unseen = sum(e.get('unseen_steps', 0) for e in flown)
-                steps = sum(len(e.get('temperatures', ())) for e in flown)
-                panicked = sum(int((np.asarray(e.get('temperatures', ())) > 1.0).sum()) for e in flown)
-                stats.update(panic_fraction=panicked / steps if steps else 0.0)
-                stats.update(hits_per_episode=float(np.mean([e.get('hits', 0) for e in flown])))
-                stats.update(unaimed_shots_per_episode=float(np.mean([e.get('unaimed_shots', 0) for e in flown])))
-                stats.update(bored_fraction=sum(e.get('bored_steps', 0) for e in flown) / unseen if unseen else 0.0)
-            else:
-                stats.update(iteration=iteration, mean_return=float(np.mean([e['rewards'].sum() for e in flown])),
-                             **adapter.summary(flown), rollout_s=t1 - t0, update_s=time.perf_counter() - t1)
+            stats.update(iteration=iteration, mean_return=float(np.mean([e['rewards'].sum() for e in flown])),
+                         **adapter.summary(flown), rollout_s=t1 - t0, update_s=time.perf_counter() - t1)
             current = out_dir / f'iter{iteration:04d}.npz'
             export(net, policy, current)
             history.append(stats)
@@ -314,11 +287,6 @@ def write_state(out_dir, state, iteration):
     (Path(out_dir) / STATE_FILE).write_text(json.dumps({'state': state, 'iteration': iteration}))
 
 
-def _wall_energy():
-    import config
-    return config.SETTINGS.game.neuralWallEnergy
-
-
 def parse_levels(text):
     """'1-20' or '4,7,13' (or a mix) as a tuple of level numbers."""
     levels = []
@@ -329,57 +297,32 @@ def parse_levels(text):
 
 
 def shaping_from(args):
-    """The episode shaping a run's arguments ask for: what fly_rollout (or the task's episode) is called with."""
+    """The episode shaping a run's arguments ask for: what its task's episodes are flown with (its adapter's
+    shaping_from())."""
     from learning.tasks import task
-    key = getattr(args, 'task', 'hunter')
-    table = task(key).reward_table()
-    if key != 'hunter':          # a task flown by the same student takes its rewards and horizon alone
-        return {'horizon': args.horizon, **table.from_args(args)}
-    from weapons.catalog import RULESET, CATALOG
-    return {**table.from_args(args),           # the hunter's rewards, learning.hunter_rewards
-            'horizon': args.horizon,
-            'random_start': not args.fixed_start,
-            'health': args.health,
-            'after_clear': args.after_clear,
-            'pursue_hunter': not args.decoy_player,
-            'panic_score': args.panic_score,
-            'panic_temperature': args.panic_temperature,
-            'duel_separation': True, 'random_maze': True,
-            'combat_ruleset': RULESET,
-            'curved_walls': True,
-            'weapon_tuning': CATALOG.snapshot()}
-
-
-# The rules a hunter run keeps for its whole life, recorded when it starts (config.json 'rules'), whatever its settings
-# or the code later say, each with the value a run older than that rule flew with. Random mazes are the exception that
-# a resume may take up (train_rl notes the iteration in the run's history).
-RUN_RULES = {'combat_ruleset': 'legacy', 'curved_walls': False, 'weapon_tuning': None, 'random_maze': False}
+    return task(getattr(args, 'task', 'hunter')).adapter().shaping_from(args)
 
 
 def run_config(args):
     """What a run with these arguments trains with, derived from them (tools.run_record reads runs through this):
-    its episode block and shaping, and its arguments as a run records them."""
-    if args.task == 'campaign_hunter':
-        episode = {'horizon_seconds': args.horizon, 'episodes_per_iteration': args.episodes, 'learning_rate': args.lr,
-                   'levels': list(args.levels)}
-    else:
-        episode = {'horizon_seconds': args.horizon, 'after_clear_seconds': args.after_clear,
-                   'episodes_per_iteration': args.episodes, 'learning_rate': args.lr,
-                   'health': args.health, 'wall_energy': _wall_energy() if args.health else 0,
-                   'levels': args.levels,
-                   'panic_score': args.panic_score, 'panic_temperature': args.panic_temperature}
-    return {'episode': episode, 'shaping': shaping_from(args),
+    its episode block and shaping (its task's adapter's episode_block() and shaping_from()), and its arguments as a
+    run records them."""
+    from learning.tasks import task
+    return {'episode': task(args.task).adapter().episode_block(args), 'shaping': shaping_from(args),
             'args': {k: (list(v) if isinstance(v, tuple) else v) for k, v in vars(args).items()}}
 
 
 def run_record(args):
     """What a new run records in its config.json: its settings (its arguments, the only copy: tools.run_record derives
-    the rest from them), a hunter run's rules for life, and the fixed decision rate and turn rate."""
+    the rest from them), the rules it keeps for life (its task's RUN_RULES, if any), and the fixed decision rate and
+    turn rate."""
+    from learning.tasks import task
     derived = run_config(args)
     record = {'task': args.task, 'args': derived['args'], 'observation_version': OBSERVATION_VERSION,
               'decision_frames': 6, 'turn_rate': 1.0}
-    if args.task == 'hunter':
-        record['rules'] = {key: derived['shaping'][key] for key in RUN_RULES}
+    lifetime = getattr(task(args.task).adapter(), 'RUN_RULES', {})
+    if lifetime:
+        record['rules'] = {key: derived['shaping'][key] for key in lifetime}
     return record
 
 
@@ -399,31 +342,22 @@ def unit_interval(value):
 
 
 def build_parser():
+    """The trainer's command line: the options every run takes here, each trainer's (learning.tasks.Trainer) and each
+    task's own (learning.tasks.Task.cli), and each reward table's. An option a task's run does not name takes
+    the task's command-line default (learning.tasks.Task.cli_defaults), else the option's own."""
+    from learning.tasks import TASKS, Trainer, task
+
     class TaskParser(argparse.ArgumentParser):
         def parse_args(self, args=None, namespace=None):
             values = list(sys.argv[1:] if args is None else args)
             result = super().parse_args(values, namespace)
-            if result.task == 'flocker_team' and not any(v.split('=')[0]=='--bootstrap-episodes' for v in values):
-                result.bootstrap_episodes = 0
-            if result.task == 'inchworm':
-                from learning.tasks import task
-                explicit = {v.split('=')[0] for v in values if v.startswith('--')}
-                for dest, default in task('inchworm').fresh_defaults.items():
-                    if '--'+dest.replace('_','-') not in explicit:
-                        setattr(result,dest,default)
+            named = {v.split('=')[0] for v in values if v.startswith('--')}
+            for dest, default in task(result.task).cli_defaults.items():
+                if '--' + dest.replace('_', '-') not in named:
+                    setattr(result, dest, default)
             return result
     parser = TaskParser(description=__doc__)
-    from learning.tasks import TASKS
     parser.add_argument('--task', choices=tuple(TASKS), default='hunter', help='creature training task')
-    parser.add_argument('--opponent', type=str, default=str(DEFAULT_START), help='frozen player weights for team training')
-    parser.add_argument('--budget-seconds', type=float, default=7200, help='total team training and evaluation wall time; 0 means no time limit')
-    parser.add_argument('--bootstrap-episodes', type=int, default=8, help='scripted imitation encounters for new team runs')
-    parser.add_argument('--bootstrap-epochs', type=int, default=0,
-                        help='passes over teacher demonstrations; 0 uses the task default')
-    parser.add_argument('--seed', type=int, default=0, help='team model and training seed')
-    from learning.reward_table import tables
-    for table in tables().values():          # the tasks that declare their rewards in a reward table
-        table.add_arguments(parser)
     parser.add_argument('--start', default=str(DEFAULT_START))
     parser.add_argument('--out', default=str(DEFAULT_OUT))
     parser.add_argument('--iterations', type=int, default=100, help='training iterations; 0 means unlimited for creature teams')
@@ -434,50 +368,34 @@ def build_parser():
                         help='future reward discount, 0–1; higher values give distant rewards more weight')
     parser.add_argument('--gae-lambda', type=unit_interval, default=0.95,
                         help='GAE credit assignment, 0–1; higher values carry credit further back with more noise')
-    parser.add_argument('--fixed-start', action='store_true',
-                        help='start the hunter beside the player on every episode instead of at a random open cell')
-    parser.add_argument('--health', type=int, default=0,
-                        help='hits the hunter survives before it is destroyed and the episode ends (0: indestructible)')
     parser.add_argument('--horizon', type=float, default=DEFAULT_HORIZON,
                         help='seconds of game time per training episode')
-    parser.add_argument('--decoy-player', action='store_true',
-                        help='leave the parked player as a target for enemies (by default they chase only the hunter)')
-    parser.add_argument('--after-clear', type=float, default=0.0,
-                        help='seconds an episode keeps going after the last enemy dies (less if no crystal is left)')
-    parser.add_argument('--panic-score', type=float, default=None,
-                        help='panic once the last 5 s score below this (e.g. -10); off when not given')
-    parser.add_argument('--panic-temperature', type=float, default=3.0,
-                        help='the temperature choices are sampled at while panicking')
     parser.add_argument('--levels', type=parse_levels, default=None,
-                        help='levels to train on, e.g. 1-20 or 4,7,13 (default: the tune set)')
+                        help='levels to train on, e.g. 1-20 or 4,7,13 (default: the task\'s levels)')
     parser.add_argument('--actor-scale', type=float, default=1.,
-                        help='one-time wallcrawler output-head damping when starting a new run (0 < scale <= 1)')
+                        help='one-time output-head damping when starting a new run of a task that takes it (0 < scale <= 1)')
     parser.add_argument('--resume', action='store_true',
                         help='carry on the run in --out from its resume state')
+    for trainer in Trainer:                   # each training loop's own options
+        trainer.module().add_arguments(parser)
+    import importlib
+    for spec in TASKS.values():               # each task's own options
+        if spec.cli:
+            importlib.import_module(spec.cli).add_arguments(parser)
+    from learning.reward_table import tables
+    for table in tables().values():          # the tasks that declare their rewards in a reward table
+        table.add_arguments(parser)
     return parser
 
 
-def main(argv=None):
-    args = build_parser().parse_args(argv)
-    if not 0<args.actor_scale<=1 or (args.task in PPO_TASKS and args.actor_scale!=1):
-        raise ValueError('actor scale requires a wallcrawler run and 0 < scale <= 1')
-    if args.task not in PPO_TASKS:
-        from learning.run import train
-        raw = sys.argv[1:] if argv is None else argv
-        if not any(v.split('=')[0] == '--horizon' for v in raw):
-            from learning.tasks import task
-            args.horizon = task(args.task).fresh_defaults.get('horizon', 60.0)
-        if args.workers < 1 or args.episodes < 1 or args.horizon <= 0 or args.budget_seconds < 0 or args.iterations < 0:
-            raise ValueError('workers, episodes and horizon must be positive; budget and iterations must be nonnegative')
-        result = train(args)
-        print('paused' if result['paused'] else 'done', '| checkpoint:', result['last'])
-        return
-    if args.task == 'campaign_hunter':
-        from learning.tasks import task
-        raw = sys.argv[1:] if argv is None else argv
-        if not any(v.split('=')[0] == '--horizon' for v in raw):
-            args.horizon = task(args.task).fresh_defaults['horizon']
-        args.levels = args.levels or task(args.task).adapter().default_levels()
+def add_arguments(parser):
+    """This loop's own options: none beyond the common ones (its tasks add theirs)."""
+
+
+def train_task(args):
+    """A run of a task this loop trains (learning.tasks.Trainer.HUNTER_LOOP), from the command line."""
+    from learning.tasks import task
+    args.levels = args.levels or task(args.task).adapter().default_levels()
     if not args.resume:
         write_run_config(args)
     from experiments import run
@@ -490,6 +408,16 @@ def main(argv=None):
         print('paused | at iteration', result['history'][-1]['iteration'] if result['history'] else '-')
     else:
         print('done | last checkpoint:', result['last'])
+
+
+def main(argv=None):
+    """Train the run the command line describes, with the loop its task names (learning.tasks.Task.trainer)."""
+    from learning.tasks import task
+    args = build_parser().parse_args(argv)
+    spec = task(args.task)
+    if not 0 < args.actor_scale <= 1 or (args.actor_scale != 1 and not spec.capabilities.actor_damping):
+        raise ValueError('actor scale needs a task that takes output-head damping, and 0 < scale <= 1')
+    spec.trainer.module().train_task(args)
 
 
 if __name__ == '__main__':
