@@ -300,8 +300,8 @@ class JellyEnvironment:
     def ended(self):
         return self.finished or self.frames >= self.episode_horizon*60 or self.terminal() or self.stale()
 
-    def catch(self, rewards):
-        """Body contact with a target is a catch: the toucher takes CATCH_REWARD, each other living Jelly a share."""
+    def catch(self, events):
+        """Body contact with a target is a catch: the toucher counts one, each other living Jelly a share of one."""
         caught = 0
         for target in self.targets:
             if not target.active:
@@ -316,8 +316,7 @@ class JellyEnvironment:
             self.last_catch_frame = self.frames
             self.touched()
             for c in members:
-                earned = self.rewards['catch_reward']
-                rewards[c.agent_id] += earned if c is toucher else self.rewards['team_catch_share'] * earned
+                events[c.agent_id]['catches'] += 1. if c is toucher else self.rewards['team_catch_share']
             self.respawn(target)
         return caught
 
@@ -325,10 +324,10 @@ class JellyEnvironment:
         """What the Jellies hunt: the plain targets (stages 1-2) or the living ship (stage 3)."""
         return self.targets + ([self.ship] if self.ship is not None and self.ship.active else [])
 
-    def contacts(self, rewards):
+    def contacts(self, events):
         """Stage 3: the game's allied-hunter contact rule, one Jelly at a time so the toucher is known. A touching
         Jelly bounces off and, unless the hull's immunity from the last hit still runs, costs the ship a hit point:
-        The configured hit reward goes to the toucher, a share to teammates, and a kill reward on the last hull point."""
+        the toucher counts a hit (and a kill on the last hull point), its teammates a share of each."""
         ship = self.ship
         for c in self.team.members():
             if not ship.active:
@@ -339,11 +338,13 @@ class JellyEnvironment:
                 continue
             self.agent_ship_hits[c.agent_id] += 1
             self.touched()
-            earned = self.rewards['ship_hit_reward'] + (0. if ship.active else self.rewards['ship_kill_reward'])
             if not ship.active:
                 self.ship_killed_frame = self.frames+1
             for o in self.team.members():
-                rewards[o.agent_id] += earned if o is c else self.rewards['team_ship_share']*earned
+                credit = 1. if o is c else self.rewards['team_ship_share']
+                events[o.agent_id]['ship_hits'] += credit
+                if not ship.active:
+                    events[o.agent_id]['ship_kills'] += credit
 
     def touched(self):
         """Note the first contact with the quarry (a catch or a ship hit), counted on the frame being stepped."""
@@ -368,8 +369,9 @@ class JellyEnvironment:
                 live.append(shot)
         self.world.projectiles = live
 
-    def deaths(self, rewards):
-        """Jellies that died since the last frame: DEATH_PENALTY each at stage 3, and a share to every survivor."""
+    def deaths(self, events):
+        """Jellies that died since the last frame: at stage 3 each counts a death, and every survivor a share of one
+        for each."""
         living = {c.agent_id for c in self.team.members()}
         died = sorted(self.living - living)
         self.living = living
@@ -378,9 +380,9 @@ class JellyEnvironment:
         self.dead += died
         if self.stage == 3:
             for i in died:
-                rewards[i] -= self.rewards['death_penalty']
+                events[i]['deaths'] += 1
             for i in living:
-                rewards[i] -= self.rewards['team_death_share']*self.rewards['death_penalty']*len(died)
+                events[i]['deaths'] += self.rewards['team_death_share']*len(died)
 
     def step(self, actions):
         if self.ended():
@@ -401,22 +403,23 @@ class JellyEnvironment:
         self.action_trace.append({str(i): [float(v) for v in a] for i, a in actions.items()})
         before = {c.agent_id: self.pursuit(c) for c in members}
         contacts_before = {c.agent_id: self.agent_catches[c.agent_id] + self.agent_ship_hits[c.agent_id] for c in members}
-        rewards = {i: 0. for i in self.agent_ids}
+        # Per Jelly, the counts each reward term pays on (learning.jelly_rewards); paid together once the decision ends.
+        events = {i: jelly_rewards.TABLE.row() for i in self.agent_ids}
         frames = 0
         for _ in range(DECISION_FRAMES):
             for target in self.targets:
                 target.step(self.world.maze)
             self.enc.step(1)   # the ship, a roster creature, flies and fires here
             if self.ship is not None:
-                self.contacts(rewards)
+                self.contacts(events)
             if self.world.projectiles:
                 self.fly_shots()
             self.world.roster.update_dying(1)
             if self.obstacles:
                 self.obstacles.step(1/60, self.world.roster.alive())
                 self.world.maze.gate_segments = self.obstacles.segments()
-            self.catch(rewards)
-            self.deaths(rewards)
+            self.catch(events)
+            self.deaths(events)
             self.frames += 1
             frames += 1
             if self.render_frames is not None:
@@ -427,13 +430,13 @@ class JellyEnvironment:
             i = c.agent_id
             now, then = self.pursuit(c), before.get(i)
             if now is not None and then is not None and now[:2] == then[:2]:
-                rewards[i] += self.rewards['progress_reward']*(then[2]-now[2])
+                events[i]['closing_pixels'] += then[2]-now[2]
             trail, pushes = self.trails[i], self.pushes[i]
             trail.append(c.get_pos())
             pushes.append(accelerating.get(i, False))
             if (len(pushes) == pushes.maxlen and all(pushes)
                     and math.dist(trail[0], trail[-1]) < STUCK_DISTANCE):
-                rewards[i] -= self.rewards['stuck_penalty']
+                events[i]['stuck_decisions'] += 1
                 self.agent_stuck_frames[i] += frames
         window = self.rewards['boredom_window'] * 60
         for c in self.team.members():
@@ -446,16 +449,18 @@ class JellyEnvironment:
                 trail.popleft()
             if (self.frames - trail[0][0] >= window
                     and max(math.dist(trail[0][1], pos) for _, pos in trail) < self.rewards['boredom_distance']):
-                rewards[i] -= self.rewards['boredom_penalty'] * frames / DECISION_FRAMES
+                events[i]['bored_decisions'] += frames / DECISION_FRAMES
                 self.idle_frames[i] += frames
-        self.formation(rewards, frames)
+        self.formation(events, frames)
+        paid = jelly_rewards.TABLE.pay([events[i] for i in self.agent_ids], self.rewards)
+        rewards = {i: float(r) for i, r in zip(self.agent_ids, paid)}
         self.agent_returns.update(rewards)
         terminated = self.terminal()
         truncated = (self.frames >= self.episode_horizon*60 or self.stale()) and not terminated
         return Transition(self.snapshot(), sum(rewards.values()), terminated, truncated, self.events(),
                           agent_rewards=rewards)
 
-    def formation(self, rewards, frames):
+    def formation(self, events, frames):
         """Benchmark geometry stays fixed across runs; paid shaping uses the configured range and distance.
 
         The same fixed 200/40 px metrics feed charts and scripted promotion baselines, even in a reward experiment.
@@ -474,7 +479,7 @@ class JellyEnvironment:
                 paid_near = [pos for pos, distance in positions if distance <= self.rewards['flank_range']]
                 spread = flank_spread(paid_near, target.get_pos())
                 for c in members:
-                    rewards[c.agent_id] += self.rewards['flank_reward']*spread
+                    events[c.agent_id]['flank_spread'] += spread
         bunched = set()
         for k, a in enumerate(members):
             for b in members[k+1:]:
@@ -482,8 +487,8 @@ class JellyEnvironment:
                 if distance < BUNCH_DISTANCE:
                     bunched.update((a.agent_id, b.agent_id))
                 if shaped and distance < self.rewards['bunch_distance']:
-                    rewards[a.agent_id] -= self.rewards['bunch_penalty']
-                    rewards[b.agent_id] -= self.rewards['bunch_penalty']
+                    events[a.agent_id]['bunched_pairs'] += 1
+                    events[b.agent_id]['bunched_pairs'] += 1
         self.bunched_frames += len(bunched)*frames
 
     def events(self):

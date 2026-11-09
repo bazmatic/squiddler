@@ -459,10 +459,9 @@ def build_parser():
     parser.add_argument('--bootstrap-epochs', type=int, default=0,
                         help='passes over teacher demonstrations; 0 uses the task default')
     parser.add_argument('--seed', type=int, default=0, help='team model and training seed')
-    from learning.jelly_rewards import DEFAULTS
-    for name, default in DEFAULTS.items():
-        parser.add_argument('--jelly-' + name.replace('_', '-'), type=float, default=default,
-                            help='Jelly ' + name.replace('_', ' '))
+    from learning.reward_table import tables
+    for table in tables().values():          # the tasks that declare their rewards in a reward table
+        table.add_arguments(parser)
     from learning.flocker_rewards import DEFAULTS as FLOCKER_DEFAULTS
     for name, default in FLOCKER_DEFAULTS.items():
         parser.add_argument('--flocker-' + name.replace('_', '-'), type=float, default=default,
@@ -471,9 +470,6 @@ def build_parser():
     for name, default in INCHWORM_DEFAULTS.items():
         parser.add_argument('--inchworm-' + name.replace('_', '-'), type=float, default=default,
                             help='Inchworm ' + name.replace('_', ' '))
-    from learning.reward_table import tables
-    for table in tables().values():          # the tasks that declare their rewards in a reward table
-        table.add_arguments(parser)
     parser.add_argument('--start', default=str(DEFAULT_START))
     parser.add_argument('--out', default=str(DEFAULT_OUT))
     parser.add_argument('--iterations', type=int, default=100, help='training iterations; 0 means unlimited for creature teams')

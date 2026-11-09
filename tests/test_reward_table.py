@@ -54,10 +54,10 @@ def test_each_term_pays_its_own_points_on_its_own_event(key):
     points. Every term gets distinct points, so a weight paid on another term's event shows."""
     table = tables()[key]
     values = {t.key: float(i + 2) * (1 if i % 2 else -1) for i, t in enumerate(table.terms)}
-    for term in table.terms:
+    for term in table.paying:
         row = table.row()
         row[term.event] = 1
-        assert table.pay([row], values)[0] == values[term.key], term.key
+        assert table.pay([row], values)[0] == table.weight(term, values[term.key]), term.key
 
 
 def test_the_campaign_hunter_is_declared_in_a_table_and_its_rollout_counts_only_its_events():
@@ -109,3 +109,25 @@ def test_the_campaign_flags_and_recorded_rows_keep_their_names():
     assert 'Compass following' not in rows                       # 0: not recorded
     shaping = ppo_neural.shaping_from(args)
     assert shaping['shot'] == -0.25 and shaping['wall_crash'] == -1.0 and shaping['horizon'] == args.horizon
+
+
+def test_the_jelly_is_declared_in_a_table_with_its_manifest_fields_and_flags_unchanged():
+    from learning.jelly_rewards import TABLE as JELLY, MANIFEST_FIELDS
+    from learning.tasks import task
+    from tools import ppo_neural
+    assert task('jelly_team').reward_table() is JELLY
+    assert set(JELLY.settings) <= set(task('jelly_team').options)
+    assert MANIFEST_FIELDS['stuck_penalty'] == ('rewards', 'stuck_per_decision', -1)
+    assert MANIFEST_FIELDS['catch_reward'] == ('rewards', 'catch', 1)
+    assert MANIFEST_FIELDS['no_catch_timeout'] == ('training_limits', 'no_catch_timeout_seconds', 1)
+    args = ppo_neural.build_parser().parse_args(['--task', 'jelly_team', '--jelly-stuck-penalty', '.3',
+                                                 '--jelly-max-stage', '1'])
+    assert args.jelly_stuck_penalty == .3 and args.jelly_max_stage == 1. and args.jelly_catch_reward == 10.
+    # A Jelly's penalties are sizes: a count subtracts them.
+    row = JELLY.row()
+    row.update(stuck_decisions=1, catches=1)
+    assert JELLY.pay([row], {'stuck_penalty': .3})[0] == pytest.approx(10. - .3)
+    # Its run settings and shaping parameters are settings, but only the shaping ones are dashboard rules.
+    rules = {r.key: r for r in JELLY.reward_rules()}
+    assert 'max_stage' not in rules and rules['flank_range'].kind == 'shaping'
+    assert rules['flank'].stages == (2, 3) and rules['death'].kind == 'penalty'
