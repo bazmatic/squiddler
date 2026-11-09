@@ -5,10 +5,10 @@ from argparse import ArgumentParser
 import numpy as np
 import pytest
 
-from learning.reward_table import RewardTable, RewardTerm, tables
+from learning.reward_table import RewardKind, RewardTable, RewardTerm, tables
 
-TABLE = RewardTable((RewardTerm('kill', 10.0, 'Kill', 'points per kill', 'kills'),
-                     RewardTerm('crash', -1.0, 'Crash', 'points per crash (negative: a penalty)', 'crashes')),
+TABLE = RewardTable((RewardTerm('kill', RewardKind.REWARD, 10.0, 'Kill', 'points per kill', 'kills'),
+                     RewardTerm('crash', RewardKind.PENALTY, -1.0, 'Crash', 'points per crash', 'crashes')),
                     prefix='toy_', help_prefix='Toy: ')
 
 
@@ -23,7 +23,22 @@ def test_a_table_derives_settings_flags_labels_and_rules():
     kill, crash = TABLE.reward_rules()
     assert (kill.kind, kill.setting, kill.default) == ('reward', 'toy_kill', 10.0)
     assert (crash.kind, crash.description, crash.default) == ('penalty', 'points per crash', 1.0)
+    # A signed table's penalty says on the command line that its points are negative, from its kind alone.
+    helps = {a.dest: a.help for a in parser._actions}
+    assert helps == {'help': helps['help'], 'toy_kill': 'Toy: points per kill',
+                     'toy_crash': 'Toy: points per crash (negative: a penalty)'}
 
+
+def test_a_term_declares_its_kind_as_a_reward_kind_and_pays_on_an_event_only_if_it_pays():
+    with pytest.raises(TypeError):
+        RewardTerm('kill', 'reward', 10.0, 'Kill', 'points per kill', 'kills')
+    with pytest.raises(ValueError, match='needs the event'):
+        RewardTerm('kill', RewardKind.REWARD, 10.0, 'Kill', 'points per kill')
+    with pytest.raises(ValueError, match='pays on no event'):
+        RewardTerm('range', RewardKind.SHAPING, 200.0, 'Range', 'px', 'ranges')
+    # A penalty at 0 is still a penalty: its kind says so, not its value.
+    shot = RewardTerm('shot', RewardKind.PENALTY, 0.0, 'Shot', 'points per shot', 'shots')
+    assert shot.kind is RewardKind.PENALTY and shot.pays
 
 def test_a_table_pays_each_event_by_name_whatever_order_the_row_holds():
     rows = [{'crashes': 2, 'kills': 0}, {'kills': 1, 'crashes': 0}]
@@ -39,9 +54,11 @@ def test_a_row_that_does_not_match_the_table_is_an_error():
 
 def test_a_table_refuses_repeated_keys_or_events_and_bad_values():
     with pytest.raises(ValueError, match='event'):
-        RewardTable((RewardTerm('a', 1.0, 'A', '', 'x'), RewardTerm('b', 1.0, 'B', '', 'x')))
+        RewardTable((RewardTerm('a', RewardKind.REWARD, 1.0, 'A', '', 'x'),
+                     RewardTerm('b', RewardKind.REWARD, 1.0, 'B', '', 'x')))
     with pytest.raises(ValueError, match='key'):
-        RewardTable((RewardTerm('a', 1.0, 'A', '', 'x'), RewardTerm('a', 1.0, 'B', '', 'y')))
+        RewardTable((RewardTerm('a', RewardKind.REWARD, 1.0, 'A', '', 'x'),
+                     RewardTerm('a', RewardKind.REWARD, 1.0, 'B', '', 'y')))
     with pytest.raises(ValueError, match='finite'):
         TABLE.validate({'kill': math.inf})
     with pytest.raises(ValueError, match='unknown'):
@@ -54,10 +71,10 @@ def test_each_term_pays_its_own_points_on_its_own_event(key):
     points. Every term gets distinct points, so a weight paid on another term's event shows."""
     table = tables()[key]
     values = {t.key: float(i + 2) * (1 if i % 2 else -1) for i, t in enumerate(table.terms)}
-    for term in table.terms:
+    for term in table.paying:
         row = table.row()
         row[term.event] = 1
-        assert table.pay([row], values)[0] == values[term.key], term.key
+        assert table.pay([row], values)[0] == table.weight(term, values[term.key]), term.key
 
 
 def test_the_campaign_hunter_is_declared_in_a_table_and_its_rollout_counts_only_its_events():
@@ -109,3 +126,25 @@ def test_the_campaign_flags_and_recorded_rows_keep_their_names():
     assert 'Compass following' not in rows                       # 0: not recorded
     shaping = ppo_neural.shaping_from(args)
     assert shaping['shot'] == -0.25 and shaping['wall_crash'] == -1.0 and shaping['horizon'] == args.horizon
+
+
+def test_the_jelly_is_declared_in_a_table_with_its_manifest_fields_and_flags_unchanged():
+    from learning.jelly_rewards import TABLE as JELLY, MANIFEST_FIELDS
+    from learning.tasks import task
+    from tools import ppo_neural
+    assert task('jelly_team').reward_table() is JELLY
+    assert set(JELLY.settings) <= set(task('jelly_team').options)
+    assert MANIFEST_FIELDS['stuck_penalty'] == ('rewards', 'stuck_per_decision', -1)
+    assert MANIFEST_FIELDS['catch_reward'] == ('rewards', 'catch', 1)
+    assert MANIFEST_FIELDS['no_catch_timeout'] == ('training_limits', 'no_catch_timeout_seconds', 1)
+    args = ppo_neural.build_parser().parse_args(['--task', 'jelly_team', '--jelly-stuck-penalty', '.3',
+                                                 '--jelly-max-stage', '1'])
+    assert args.jelly_stuck_penalty == .3 and args.jelly_max_stage == 1. and args.jelly_catch_reward == 10.
+    # A Jelly's penalties are sizes: a count subtracts them.
+    row = JELLY.row()
+    row.update(stuck_decisions=1, catches=1)
+    assert JELLY.pay([row], {'stuck_penalty': .3})[0] == pytest.approx(10. - .3)
+    # Its run settings and shaping parameters are settings, but only the shaping ones are dashboard rules.
+    rules = {r.key: r for r in JELLY.reward_rules()}
+    assert 'max_stage' not in rules and rules['flank_range'].kind == 'shaping'
+    assert rules['flank'].stages == (2, 3) and rules['death'].kind == 'penalty'

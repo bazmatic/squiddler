@@ -10,32 +10,64 @@ No pygame and no numpy at import: the trainer's server reads these tables.
 """
 import math
 from dataclasses import dataclass, make_dataclass, field
+from enum import Enum
+
+
+class RewardKind(Enum):
+    """What a term is. A reward or a penalty pays on an event; a shaping parameter (a distance, a share) tunes other
+    terms, and a setting is a run setting kept beside the rewards (a lesson, a limit): neither pays."""
+    REWARD = 'reward'
+    PENALTY = 'penalty'
+    SHAPING = 'shaping'
+    SETTING = 'setting'
+
+    @property
+    def pays(self):
+        return self in (RewardKind.REWARD, RewardKind.PENALTY)
 
 
 @dataclass(frozen=True)
 class RewardTerm:
-    """key: the setting (and trainer flag, with prefix) holding the points; default: its value for a new run; title:
-    its name on the settings form and the dashboard; help: what the points are paid for; event: the name of the
-    per-decision episode count it multiplies. A negative default makes it a penalty."""
+    """key: the setting (and trainer flag, with prefix) holding the points; kind: its RewardKind, always declared;
+    default: its value for a new run; title: its name on the settings form and the dashboard; help: what the points
+    are paid for; event: the name of the per-decision episode count a reward or penalty multiplies (none for a
+    shaping parameter or a setting). stages: the curriculum stages it applies in (empty: every stage). manifest: the
+    (block, field) where the task records its value in a run's manifest, if it does. rule: its key on the dashboard,
+    when that is not its own key."""
     key: str
+    kind: RewardKind
     default: float
     title: str
     help: str
-    event: str
+    event: str | None = None
+    stages: tuple = ()
+    manifest: tuple | None = None
+    rule: str | None = None
+
+    def __post_init__(self):
+        if not isinstance(self.kind, RewardKind):
+            raise TypeError(f'reward term {self.key}: kind must be a RewardKind, not {self.kind!r}')
+        if (self.event is not None) != self.kind.pays:
+            raise ValueError(f'reward term {self.key}: a {self.kind.value} term '
+                             + ('pays on no event' if self.event is not None else 'needs the event it pays on'))
 
     @property
-    def kind(self):
-        return 'penalty' if self.default < 0 or '(negative' in self.help else 'reward'
+    def pays(self):
+        return self.kind.pays
 
 
 class RewardTable:
     """The reward terms of one task. prefix: put before each key to give its setting and flag (--<prefix><key>, with
-    dashes); help_prefix: put before each term's help on the trainer's command line."""
+    dashes); help_prefix: put before each term's help on the trainer's command line.
 
-    def __init__(self, terms, prefix='', help_prefix=''):
+    signed: a penalty's points are negative and added, as a Campaign Hunter's are (True); or they are its size and
+    subtracted, as a Jelly's are (False)."""
+
+    def __init__(self, terms, prefix='', help_prefix='', signed=True):
         self.terms = tuple(terms)
-        self.prefix, self.help_prefix = prefix, help_prefix
-        for what, names in (('key', [t.key for t in self.terms]), ('event', [t.event for t in self.terms])):
+        self.prefix, self.help_prefix, self.signed = prefix, help_prefix, signed
+        self.paying = tuple(t for t in self.terms if t.pays)
+        for what, names in (('key', [t.key for t in self.terms]), ('event', [t.event for t in self.paying])):
             repeated = sorted({n for n in names if names.count(n) > 1})
             if repeated:
                 raise ValueError(f'reward table: each term needs its own {what}; repeated: {", ".join(repeated)}')
@@ -48,8 +80,8 @@ class RewardTable:
 
     @property
     def events(self):
-        """The event names, one per term, in table order: an episode's per-decision rows count these."""
-        return tuple(t.event for t in self.terms)
+        """The event names, one per paying term, in table order: an episode's per-decision rows count these."""
+        return tuple(t.event for t in self.paying)
 
     @property
     def settings(self):
@@ -82,25 +114,40 @@ class RewardTable:
         """One float flag per term: --<prefix><key> with underscores as dashes."""
         for t in self.terms:
             parser.add_argument('--' + (self.prefix + t.key).replace('_', '-'), type=float, default=t.default,
-                                help=self.help_prefix + t.help)
+                                help=self.help_prefix + self.described(t))
+
+    def described(self, term):
+        """The term's help as the trainer's flags and a run's rewards rows give it: a signed table's penalty says
+        that its points are negative."""
+        return term.help + (' (negative: a penalty)' if self.signed and term.kind is RewardKind.PENALTY else '')
 
     def labels(self, group='Rewards'):
         """The settings form's (group, label) for each setting."""
         return {self.prefix + t.key: (group, t.title) for t in self.terms}
 
+    def weight(self, term, value):
+        """What one count of the term's event pays: its points, or less its size for an unsigned table's penalty."""
+        return -value if term.kind is RewardKind.PENALTY and not self.signed else value
+
+    def manifest_fields(self):
+        """{key: (block, field, sign)} for the terms the task records in its manifest. sign: what the setting is
+        multiplied by there (an unsigned table records a penalty as a negative reward)."""
+        return {t.key: (*t.manifest, -1 if t.kind is RewardKind.PENALTY and not self.signed else 1)
+                for t in self.terms if t.manifest}
+
     def reward_rules(self):
-        """The dashboard's reward rules. A penalty's value is its size: the page draws it with a minus sign, and its
-        help drops the "(negative: a penalty)" note."""
+        """The dashboard's reward rules (a setting is not one). A penalty's value is its size: the page draws it with a
+        minus sign."""
         from learning.dashboard import RewardRule
-        return tuple(RewardRule(t.key, t.title, t.help.split(' (negative')[0], t.kind, (), self.prefix + t.key,
-                                abs(t.default)) for t in self.terms)
+        return tuple(RewardRule(t.rule or t.key, t.title, t.help, t.kind.value, tuple(t.stages), self.prefix + t.key,
+                                abs(t.default)) for t in self.terms if t.kind is not RewardKind.SETTING)
 
     def summary(self, values):
         """The rewards rows recorded in a run's config.json: name, sign, size and unit of each term that is not 0. A
         row's name is its key in words ("own_kill": "Own kill"), as runs have always recorded it."""
         values = self.validate(values)
-        return [{'name': t.key.replace('_', ' ').capitalize(), 'sign': '+' if values[t.key] > 0 else '-',
-                 'value': round(abs(values[t.key]), 4), 'unit': t.help} for t in self.terms if values[t.key]]
+        return [{'name': t.key.replace('_', ' ').capitalize(), 'sign': '+' if self.weight(t, values[t.key]) > 0 else '-',
+                 'value': round(abs(values[t.key]), 4), 'unit': self.described(t)} for t in self.paying if values[t.key]]
 
     # --- the episode ---
     def row(self):
@@ -108,9 +155,10 @@ class RewardTable:
         return dict.fromkeys(self.events, 0)
 
     def pay(self, rows, values):
-        """Per decision, the points its event counts earn: the sum over terms of each term's points times its event's
-        count, matched by name. `rows` are dicts of event counts (as row() makes); a row missing a term's event, or
-        holding an event no term pays on, is an error, so a count and its points cannot drift apart."""
+        """Per decision (or per agent), the points its event counts earn: the sum over paying terms of each term's
+        weight times its event's count, matched by name. `rows` are dicts of event counts (as row() makes); a row
+        missing a term's event, or holding an event no term pays on, is an error, so a count and its points cannot
+        drift apart."""
         import numpy as np
         values = self.validate(values)
         events = set(self.events)
@@ -120,8 +168,8 @@ class RewardTable:
                 missing, extra = sorted(events - set(row)), sorted(set(row) - events)
                 raise ValueError(f'decision {i}: event counts do not match the reward table '
                                  f'(missing {missing}, unpaid {extra})')
-        for t in self.terms:
-            rewards += values[t.key] * np.asarray([row[t.event] for row in rows], dtype=np.float64)
+        for t in self.paying:
+            rewards += self.weight(t, values[t.key]) * np.asarray([row[t.event] for row in rows], dtype=np.float64)
         return rewards
 
 
