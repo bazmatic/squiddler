@@ -81,7 +81,8 @@ def _parse_log(path):
 
 
 def _started_from(config, root):
-    start = (config or {}).get('start')
+    from tools import run_record
+    start = run_record.start(config)
     if not start:
         return None
     path = Path(start)

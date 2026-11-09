@@ -1,8 +1,8 @@
 """Changing a paused run's settings as it resumes, for every task, in one place.
 
-A run's settings are its recorded arguments. Everything else the run records about them (a hunter run's rewards rows,
-episode block and shaping; a creature run's manifest, shaping and episode block) is recomputed from the edited
-arguments by the code that wrote it at the start, never edited in step. This module owns the whole edit: checking the
+A run's settings are its recorded arguments, their only copy (tools.run_record derives the rest from them). A creature
+run's manifest, its rules snapshot, is recomputed from the edited arguments by the code that wrote it at the start,
+never edited in step. This module owns the whole edit: checking the
 changes, refusing a setting the run's task does not take, recomputing the records, changing the learning rate in the
 saved optimiser, logging the edits in the run's config, and writing the files (after a backup, atomically, and back
 as they were if the launch fails).
@@ -15,9 +15,8 @@ import math
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import SimpleNamespace
 
-from tools import ppo_neural
+from tools import run_record
 from tools.trainer.settings import apply_changes, changed, config_of
 
 LEARNING = ('lr', 'workers', 'iterations', 'budget_seconds')     # any run may change these on resume
@@ -90,40 +89,24 @@ def _check_learning(args):
         raise EditRefused('workers must be positive; iterations and budget must be nonnegative')
 
 
-def arguments(args):
-    """A run's recorded arguments as the trainer's parser would give them: options it did not record yet (added since
-    it started) at their defaults."""
-    from learning.tasks import UNTAGGED_TASK
-    parsed = ppo_neural.build_parser().parse_args(['--task', args.get('task', UNTAGGED_TASK)])
-    return SimpleNamespace(**{**vars(parsed), **args})
-
-
 def recorded(config, before, after, path):
-    """`config` with what it records about its arguments recomputed from `after` (the edited arguments; `before`, the
-    ones it recorded). Raises ValueError for arguments the task refuses."""
-    from learning.tasks import UNTAGGED_TASK
-    key = config.get('task', UNTAGGED_TASK)
-    if key in ppo_neural.PPO_TASKS:
-        return _ppo_recorded(config, after)
-    return _scenario_recorded(config, before, after, Path(path))
-
-
-def _ppo_recorded(config, args):
-    """A hunter-loop run (tools.ppo_neural): its rewards rows, episode block and shaping, from run_config(), except the
-    shaping it keeps for life (ppo_neural.RUN_RULES), which stays as recorded (or absent, for a run older than it)."""
-    fresh = ppo_neural.run_config(arguments(args))
-    prior = config.get('shaping') or {}
-    shaping = {k: v for k, v in fresh['shaping'].items() if k not in ppo_neural.RUN_RULES}
-    shaping.update({k: prior[k] for k in ppo_neural.RUN_RULES if k in prior})
-    episode = dict(config.get('episode') or {})
-    episode.update(fresh['episode'])
-    return dict(config, rewards=fresh['rewards'], episode=episode, shaping=shaping)
+    """`config` as it records its edited arguments `after` (`before`: the ones it recorded). A hunter-loop run derives
+    everything else from its arguments (tools.run_record), so it records them alone, in the current layout; a
+    creature run's manifest is recomputed. Raises ValueError for arguments the task refuses."""
+    config = dict(config, args=after)
+    if run_record.is_ppo(config):
+        from learning.tasks import task
+        table = task(run_record.task_of(config)).reward_table()
+        if table is not None:
+            table.from_args(run_record.arguments(config))       # refuses rewards the task's table does not take
+        return run_record.migrated(config)
+    return run_record.migrated(_scenario_recorded(config, before, after, Path(path)))
 
 
 def _scenario_recorded(config, before, after, path):
-    """A creature run (learning.run): its manifest, as learning.run.expected_manifest() works it out on resume, and the
-    shaping and episode block it writes beside it. An edit that leaves the manifest alone leaves the run's records
-    alone; one that changes it is refused if the run's rules have changed since it started (it could not resume)."""
+    """A creature run (learning.run): its manifest, as learning.run.expected_manifest() works it out on resume. An edit
+    that leaves the manifest alone leaves it alone; one that changes it is refused if the run's rules have changed
+    since it started (it could not resume)."""
     from learning.run import expected_manifest
     old, new = expected_manifest(_scenario_args(before, path)), expected_manifest(_scenario_args(after, path))
     if old == new:
@@ -131,14 +114,13 @@ def _scenario_recorded(config, before, after, path):
     if config.get('manifest') != old:
         raise EditRefused('the rules this run trains with have changed since it started, so it cannot resume with '
                           'edited settings')
-    episode = dict(config.get('episode') or {}, horizon_seconds=after['horizon'])
-    return dict(config, manifest=new, shaping=new['rewards'], episode=episode)
+    return dict(config, manifest=new)
 
 
 def _scenario_args(args, path):
     """The arguments learning.run resumes with: a run that flies against an opponent uses its own copy of it."""
     from learning.tasks import task
-    namespace = arguments(args)
+    namespace = run_record.arguments({'args': args})
     if getattr(task(namespace.task).adapter(), 'USES_OPPONENT', True):
         namespace.opponent = str((path / 'opponent.npz').resolve())
     return namespace

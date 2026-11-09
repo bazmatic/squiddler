@@ -101,7 +101,7 @@ def _numeric(value):
 
 def recorded(config):
     manifest = config.get('manifest') or {}
-    rewards = manifest.get('rewards') or config.get('shaping') or {}
+    rewards = manifest.get('rewards') or {}
     battle = manifest.get('battle_rewards') or {}
     found = {}
     for key, _, _, where, _ in _RULES:
@@ -124,12 +124,12 @@ def _percent(share):
 
 def cards(config):
     """The old page's Wallcrawler Episodes card, and the reward facts its rows spelled out from the manifest."""
-    m, e = config.get('manifest') or {}, config.get('episode') or {}
-    rewards = m.get('rewards') or config.get('shaping') or {}
+    m, args = config.get('manifest') or {}, config.get('args') or {}
+    rewards = m.get('rewards') or {}
     individual = m.get('reward_scope') == 'individual'
     targets, teacher = m.get('practice_targets') or {}, m.get('jump_teacher')
     curriculum, pursuers, proximity = m.get('curriculum'), m.get('pursuers'), m.get('jump_proximity')
-    horizon, episodes = number(m.get('horizon', e.get('horizon_seconds'))), number((config.get('args') or {}).get('episodes'))
+    horizon, episodes = number(m.get('horizon', args.get('horizon'))), number(args.get('episodes'))
     ending = ' or every target is hit' if targets.get('dies_on_hit') else ''
     note = [f'Up to {horizon} seconds or until all crawlers die{ending}. {episodes} episodes per iteration.']
     if teacher:

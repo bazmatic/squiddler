@@ -2,11 +2,10 @@
 
 Each paying term pays on one event that experiments.rollout counts per decision. A hunter's penalties are sizes,
 subtracted from its reward. The kill reward and the idle cost are fixed, not run settings; the wall and enemy-hit
-settings scale the lab score's own weights. A run records the terms as its rewards summary rows, in this order and
-under these names, and its arguments under these keys.
+settings scale the lab score's own weights. A run records its settings as its arguments, under these keys.
 """
 from experiments.score import Weights
-from learning.reward_table import RewardKind, RewardTable, RewardTerm, RowNames
+from learning.reward_table import RewardKind, RewardTable, RewardTerm
 
 REWARD, PENALTY, SHAPING = RewardKind.REWARD, RewardKind.PENALTY, RewardKind.SHAPING
 
@@ -50,15 +49,14 @@ TABLE = RewardTable((
                rule='hit'),
     RewardTerm('turning_penalty', PENALTY, 0., 'Turning', 'points per second spent turning', 'turning_seconds',
                rule='turning'),
-    # Runs before the rename recorded the unaimed shot price as "Shot with no enemy in sight".
     RewardTerm('shot_price', PENALTY, 0., 'Unaimed shot', 'points each, unless within 20° of an enemy in sight',
-               'unaimed_shots', rule='unaimed_shot', recorded_as=('Shot with no enemy in sight',)),
+               'unaimed_shots', rule='unaimed_shot'),
     RewardTerm('boredom_penalty', PENALTY, 0., 'Boredom',
                'points per second with no enemy in sight in a cell visited within the boredom window', 'bored_seconds',
                rule='boredom'),
     RewardTerm('boredom_window', SHAPING, 10., 'Boredom window (s)',
                'seconds before a visited maze cell counts as new again'),
-), help_prefix='Hunter: ', signed=False, rule_defaults=False, row_names=RowNames.TITLE)
+), help_prefix='Hunter: ', signed=False, rule_defaults=False)
 
 DEFAULTS = TABLE.defaults
 SETTINGS = TABLE.settings

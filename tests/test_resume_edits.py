@@ -40,10 +40,8 @@ def recorded_for(namespace, path):
     """What the trainer records for a run with these arguments, by the code that records it."""
     from learning.run import expected_manifest
     if namespace.task in ppo.PPO_TASKS:
-        return ppo.run_config(namespace)
-    manifest = expected_manifest(_scenario_args(namespace, path))
-    return dict(task=namespace.task, args=vars(namespace), manifest=manifest, shaping=manifest['rewards'],
-                episode={'horizon_seconds': namespace.horizon}, start=namespace.start)
+        return ppo.run_record(namespace)
+    return dict(task=namespace.task, args=vars(namespace), manifest=expected_manifest(_scenario_args(namespace, path)))
 
 
 def paused_run(root, task):
@@ -79,17 +77,17 @@ def test_a_paused_run_resumes_with_a_changed_setting_and_records_what_it_launche
     assert getattr(args, setting) == value and args.resume
     updated = json.loads((path / 'config.json').read_text())
     assert updated['args'][setting] == value
-    # What the run records about its settings is what the launched trainer works out from its command line.
+    # The run's settings are its arguments, their only copy; what it trains with, derived from them, is what the
+    # launched trainer works out from its command line.
+    from tools import run_record
     args.levels = list(args.levels) if args.levels else args.levels
     expected = recorded_for(args, path)
+    assert not {'shaping', 'rewards', 'episode', 'start'} & set(updated)
     if task in ppo.PPO_TASKS:
-        assert updated['rewards'] == expected['rewards']
-        assert {k: v for k, v in updated['episode'].items()} == expected['episode']
-        assert ({k: v for k, v in updated['shaping'].items() if k != 'weapon_tuning'}
-                == {k: v for k, v in expected['shaping'].items() if k != 'weapon_tuning'})
+        assert run_record.shaping(updated) == run_record.shaping(dict(expected, rules=updated.get('rules')))
+        assert run_record.episode(updated) == run_record.episode(expected)
     else:
         assert updated['manifest'] == expected['manifest']
-        assert updated['shaping'] == expected['shaping'] and updated['episode'] == expected['episode']
     assert updated['resume_settings_changes'][-1]['changes'][0]['setting'] == setting
     assert (path / 'resume.pt').read_text() == 'unchanged optimizer'
 
@@ -141,13 +139,29 @@ def test_a_run_whose_rules_changed_since_it_started_cannot_take_edited_rewards(t
 
 def test_a_hunter_run_keeps_the_rules_it_has_for_life_when_its_rewards_change(tmp_path):
     path = paused_run(tmp_path, 'hunter')
+    from tools import run_record
     config = json.loads((path / 'config.json').read_text())
-    config['shaping'].update(combat_ruleset='legacy', weapon_tuning=None, curved_walls=False)
+    config['rules'].update(combat_ruleset='legacy', weapon_tuning=None, curved_walls=False)
     (path / 'config.json').write_text(json.dumps(config))
     resume('run1', root=tmp_path, processes=[], launch=FakeLaunch(), changes={'compass_reward': 30.0})
-    shaping = json.loads((path / 'config.json').read_text())['shaping']
+    shaping = run_record.shaping(json.loads((path / 'config.json').read_text()))
     assert shaping['compass_reward'] == 30.0
     assert (shaping['combat_ruleset'], shaping['weapon_tuning'], shaping['curved_walls']) == ('legacy', None, False)
+
+
+def test_a_run_recorded_before_the_single_copy_records_only_its_settings_once_edited(tmp_path):
+    """Its shaping, rewards and episode blocks go; the rules and history they held are kept apart from them."""
+    from tools import run_record
+    path = paused_run(tmp_path, 'hunter')
+    config = json.loads((path / 'config.json').read_text())
+    rules = config.pop('rules')
+    config.update(shaping=dict(ppo.shaping_from(run_record.arguments(config)), **rules), rewards=[{'name': 'Kills'}],
+                  episode={'episodes_per_iteration': 96, 'random_maze_from_iteration': 1}, start=config['args']['start'])
+    (path / 'config.json').write_text(json.dumps(config))
+    resume('run1', root=tmp_path, processes=[], launch=FakeLaunch(), changes={'compass_reward': 30.0})
+    updated = json.loads((path / 'config.json').read_text())
+    assert not {'shaping', 'rewards', 'episode', 'start'} & set(updated)
+    assert updated['rules'] == rules and updated['history'] == {'random_maze_from_iteration': 1}
 
 
 def test_the_dashboard_resume_form_can_edit_a_creature_runs_reward(tmp_path):

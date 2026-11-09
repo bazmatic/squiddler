@@ -62,5 +62,5 @@ def test_old_jelly_run_does_not_borrow_a_newer_runs_imitation_experiment(tmp_pat
     for path, args in ((old, {}), (new, {'bootstrap_epochs': 20})):
         path.mkdir()
         (path / 'config.json').write_text(json.dumps(dict(task='jelly_team', args=args)))
-    assert read_settings(old, [old, new])['bootstrap_epochs'].value == 0
-    assert read_settings(new, [old, new])['bootstrap_epochs'].value == 20
+    assert read_settings(old)['bootstrap_epochs'].value == 0          # it predates the option: its default
+    assert read_settings(new)['bootstrap_epochs'].value == 20

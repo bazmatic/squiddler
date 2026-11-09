@@ -36,7 +36,7 @@ def _replay_mode(path):
 
 
 def replayable(path):
-    """Whether the run recorded enough to fly its episodes again (runs from before replays did not)."""
+    """Whether the run recorded enough to fly its episodes again: its settings (runs from before run51 did not)."""
     from tools.trainer.settings import config_of
     config = config_of(Path(path)) or {}
     try:
@@ -44,7 +44,8 @@ def replayable(path):
             return False
     except ValueError:            # an unknown task: the episodes request names it
         pass
-    return 'shaping' in config and 'episode' in config
+    from tools import run_record
+    return run_record.has_settings(config)
 
 
 def _jobs(path, iteration):

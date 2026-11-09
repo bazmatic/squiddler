@@ -77,8 +77,7 @@ def _recorded_args(rules):
 def declaration(task_key: str) -> SimpleNamespace:
     """The task's declared METRICS, LAYOUT, HIDDEN, REWARD_RULES, cards(config) (structured cards: title, rows of
     label/value/description, note), recorded(config) (the rule values a run's config.json records, by rule key) and
-    stage(row) (the curriculum stage a train.log row reports, or None), and recovered_settings(config)
-    (legacy run settings recovered from task-owned manifest data); empty ones for a task with no module."""
+    stage(row) (the curriculum stage a train.log row reports, or None); empty ones for a task with no module."""
     spec = task(task_key)
     module = importlib.import_module(spec.dashboard) if spec.dashboard else None
     rules = tuple(getattr(module, 'REWARD_RULES', ()))
@@ -89,8 +88,7 @@ def declaration(task_key: str) -> SimpleNamespace:
         REWARD_RULES=rules,
         cards=getattr(module, 'cards', lambda config: []),
         recorded=getattr(module, 'recorded', _recorded_args(rules)),
-        stage=getattr(module, 'stage', lambda row: None),
-        recovered_settings=getattr(module, 'recovered_settings', lambda config: {}))
+        stage=getattr(module, 'stage', lambda row: None))
 
 
 def resolve(task_key: str) -> dict:
@@ -128,9 +126,8 @@ def rewards(task_key: str, config: dict, row: dict) -> dict:
         cards = declared.cards(config)
     except (AttributeError, KeyError, TypeError, ValueError):
         cards = []
-    episode, args = config.get('episode'), config.get('args')
-    episodes = ((episode.get('episodes_per_iteration') if isinstance(episode, dict) else None)
-                or (args.get('episodes') if isinstance(args, dict) else None))
+    args = config.get('args')
+    episodes = args.get('episodes') if isinstance(args, dict) else None
     return dict(stage=stage, rules=rules, cards=cards, episodes=episodes)
 
 

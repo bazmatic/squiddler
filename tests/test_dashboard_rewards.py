@@ -141,14 +141,11 @@ def test_every_wallcrawler_reward_and_penalty_row_is_still_shown(server):
     assert '+1' in item(shown(rewards(server, 'run130'))[1], 'Successful landing')
 
 
-def test_a_hunter_run_shows_its_recorded_rewards_and_episode_card(server):
-    from tools import ppo_neural
+def test_a_hunter_run_shows_the_rewards_its_settings_train_with_and_its_episode_card(server):
     run = make_run(server.root, 'run83', 2)              # an untagged (Hunter) run as the trainer records it
     config = json.loads((run / 'config.json').read_text())
-    config['args'].update(powerup_reward=-3.0, death_penalty=-5.0)
-    config['rewards'] = ppo_neural.reward_summary(Namespace(**config['args']))
-    config['episode'] = dict(horizon_seconds=60.0, after_clear_seconds=30.0, episodes_per_iteration=96, health=10,
-                             wall_energy=4.0, levels=[3, 5, 6, 7, 25])
+    config['args'].update(powerup_reward=-3.0, death_penalty=-5.0, horizon=60.0, after_clear=30.0, episodes=96,
+                          health=10, levels=[3, 5, 6, 7, 25])
     (run / 'config.json').write_text(json.dumps(config))
     payload = rewards(server, 'run83')
     text, items = shown(payload)
@@ -160,11 +157,12 @@ def test_a_hunter_run_shows_its_recorded_rewards_and_episode_card(server):
     assert 'The hunter survives 10 energy' in text and 'Levels: 3,5-7,25.' in text
     assert '−3' in item(items, 'Powerup collected') and '+5' in item(items, 'Death')
     assert payload['episodes'] == 96
-    # Legacy reward summaries remain sufficient even when the original arguments are unavailable.
+    # A run that records no settings shows none: rewards rows and episode blocks it kept are not read.
     config.pop('args')
+    config['rewards'] = [{'name': 'Powerup collected', 'sign': '+', 'value': 15.0}]
     (run / 'config.json').write_text(json.dumps(config))
     _, legacy_items = shown(rewards(server, 'run83'))
-    assert '−3' in item(legacy_items, 'Powerup collected') and '+5' in item(legacy_items, 'Death')
+    assert 'not recorded' in item(legacy_items, 'Powerup collected')
 
 
 def test_new_jelly_runs_panel_displays_the_reward_values_the_environment_uses(server):

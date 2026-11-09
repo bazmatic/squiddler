@@ -13,7 +13,7 @@ from learning.tasks import UNTAGGED_TASK
 from tools.trainer import control, replay, runs
 from tools.trainer.control import TrainerError
 from tools.trainer.processes import REPO, list_processes
-from tools.trainer.settings import config_of, read_settings, scoped_settings
+from tools.trainer.settings import NoSettings, config_of, read_settings, scoped_settings
 
 PAGE = Path(__file__).with_name('page.html')
 STATIC = Path(__file__).with_name('static').resolve()
@@ -83,7 +83,10 @@ def make_handler(root, processes, launch, allowed_hosts=()):
                     config, rows = config_of(run_dir) or {}, runs.log_rows(run_dir)
                     return self.send(200, dashboard.rewards(config.get('task', UNTAGGED_TASK), config,
                                                             rows[-1] if rows else {}))
-                values = read_settings(run_dir, runs.run_folders(root))
+                try:
+                    values = read_settings(run_dir)
+                except NoSettings as exc:
+                    return self.send(409, {'error': str(exc)})
                 return self.send(200, {dest: asdict(v) for dest, v in values.items()})
             self.send(404, {'error': 'not found'})
 

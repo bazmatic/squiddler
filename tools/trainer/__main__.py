@@ -7,19 +7,21 @@ import sys
 
 from tools.trainer import control, runs
 from tools.trainer.control import TrainerError
-from tools.trainer.settings import changed, format_levels, read_settings
+from tools.trainer.settings import NoSettings, changed, format_levels, read_settings
 
 
 def run_changes(run, all_runs):
-    """The settings `run` changed from the run it carried on from (what it recorded or recovered, not guesses)."""
+    """The settings `run` changed from the run it carried on from (those it recorded)."""
     if not run.started_from or '/' not in run.started_from:
         return []
     source = run.path.parent / run.started_from.split('/')[0]
     if source not in all_runs:
         return []
-    mine = read_settings(run.path, all_runs)
-    known = {dest: value for dest, value in mine.items() if value.source != 'guessed'}
-    return changed(read_settings(source, all_runs), known)
+    try:
+        mine, theirs = read_settings(run.path), read_settings(source)
+    except NoSettings:
+        return []
+    return changed(theirs, {dest: value for dest, value in mine.items() if value.source == 'recorded'})
 
 
 def _parser():

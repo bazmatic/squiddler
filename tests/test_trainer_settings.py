@@ -3,7 +3,7 @@ import json
 import pytest
 
 from tools import ppo_neural as ppo
-from tools.trainer.settings import SETTINGS, Value, apply_changes, changed, read_settings, to_argv
+from tools.trainer.settings import SETTINGS, NoSettings, Value, apply_changes, changed, read_settings, to_argv
 
 
 def args_for(argv):
@@ -27,70 +27,17 @@ def new_run(root, name='run52', argv=NEW_ARGV):
     return make_run(root, name, {'rewards': [], 'args': args_for(argv)})
 
 
-SHAPING_51 = {'wall_scale': 1.0, 'hit_scale': 1.0, 'still_penalty': 0.0, 'horizon': 60.0, 'random_start': True,
-              'still_speed': 0.15, 'turn_change_penalty': 0.0, 'reversal_penalty': 0.5, 'health': 10,
-              'death_penalty': 200.0, 'speed_penalty': 3.0, 'powerup_reward': 15.0, 'after_clear': 60.0,
-              'upgrade_bonus': 1.0, 'pursue_hunter': True, 'rules_bounty': 50.0, 'compass_reward': 100.0,
-              'boredom_penalty': 20.0, 'boredom_window': 10.0, 'shot_price': 1.0, 'turning_penalty': 1.0,
-              'hit_reward': 3.0, 'panic_score': -50.0, 'panic_temperature': 3.0}
-EPISODE = {'horizon_seconds': 60.0, 'after_clear_seconds': 60.0, 'episodes_per_iteration': 96,
-           'learning_rate': 0.0001, 'health': 10, 'wall_energy': 4.0, 'rules_share': 0.05, 'levels': [1, 2, 3]}
-
-
 def test_a_run_with_args_is_read_exactly(tmp_path):
     run = new_run(tmp_path)
-    s = read_settings(run, [run])
+    s = read_settings(run)
     assert all(v.source == 'recorded' for v in s.values())
     assert s['speed_penalty'] == Value(3.0, 'recorded') and s['levels'].value == list(range(1, 31))
     assert s['iterations'] == Value(1000, 'recorded') and s['panic_score'].value == -50.0
 
 
-def test_run51_style_shaping_is_recorded_and_episode_fills_the_rest(tmp_path):
-    run = make_run(tmp_path, 'run51', {'rewards': [], 'episode': EPISODE, 'shaping': SHAPING_51})
-    s = read_settings(run, [run])
-    assert s['speed_penalty'] == Value(3.0, 'recorded') and s['fixed_start'] == Value(False, 'recorded')
-    assert s['decoy_player'] == Value(False, 'recorded')
-    assert s['episodes'] == Value(96, 'recovered') and s['lr'] == Value(0.0001, 'recovered')
-    assert s['levels'] == Value([1, 2, 3], 'recovered')
-
-
-def test_an_old_run_recovers_rewards_and_guesses_the_rest_from_the_newest(tmp_path):
-    rewards = [{'name': 'Kills', 'sign': '+', 'value': 100.0, 'unit': ''},
-               {'name': 'Powerup collected', 'sign': '+', 'value': 15.0, 'unit': ''},
-               {'name': 'Wall impact', 'sign': '-', 'value': 10.0, 'unit': ''}]
-    old = make_run(tmp_path, 'run40', {'rewards': rewards, 'episode': EPISODE})
-    newest = new_run(tmp_path)
-    s = read_settings(old, [old, newest])
-    assert s['powerup_reward'] == Value(15.0, 'recovered')
-    assert s['compass_reward'] == Value(0.0, 'recovered')          # no row: it was 0
-    from experiments.score import Weights
-    assert s['wall_scale'].source == 'recovered' and s['wall_scale'].value == pytest.approx(10.0 / Weights().quotient)
-    assert s['boredom_window'] == Value(12.0, 'guessed')
-    assert s['iterations'] == Value(1000, 'guessed')
-
-
-def test_a_run_with_no_config_takes_everything_from_the_newest(tmp_path):
-    old = make_run(tmp_path, 'run3', None)
-    newest = new_run(tmp_path)
-    s = read_settings(old, [old, newest])
-    assert all(v.source == 'guessed' for k, v in s.items() if k not in ('gamma', 'gae_lambda'))
-    assert s['compass_reward'].value == 100.0
-
-
-def test_a_guess_can_come_from_what_a_newer_run_recovered(tmp_path):
-    old = make_run(tmp_path, 'run3', None)
-    newer = make_run(tmp_path, 'run40', {'rewards': [], 'episode': EPISODE})
-    assert read_settings(old, [old, newer])['levels'] == Value([1, 2, 3], 'guessed')
-
-
-def test_the_iteration_total_falls_back_to_1000_when_no_run_recorded_it(tmp_path):
-    old = make_run(tmp_path, 'run40', {'rewards': [], 'episode': EPISODE})
-    assert read_settings(old, [old])['iterations'] == Value(1000, 'guessed')
-
-
 def test_changes_accept_dest_or_flag_names_and_report_what_changed(tmp_path):
     run = new_run(tmp_path)
-    base = read_settings(run, [run])
+    base = read_settings(run)
     new = apply_changes(base, {'speed-penalty': '2', '--levels': '1-5'})
     assert changed(base, new) == [('levels', list(range(1, 31)), [1, 2, 3, 4, 5]), ('speed_penalty', 3.0, 2.0)]
     assert new['speed_penalty'] == Value(2.0, 'recorded')
@@ -102,19 +49,12 @@ def test_changes_accept_dest_or_flag_names_and_report_what_changed(tmp_path):
 def test_bad_names_and_values_are_refused(tmp_path, bad):
     run = new_run(tmp_path)
     with pytest.raises(ValueError):
-        apply_changes(read_settings(run, [run]), bad)
-
-
-def test_guessed_values_are_not_counted_as_changes(tmp_path):
-    old = make_run(tmp_path, 'run3', None)
-    newest = new_run(tmp_path)
-    base = read_settings(old, [old, newest])
-    assert changed(base, apply_changes(base, {})) == []
+        apply_changes(read_settings(run), bad)
 
 
 def test_the_command_line_round_trips_through_the_trainer_parser(tmp_path):
     run = new_run(tmp_path)
-    values = apply_changes(read_settings(run, [run]), {'fixed_start': True, 'panic_score': 'none'})
+    values = apply_changes(read_settings(run), {'fixed_start': True, 'panic_score': 'none'})
     parsed = vars(ppo.build_parser().parse_args(to_argv(values)))
     for dest, v in values.items():
         expected = tuple(v.value) if dest == 'levels' and v.value else v.value
@@ -130,7 +70,7 @@ def test_old_rules_share_is_not_a_setting_or_a_new_training_argument(tmp_path):
     args = args_for(['--levels', '25'])
     args['rules_share'] = 0.05
     run = make_run(tmp_path, 'run68', {'args': args})
-    values = read_settings(run, [run])
+    values = read_settings(run)
     assert 'rules_share' not in values
     assert '--rules-share' not in to_argv(values)
     assert values['levels'].value == [25]
@@ -141,42 +81,31 @@ def test_old_rules_share_is_not_a_setting_or_a_new_training_argument(tmp_path):
 def test_credit_settings_reject_values_outside_zero_to_one(tmp_path, name, value):
     run = new_run(tmp_path)
     with pytest.raises(ValueError, match='between 0 and 1'):
-        apply_changes(read_settings(run, [run]), {name: value})
+        apply_changes(read_settings(run), {name: value})
 
 
-def test_credit_settings_round_trip_and_old_runs_keep_their_actual_defaults(tmp_path):
-    old = make_run(tmp_path, 'run51', {'args': {'levels': [25]}})
-    newer = new_run(tmp_path, argv=NEW_ARGV + ['--gamma', '0.995', '--gae-lambda', '0.98'])
-    values = read_settings(old, [old, newer])
-    assert values['gamma'] == Value(0.99, 'recovered')
-    assert values['gae_lambda'] == Value(0.95, 'recovered')
-    changed_values = apply_changes(values, {'gamma': '0.995', 'gae_lambda': '0.98'})
-    args = args_for(to_argv(changed_values))
-    assert args['gamma'] == 0.995 and args['gae_lambda'] == 0.98
+def test_an_option_a_run_predates_reads_as_the_trainers_default(tmp_path):
+    args = args_for(NEW_ARGV)
+    del args['gamma'], args['jelly_catch_reward']
+    run = make_run(tmp_path, 'run60', {'args': args})
+    s = read_settings(run)
+    assert s['gamma'] == Value(0.99, 'default') and s['jelly_catch_reward'].source == 'default'
+    assert s['speed_penalty'] == Value(3.0, 'recorded')
+    assert changed(s, apply_changes(s, {})) == []
 
 
-def test_continuing_an_old_jelly_run_keeps_its_rewards_instead_of_borrowing_a_newer_experiment(tmp_path):
-    from learning.adapters import jelly_scenario
-    from tools.trainer.settings import scoped_settings
-    from tools.trainer.control import start
+@pytest.mark.parametrize('config', [None, {'rewards': [], 'episode': {'episodes_per_iteration': 96}},
+                                    {'shaping': {'speed_penalty': 3.0}}])
+def test_a_run_that_records_no_arguments_has_no_settings(tmp_path, config):
+    run = make_run(tmp_path, 'run40', config)
+    with pytest.raises(NoSettings, match='records no settings'):
+        read_settings(run)
+
+
+def test_a_run_that_records_no_arguments_is_not_a_settings_source(tmp_path):
     from tests.test_trainer_control import make_run as checkpoint_run
-    from types import SimpleNamespace
+    from tools.trainer.control import TrainerError, start
     old = checkpoint_run(tmp_path, 'run1', 1)
-    config = json.loads((old / 'config.json').read_text())
-    config['task'] = 'jelly_team'
-    config['args'] = {k: v for k, v in config['args'].items() if not k.startswith('jelly_')}
-    # Old runs recorded actual reward rules in the manifest, before CLI arguments existed.
-    config['manifest'] = jelly_scenario.metadata(SimpleNamespace(horizon=60))
-    (old / 'config.json').write_text(json.dumps(config))
-    newer = make_run(tmp_path, 'run2', dict(task='jelly_team', args=dict(jelly_catch_reward=99., jelly_flank_range=450.)))
-    values = read_settings(old, [old, newer])
-    assert values['jelly_catch_reward'] == Value(10., 'recovered')
-    assert values['jelly_flank_range'] == Value(200., 'recovered')
-    started = start(from_='run1', root=tmp_path, processes=[], launch=lambda *a: None,
-                    changes={'jelly_catch_reward': 12., 'jelly_flank_range': 250.})
-    args = ppo.build_parser().parse_args(started.command[3:])
-    assert (args.jelly_catch_reward, args.jelly_flank_range) == (12., 250.)
-    offered = {s.dest: s for s in scoped_settings()}
-    for dest in ('jelly_catch_reward', 'jelly_flank_range', 'jelly_death_penalty'):
-        assert offered[dest].tasks == ('jelly_team',) and offered[dest].group == 'Rewards'
-    assert 'jelly_team' not in offered['death_penalty'].tasks
+    (old / 'config.json').write_text(json.dumps({'rewards': [], 'shaping': {'speed_penalty': 3.0}}))
+    with pytest.raises(TrainerError, match='records no settings'):
+        start(from_='run1', root=tmp_path, processes=[], launch=lambda *a: None)

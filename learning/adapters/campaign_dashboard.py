@@ -43,9 +43,10 @@ def recorded(config):
 
 
 def cards(config):
-    e = config.get('episode') or {}
-    if not e:
+    from tools import run_record
+    if not run_record.has_settings(config):
         return []
+    e = run_record.episode(config)
     text = (f"Whole Demo levels of up to {number(e.get('horizon_seconds'))} s, ending at the exit or when the score runs "
             f"out. {number(e.get('episodes_per_iteration'))} episodes per iteration.")
     if e.get('levels'):

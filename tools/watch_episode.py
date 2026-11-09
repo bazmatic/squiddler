@@ -5,11 +5,10 @@
 
 Episodes are not recorded but they are reproducible: each is fixed by its level, its seed, and the checkpoint and dice
 seed it flew with, which the run's config.json and checkpoints give back. RUN is a run directory written by
-tools.ppo_neural (it needs the 'shaping' its config.json has kept since panic was added). A Campaign Hunter run's
+tools.ppo_neural that records its settings (tools.run_record). A Campaign Hunter run's
 episodes replay the same way; listing them shows how each ended rather than panic.
 """
 import argparse
-import json
 import random
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -21,41 +20,40 @@ CAMPAIGN = 'campaign_hunter'
 
 
 def episode_jobs(run, iteration):
-    """The iteration's jobs, (level, seed, spec) each, exactly as training made them, and the run's shaping. A
-    Campaign Hunter job also names its task, (level, seed, spec, 'campaign_hunter'), as training's do.
+    """The iteration's jobs, (level, seed, spec) each, exactly as training made them, and the shaping they flew with.
+    A Campaign Hunter job also names its task, (level, seed, spec, 'campaign_hunter'), as training's do.
+
+    The run's settings are its recorded arguments (tools.run_record derives the rest from them): a resume that changed
+    the episode count or levels changes how the iterations before it list (and fly) too.
 
     Iteration 0 flew the run's start, which a campaign run first migrated to its senses (into iter_start.npz, which
     training deletes when the run ends): its jobs name the start, and flying one migrates it again."""
+    from tools import run_record
     from tools.ppo_neural import make_jobs
-    config = json.loads((Path(run) / 'config.json').read_text())
-    if 'shaping' not in config:
-        raise SystemExit(f'{run}/config.json has no shaping: the run predates replays')
-    episode = config['episode']
-    weights = Path(run) / f'iter{iteration - 1:04d}.npz' if iteration else Path(config['start'])
-    levels = tuple(episode['levels']) if episode.get('levels') else None
-    task = config.get('task', 'hunter')
-    jobs = make_jobs(iteration, episode['episodes_per_iteration'], weights, config.get('decision_frames', 6),
+    config = run_record.load(run)
+    if not run_record.has_settings(config):
+        raise SystemExit(f'{run}/config.json records no settings: the run predates replays')
+    args, history = run_record.arguments(config), run_record.history(config)
+    weights = Path(run) / f'iter{iteration - 1:04d}.npz' if iteration else Path(run_record.start(config))
+    levels = tuple(args.levels) if args.levels else None
+    task = run_record.task_of(config)
+    jobs = make_jobs(iteration, args.episodes, weights, config.get('decision_frames', 6),
                      config.get('turn_rate', 1.0), levels, task)
     if task == CAMPAIGN:
-        # A resume that changed the episode count or levels rewrites config.episode: the iterations before it then
-        # list (and fly) as the new settings would have made them.
-        return jobs, dict(config['shaping'])
+        return jobs, run_record.shaping(config)
     # Historical runs recorded a separate Rules-level share. Reproduce those jobs exactly;
     # new training uses only the selected level cycle and never writes this field.
-    share = episode.get('rules_share', 0.0)
-    if share > 0.0 and iteration < episode.get('level_cycle_from_iteration', float('inf')):
+    share = history.get('rules_share', 0.0)
+    if share > 0.0 and iteration < history.get('level_cycle_from_iteration', float('inf')):
         from experiments.run import TUNE_LEVELS
         others = tuple(level for level in (levels or TUNE_LEVELS) if level != 25)
         if others:
-            count = episode['episodes_per_iteration']
+            count = args.episodes
             jobs = [(25 if int((iteration * count + i + 1) * share + 1e-9)
                      > int((iteration * count + i) * share + 1e-9)
                      else others[(iteration * count + i) % len(others)], seed, spec)
                     for i, (_, seed, spec) in enumerate(jobs)]
-    shaping = dict(config['shaping'])
-    if iteration < episode.get('random_maze_from_iteration', 0):
-        shaping['random_maze'] = False
-    return jobs, shaping
+    return jobs, run_record.shaping(config, iteration)
 
 
 def _fly_campaign(job, shaping, **watching):
