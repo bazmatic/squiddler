@@ -5,7 +5,6 @@ import importlib
 from learning.inchworm_rewards import SETTINGS as INCHWORM_REWARD_SETTINGS
 from learning.flocker_rewards import SETTINGS as FLOCKER_REWARD_SETTINGS
 from learning.jelly_rewards import SETTINGS as JELLY_REWARD_SETTINGS
-from learning.campaign_rewards import SETTINGS as CAMPAIGN_REWARD_SETTINGS
 
 
 REPLAY_MODES = ('hooks', 'builtin', None)
@@ -46,6 +45,17 @@ class Task:
     dashboard: str | None = None      # the module declaring this task's charts, see learning.dashboard
     capabilities: Capabilities = field(default_factory=Capabilities)
     start: str | None = None          # the policy a new run starts from (relative to the repo) when no run is named
+    rewards: str | None = None        # the module whose TABLE declares this task's rewards, see learning.reward_table
+
+    def __post_init__(self):
+        # A reward table's settings are the task's options without being listed again.
+        if self.rewards:
+            settings = self.reward_table().settings
+            object.__setattr__(self, 'options', self.options + tuple(s for s in settings if s not in self.options))
+
+    def reward_table(self):
+        """The task's RewardTable, or None when it declares its rewards some other way."""
+        return importlib.import_module(self.rewards).TABLE if self.rewards else None
 
     def replay(self):
         return importlib.import_module(self.replay_module) if self.replay_module else None
@@ -81,7 +91,7 @@ TASKS = {
         Capabilities(fresh_weights=True, actor_damping=False, replay_mode='hooks', settings_scope='listed')),
     # Trained by the hunter's PPO loop; a new run starts from the shipped hunter pilot, migrated to its senses.
     'campaign_hunter': Task('campaign_hunter', 'learning.adapters.campaign_hunter', 'Campaign Hunter',
-        dict(horizon=180.0), CAMPAIGN_REWARD_SETTINGS, dashboard='learning.adapters.campaign_dashboard',
+        dict(horizon=180.0), dashboard='learning.adapters.campaign_dashboard', rewards='learning.campaign_rewards',
         capabilities=Capabilities(fresh_weights=False, replay_mode='builtin', settings_scope='listed'),
         start='assets/neural/hunter.npz'),
 }

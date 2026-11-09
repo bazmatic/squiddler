@@ -1,8 +1,8 @@
 """The Campaign Hunter's dashboard: the keys learning.adapters.campaign_hunter.summary() adds to each train.log row
 (tools/ppo_neural.py writes the PPO stats and mean_return beside them), and its reward points from
-learning.campaign_rewards."""
-from learning.campaign_rewards import DEFAULTS, HELP
-from learning.dashboard import Layout, Metric, RewardRule, number
+the reward table in learning.campaign_rewards."""
+from learning.campaign_rewards import TABLE
+from learning.dashboard import Layout, Metric, number
 
 METRICS = (
     Metric('exited', 'Episodes exited',
@@ -30,18 +30,7 @@ METRICS = (
 
 LAYOUT = Layout(sections=('Training', 'Outcome', 'Flying', 'Policy'), strip=('exited', 'cleared_exit', 'own_kills'))
 
-_TITLES = dict(own_kill='Own kill', pickup='Pickup', beacon='Beacon', exit='Exit', cleared_exit='Cleared exit',
-               score_out='Score out', wall_crash='Wall crash', compass_following='Compass following',
-               hunt_progress='Hunt progress', exit_progress='Exit progress', idle='Idling', thrust='Thrusting', shot='Shots fired')
-
-
-def _kind(key):
-    return 'penalty' if DEFAULTS[key] < 0 else 'reward'
-
-
-# A penalty's value is its size: the page draws it with a minus sign. Help text drops the "(negative: a penalty)" note.
-REWARD_RULES = tuple(RewardRule(key, _TITLES[key], HELP[key].split(' (negative')[0], _kind(key), (), key,
-                                abs(DEFAULTS[key])) for key in DEFAULTS)
+REWARD_RULES = TABLE.reward_rules()
 
 
 def recorded(config):

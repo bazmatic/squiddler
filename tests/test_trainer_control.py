@@ -279,6 +279,14 @@ def test_resume_changes_a_campaign_runs_reward_for_the_command_and_its_recorded_
     assert (path/'resume.pt').read_text() == 'unchanged optimizer'
 
 
+def test_resume_refuses_a_campaign_reward_that_is_not_a_finite_number(root):
+    path = _paused_campaign_run(root)
+    before = (path/'config.json').read_bytes()
+    with pytest.raises(TrainerError, match='finite'):
+        resume('run52', root=root, processes=[], launch=FakeLaunch(), changes={'beacon': 'nan'})
+    assert (path/'config.json').read_bytes() == before
+
+
 def test_resume_refuses_a_setting_that_belongs_to_another_task(root):
     path = _paused_campaign_run(root)
     before = (path/'config.json').read_bytes()

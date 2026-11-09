@@ -234,6 +234,12 @@ def _resume_setting_updates(path, base, changes):
         raise TrainerError('learning rate must be finite and positive')
     if args['workers']<1 or args['iterations']<0 or not math.isfinite(args['budget_seconds']) or args['budget_seconds']<0:
         raise TrainerError('workers must be positive; iterations and budget must be nonnegative')
+    table = _reward_table(config)
+    if table is not None:
+        try:
+            table.from_args(SimpleNamespace(**args))
+        except ValueError as exc:
+            raise TrainerError(str(exc)) from None
     if flocker:
         try:
             rewards = flocker_rewards.from_args(SimpleNamespace(**args))
@@ -262,6 +268,15 @@ def _resume_setting_updates(path, base, changes):
     _record_resume_edits(path, config, edits)
     updates[path/'config.json']=json.dumps(config,indent=2).encode()
     return values,updates
+
+
+def _reward_table(config):
+    """The run's task's RewardTable, or None when its task declares rewards some other way (or is no longer known)."""
+    from learning.tasks import UNTAGGED_TASK, task
+    try:
+        return task(config.get('task', UNTAGGED_TASK)).reward_table()
+    except ValueError:
+        return None
 
 
 def _resume_editable(config, flocker):

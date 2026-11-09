@@ -60,8 +60,9 @@ LABELS.update({'flocker_bunch_penalty': ('Rewards', 'Teammate contact penalty'),
                'flocker_contact_only': ('Rewards', 'Contact only (1=yes, 0=legacy proximity)')})
 from learning.jelly_rewards import DEFAULTS as JELLY_REWARD_DEFAULTS
 LABELS.update({f'jelly_{name}': ('Rewards', 'Jelly ' + name.replace('_', ' ')) for name in JELLY_REWARD_DEFAULTS})
-from learning.campaign_rewards import DEFAULTS as CAMPAIGN_REWARD_DEFAULTS
-LABELS.update({name: ('Rewards', name.replace('_', ' ').capitalize()) for name in CAMPAIGN_REWARD_DEFAULTS})
+from learning.reward_table import tables as _reward_tables
+for _table in _reward_tables().values():
+    LABELS.update(_table.labels())
 
 # The rewards summary of older runs, by row name: (dest, what the value was multiplied by). Rows are only written
 # when non-zero, so a run with a summary but no row for one of these trained with it at 0.

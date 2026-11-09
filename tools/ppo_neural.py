@@ -360,9 +360,10 @@ def parse_levels(text):
 
 def shaping_from(args):
     """The episode shaping a run's arguments ask for: what fly_rollout (or the task's episode) is called with."""
-    if getattr(args, 'task', 'hunter') == 'campaign_hunter':
-        from learning.campaign_rewards import SETTINGS
-        return {'horizon': args.horizon, **{name: getattr(args, name) for name in SETTINGS}}
+    from learning.tasks import task
+    table = task(getattr(args, 'task', 'hunter')).reward_table()
+    if table is not None:
+        return {'horizon': args.horizon, **table.from_args(args)}
     from weapons.catalog import RULESET, CATALOG
     return {'wall_scale': args.wall_scale,
             'hit_scale': args.hit_scale,
@@ -394,11 +395,11 @@ def shaping_from(args):
             'weapon_tuning': CATALOG.snapshot()}
 
 
-def campaign_reward_summary(args):
-    """The Campaign Hunter's reward terms as reward_summary gives the hunter's."""
-    from learning.campaign_rewards import HELP, SETTINGS
-    rows = [(name.replace('_', ' ').capitalize(), getattr(args, name), HELP[name]) for name in SETTINGS]
-    return [{'name': n, 'sign': '+' if v > 0 else '-', 'value': round(abs(v), 4), 'unit': u} for n, v, u in rows if v]
+def table_reward_summary(args):
+    """The reward terms of a task that declares them in a reward table, as reward_summary gives the hunter's."""
+    from learning.tasks import task
+    table = task(args.task).reward_table()
+    return table.summary(table.from_args(args))
 
 
 def write_run_config(args):
@@ -408,7 +409,7 @@ def write_run_config(args):
     out.mkdir(parents=True, exist_ok=True)
     if args.task == 'campaign_hunter':
         (out / 'config.json').write_text(json.dumps({
-            'task': args.task, 'rewards': campaign_reward_summary(args),
+            'task': args.task, 'rewards': table_reward_summary(args),
             'episode': {'horizon_seconds': args.horizon, 'episodes_per_iteration': args.episodes,
                         'learning_rate': args.lr, 'levels': list(args.levels)},
             'start': str(args.start), 'shaping': shaping_from(args),
@@ -470,10 +471,9 @@ def build_parser():
     for name, default in INCHWORM_DEFAULTS.items():
         parser.add_argument('--inchworm-' + name.replace('_', '-'), type=float, default=default,
                             help='Inchworm ' + name.replace('_', ' '))
-    from learning.campaign_rewards import DEFAULTS as CAMPAIGN_DEFAULTS, HELP as CAMPAIGN_HELP
-    for name, default in CAMPAIGN_DEFAULTS.items():
-        parser.add_argument('--' + name.replace('_', '-'), type=float, default=default,
-                            help='Campaign Hunter: ' + CAMPAIGN_HELP[name])
+    from learning.reward_table import tables
+    for table in tables().values():          # the tasks that declare their rewards in a reward table
+        table.add_arguments(parser)
     parser.add_argument('--start', default=str(DEFAULT_START))
     parser.add_argument('--out', default=str(DEFAULT_OUT))
     parser.add_argument('--iterations', type=int, default=100, help='training iterations; 0 means unlimited for creature teams')
