@@ -9,18 +9,28 @@ class ShipImpact:
 
     def __init__(self):
         self.remaining = 0.0
+        self.duration = self.DURATION
+        self.severity = 1.0
 
-    def hit(self):
-        # Sustained contact cannot restart the recoil every frame.
-        if self.remaining <= 0:
-            self.remaining = self.DURATION
+    def hit(self, severity=1.0):
+        """severity 0..1: how direct and hard the strike was; scales length, recoil, sparks and flash.
+
+        Returns whether a fresh effect started, so a sound can play once per strike."""
+        severity = min(1.0, max(0.0, severity))
+        # Sustained contact cannot restart the recoil every frame, but a harder strike overrides a fading softer one.
+        if self.remaining <= 0 or severity > self.severity * self.remaining / self.duration:
+            self.severity = severity
+            self.duration = self.DURATION * (0.45 + 0.4 * severity)
+            self.remaining = self.duration
+            return True
+        return False
 
     def update(self, dt):
         self.remaining = max(0.0, self.remaining - dt)
 
     def offset(self, angle):
-        fraction = self.remaining / self.DURATION
-        recoil = -4 * fraction * math.sin((1 - fraction) * math.pi * 3)
+        fraction = self.remaining / self.duration
+        recoil = -(1.0 + 2.5 * self.severity) * fraction * math.sin((1 - fraction) * math.pi * 3)
         heading = math.radians(angle)
         return recoil * math.cos(heading), recoil * math.sin(heading)
 
@@ -31,14 +41,19 @@ class ShipImpact:
     def draw(self, screen, centre, radius, vertices):
         if self.remaining <= 0:
             return
-        fraction = self.remaining / self.DURATION
-        colour = (255, round(100 + 155 * fraction), round(70 + 185 * fraction))
-        pygame.draw.lines(screen, colour, True, vertices, max(1, round(2 * fraction)))
-        for i in range(6):
-            angle = i * math.tau / 6
-            reach = radius * (1.1 + 1.6 * (1 - fraction))
+        fraction = self.remaining / self.duration
+        sev = self.severity
+        # Weak glancing hits flash a dim orange; hard ones flash bright and white-hot.
+        strength = fraction * (0.35 + 0.65 * sev)
+        colour = (255, round(100 + 155 * strength), round(70 + 185 * strength))
+        pygame.draw.lines(screen, colour, True, vertices, max(1, round((1 + sev) * fraction)))
+        count = 2 + round(8 * sev)
+        for i in range(count):
+            angle = i * math.tau / count
+            reach = radius * (1.05 + (0.5 + 1.0 * sev) * (1 - fraction))
+            length = (3 + 3 * sev) * fraction
             start = (centre[0] + math.cos(angle) * reach, centre[1] + math.sin(angle) * reach)
-            end = (start[0] + math.cos(angle) * 6 * fraction, start[1] + math.sin(angle) * 6 * fraction)
+            end = (start[0] + math.cos(angle) * length, start[1] + math.sin(angle) * length)
             pygame.draw.line(screen, colour, start, end, 1)
 
 

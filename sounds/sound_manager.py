@@ -218,6 +218,29 @@ class SoundManager:
         hit_channel = pygame.mixer.Channel(4)
         hit_channel.play(sound)
     
+    def _generate_wall_hit(self, severity: float) -> Optional[pygame.mixer.Sound]:
+        """A soft low thud; harder strikes are deeper and slightly longer."""
+        if not config.SOUND_ENABLED:
+            return None
+        sample_rate = config.SOUND_SAMPLE_RATE
+        t = np.arange(int(sample_rate * (0.07 + 0.05 * severity)), dtype=np.float32) / sample_rate
+        freq = (150.0 - 60.0 * severity) * (1.0 - 0.35 * t / t[-1])
+        tone = np.sin(2 * math.pi * np.cumsum(freq) / sample_rate)
+        noise = np.random.uniform(-0.25, 0.25, size=len(t)) * np.exp(-60.0 * t)
+        samples = np.clip((tone + noise) * np.exp(-30.0 * t), -1.0, 1.0).astype(np.float32)
+        stereo = np.stack([samples, samples], axis=1)
+        return pygame.sndarray.make_sound((stereo * 16383).astype(np.int16))
+
+    def play_wall_hit(self, severity: float) -> None:
+        """Play a subtle thud for the ship striking a wall; scrapes are barely audible."""
+        if not _audible() or severity < 0.05:
+            return
+        sound = self._generate_wall_hit(severity)
+        if not sound:
+            return
+        sound.set_volume(config.BAD_HIT_SOUND_VOLUME * (0.15 + 0.4 * severity))
+        pygame.mixer.Channel(4).play(sound)
+
     def _generate_upgraded_shoot(self) -> Optional[pygame.mixer.Sound]:
         """Generate machine gun sound for upgraded guns.
         

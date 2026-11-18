@@ -56,6 +56,7 @@ class Ship(RotatingThrusterShip):
         self.damaged = False
         from rendering.ship_impact import ShipImpact
         self.impact = ShipImpact()
+        self.wall_hit_severity = None
         self.damage_timer = 0
         self._hit = None  # strongest unshielded non-wall knock since the pilot last observed
         self.glow_phase = 0.0  # For pulsing glow when damaged
@@ -282,8 +283,12 @@ class Ship(RotatingThrusterShip):
         """Handle wall collision - set damage state unless the shield took the hit."""
         if self.is_shield_active():
             return
-        self.flinch()
-    
+        # A fast head-on strike changes velocity by up to ~(1+restitution)*max_speed; glancing or slow ones barely at all.
+        dvx, dvy = self.wall_impulse
+        severity = min(1.0, math.hypot(dvx, dvy) / self.max_speed)
+        if self.flinch(severity):
+            self.wall_hit_severity = severity  # the game plays the thud once, then clears this
+
     def on_circle_collision(self) -> None:
         """Handle circle collision - set damage state."""
         self.flinch()
@@ -306,12 +311,13 @@ class Ship(RotatingThrusterShip):
         hit, self._hit = self._hit, None
         return hit
 
-    def flinch(self) -> None:
+    def flinch(self, severity: float = 1.0) -> bool:
+        """Show a hit; returns whether a fresh impact effect started."""
         if self.is_shield_active():
-            return
+            return False
         self.damaged = True
-        self.damage_timer = 30
-        self.impact.hit()
+        self.damage_timer = max(self.damage_timer, round(12 + 18 * severity))
+        return self.impact.hit(severity)
 
     DEATH_DURATION = 60.0
 

@@ -28,6 +28,10 @@ class HunterShipBody:
     def on_event(self, creature, name):
         if name == 'damaged':
             self.impact.hit()
+        if name == 'hit_wall':
+            dvx, dvy = getattr(creature, 'wall_impulse', (0.0, 0.0))
+            speed = getattr(creature, 'max_speed', 0) or 1.0
+            self.impact.hit(min(1.0, math.hypot(dvx, dvy) / speed))
         if name == 'integrated':
             advance_thrust_particles(creature, creature.integration_dt)
 

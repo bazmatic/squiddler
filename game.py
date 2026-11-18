@@ -1131,6 +1131,9 @@ class Game:
         if self.ship.check_wall_collision(self.maze.walls, self.maze.spatial_grid):
             if not self.ship.is_shield_active():
                 self.scoring.record_wall_collision()
+        if self.ship.wall_hit_severity is not None:
+            self.sound_manager.play_wall_hit(self.ship.wall_hit_severity)
+            self.ship.wall_hit_severity = None
         
         # Only update enemies after player has made their first move
         if self.player_has_moved:
