@@ -13,6 +13,7 @@ import random
 from typing import List, Optional, Tuple, TYPE_CHECKING
 
 import pygame
+import config
 from entities.tentacle_chain import drag_chain
 from rendering import visual_effects
 from utils import distance
@@ -70,11 +71,12 @@ class Jellyfish:
     ORAL_ARM_LENGTH = 0.9  # Short frilly arms in the middle
     ORAL_ARM_POINTS = 6
     # Death animation, as (start, end) spans of the enemy's death_progress
-    DEATH_DURATION = 40.0  # Frames
+    DEATH_DURATION = 54.0  # Frames
     DEATH_FRICTION = 0.92  # Velocity kept per frame while the remains drift
-    DEATH_COLLAPSE = (0.0, 0.45)
-    DEATH_FADE = (0.3, 1.0)
-    DEATH_SPLAY_ANGLE = 75  # Degrees - how far the loose tentacles fan out
+    DEATH_COLLAPSE = (0.08, 0.7)
+    DEATH_FADE = (0.62, 1.0)
+    DEATH_GATHER = (0.16, 0.82)
+    DEATH_CENTER_X = 0.25  # Bell and trailing tissue gather here
 
     def __init__(self, enemy: 'Creature'):
         """Initialize the jellyfish for an enemy."""
@@ -94,8 +96,9 @@ class Jellyfish:
         return 0.5 + 0.5 * math.sin(self.pulse_phase)
 
     def bell_length_scale(self, death_progress: float) -> float:
-        """Length of the bell relative to normal; it collapses flat on death."""
-        return 1.0 - 0.85 * _ease(death_progress, self.DEATH_COLLAPSE)
+        """Deflate toward a tiny knot, with one last pressure shudder."""
+        shudder = 0.07 * math.sin(math.pi * min(1.0, death_progress / 0.16))
+        return 1.0 + shudder - 0.93 * _ease(death_progress, self.DEATH_COLLAPSE)
 
     def on_event(self, enemy: 'Creature', name: str) -> None:
         """Its look follows the chase, so events change nothing."""
@@ -121,10 +124,9 @@ class Jellyfish:
         self._update_tentacles(enemy, 0.0)
 
     def update_death(self, enemy: 'Creature', dt: float) -> None:
-        """Let the tentacles go slack and splay while the jellyfish dies."""
+        """Reel the curling tentacles into the deflating bell."""
         self.agitation *= 0.85
         self.flutter *= 0.85
-        self.pulse_phase += dt * self.PULSE_SPEED
         self._update_tentacles(enemy, enemy.death_progress)
 
     def _bell_half_width(self, u: float, death_progress: float) -> float:
@@ -135,13 +137,18 @@ class Jellyfish:
         squeeze += 0.06 * self.flutter * math.sin(self.pulse_phase * 9.0)
         # The rim flares out as the bell relaxes
         flare = 1.0 + self.BELL_FLARE * (1.0 - self.contraction) * max(0.0, 1.0 - u / 0.2)
-        splat = 1.0 + 0.25 * _ease(death_progress, self.DEATH_COLLAPSE)
-        return self.BELL_HALF_WIDTH * dome * squeeze * flare * splat
+        collapse = _ease(death_progress, self.DEATH_COLLAPSE)
+        # Tissue buckles into uneven folds as the volume drains away.
+        folds = 1.0 - 0.32 * math.sin(math.pi * collapse) * (
+            0.5 + 0.5 * math.cos(u * math.pi * 5.0 + death_progress * 9.0)
+        )
+        return self.BELL_HALF_WIDTH * dome * squeeze * flare * self.bell_length_scale(death_progress) * folds
 
     def _bell_x(self, u: float, death_progress: float) -> float:
         """Position along the heading of the bell at u (0.0 = rim, 1.0 = apex)."""
         apex = self.BELL_APEX_X * (1.0 + self.BELL_STRETCH * self.contraction)
-        return self.BELL_RIM_X + (apex - self.BELL_RIM_X) * u * self.bell_length_scale(death_progress)
+        x = self.BELL_RIM_X + (apex - self.BELL_RIM_X) * u
+        return self.DEATH_CENTER_X + (x - self.DEATH_CENTER_X) * self.bell_length_scale(death_progress)
 
     def _update_tentacles(self, enemy: 'Creature', death_progress: float) -> None:
         """Drag the tentacle chains behind the bell."""
@@ -149,10 +156,11 @@ class Jellyfish:
         cos_heading, sin_heading = math.cos(heading_rad), math.sin(heading_rad)
         rear_angle = heading_rad + math.pi
         segment = enemy.radius * self.TENTACLE_LENGTH / self.TENTACLE_SEGMENTS
-        # Tentacles gather as the bell squeezes, and fan out loose on death
+        gather = _ease(death_progress, self.DEATH_GATHER)
+        segment *= 1.0 - 0.97 * gather
+        # The tips lag behind the bell, curling as the tissue reels inward.
         spread = math.radians(self.TENTACLE_SPREAD_ANGLE) * (1.0 - 0.6 * self.contraction)
-        splay = _ease(death_progress, self.DEATH_COLLAPSE)
-        spread += (math.radians(self.DEATH_SPLAY_ANGLE) - spread) * splay
+        spread *= 1.0 - gather
         wiggle = math.radians(self.TENTACLE_WIGGLE_ANGLE)
         rim_half_width = self._bell_half_width(0.0, death_progress) * 0.85
 
@@ -163,7 +171,7 @@ class Jellyfish:
 
         for k, chain in enumerate(self.tentacles):
             side = k / (self.TENTACLE_COUNT - 1) * 2.0 - 1.0  # -1.0 to 1.0 across the rim
-            local_x = self.BELL_RIM_X * enemy.radius
+            local_x = self._bell_x(0.0, death_progress) * enemy.radius
             local_y = side * rim_half_width * enemy.radius
             anchor = (
                 enemy.x + local_x * cos_heading - local_y * sin_heading,
@@ -174,11 +182,13 @@ class Jellyfish:
 
             def rest_angle(i: int, t: float, side: float = side, k: int = k) -> float:
                 angle = rear_angle - side * spread * (1.0 - 0.4 * t)
-                return angle + math.sin(self.pulse_phase * 1.5 - i * 0.9 + k * 2.1) * wiggle * t
+                angle += side * gather * t * math.pi * 1.7
+                return angle + math.sin(self.pulse_phase * 1.5 - i * 0.9 + k * 2.1) * wiggle * t * (1.0 - gather)
 
             drag_chain(
                 chain, anchor, segment, rest_angle,
-                self.TENTACLE_STIFFNESS_BASE, self.TENTACLE_STIFFNESS_TIP, snap
+                self.TENTACLE_STIFFNESS_BASE + 0.5 * gather,
+                self.TENTACLE_STIFFNESS_TIP + 0.7 * gather, snap or (death_progress > 0.0 and config.SETTINGS.game.lowGraphics)
             )
 
     def draw(self, screen: pygame.Surface, enemy: 'Creature') -> None:
@@ -191,7 +201,7 @@ class Jellyfish:
         self._draw(screen, enemy, 0.0)
 
     def draw_death(self, screen: pygame.Surface, enemy: 'Creature') -> None:
-        """Draw the dying jellyfish: the bell collapses flat and it all dissolves.
+        """Draw the dying jellyfish: the tissue folds inward into a fading knot.
 
         Args:
             screen: The pygame Surface to draw on.
@@ -216,10 +226,13 @@ class Jellyfish:
         white = (255, 255, 255)
         bright = visual_effects.interpolate_color(self.COLOR, white, 0.5)
 
+        collapse = _ease(death_progress, self.DEATH_COLLAPSE)
+        compression_flash = math.sin(math.pi * collapse) ** 2
+
         # Stepped alpha keeps the glow cache small
-        glow_alpha = int((45 + 45 * self.agitation) * (1.0 - fade)) // 10 * 10
+        glow_alpha = int((45 + 45 * self.agitation + 65 * compression_flash) * (1.0 - fade)) // 10 * 10
         if glow_alpha > 0:
-            glow = visual_effects.create_soft_glow_surface(radius * 2.4, self.COLOR, glow_alpha)
+            glow = visual_effects.create_soft_glow_surface(radius * (2.4 - 1.6 * collapse), self.COLOR, glow_alpha)
             screen.blit(glow, glow.get_rect(center=center))
 
         # Everything is drawn on its own layer so the bell is see-through and
@@ -252,7 +265,8 @@ class Jellyfish:
                 for j in range(self.ORAL_ARM_POINTS):
                     t = j / (self.ORAL_ARM_POINTS - 1)
                     sway = 0.14 * t * math.sin(self.pulse_phase * 2.0 - j * 1.2 + sign)
-                    arm.append(place(self.BELL_RIM_X - arm_length * t, sign * 0.16 + sway))
+                    arm.append(place(self._bell_x(0.0, death_progress) - arm_length * t,
+                                     (sign * 0.16 + sway) * self.bell_length_scale(death_progress)))
                 pygame.draw.lines(layer, (*bright, 220), False, arm, 2)
 
         # Bell: a see-through dome with a brighter core
@@ -270,12 +284,24 @@ class Jellyfish:
         pygame.draw.polygon(layer, (*self.COLOR, min(255, int(self.BELL_ALPHA * mood))), outline)
         pygame.draw.polygon(layer, (*bright, min(255, int(self.BELL_CORE_ALPHA * mood))), bell_outline(0.6))
 
+        # Luminous creases travel inward across the crumpling membrane.
+        if 0.0 < collapse < 1.0:
+            crease_alpha = int(210 * math.sin(math.pi * collapse))
+            for side in (-1.0, 1.0):
+                for rib in (0.35, 0.7):
+                    crease = []
+                    for j in range(self.BELL_POINTS + 1):
+                        u = j / self.BELL_POINTS
+                        y = side * rib * self._bell_half_width(u, death_progress)
+                        crease.append(place(self._bell_x(u, death_progress), y))
+                    pygame.draw.lines(layer, (*bright, crease_alpha), False, crease, 1)
+
         # Four lobes in a clover, the jellyfish's glowing insides
-        lobe_radius = max(1, int(round(radius * 0.14)))
+        lobe_radius = max(1, int(round(radius * 0.14 * self.bell_length_scale(death_progress))))
         length_scale = self.bell_length_scale(death_progress)
         lobe_x = self._bell_x(0.42, death_progress)
         for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-            lobe = place(lobe_x + dx * self.LOBE_OFFSET * length_scale, dy * self.LOBE_OFFSET)
+            lobe = place(lobe_x + dx * self.LOBE_OFFSET * length_scale, dy * self.LOBE_OFFSET * length_scale)
             pygame.draw.circle(layer, (*white, 235), (int(lobe[0]), int(lobe[1])), lobe_radius)
 
         # Bright skin of the dome and a thicker rim
