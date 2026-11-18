@@ -62,6 +62,11 @@ METRICS = (
     Metric('thrust', 'Thruster use',
            'Share of the pilot\'s decisions with the thruster on. 1 means it never coasts.',
            section='Flying', short='Thrust', optional=True),
+    Metric('spinning', 'Time spent spinning',
+           'Lower is better. Share of the pilot\'s decisions spent in a spin: turning the same way for about two '
+           'seconds or more without a break. Steering toward a target is far shorter than this, so a high value '
+           'means the ship is circling in place. Measured from runs that record it.',
+           unit='%', section='Flying', higher_is_better=False, short='Spinning', optional=True),
     Metric('search_found', 'Hidden-start episodes finding an enemy',
            'Higher is better. Of the episodes that began with no enemy in sight, the share in which the hunter '
            'eventually saw at least one enemy. A value of 1 means 100% found an enemy; 0.5 means half did. '

@@ -58,9 +58,10 @@ TABLE = RewardTable((   # starting values, tuned against the Demo bar
     RewardTerm('breach_block', REWARD, 0.0, 'Necessary block destroyed',
                'points per player-destroyed block on a planned breach route while no enemy has an open route; '
                'partial damage and unrelated blocks earn nothing', 'breach_blocks'),
-    # Pivoting from side to side is a shake, not a turn.
-    RewardTerm('turn_change', PENALTY, 0.0, 'Direction changes',
-               'points for reversing the last nonzero turn direction; starting or stopping a turn is free',
+    # Pivoting from side to side is a shake, not a turn; a single deliberate reversal is free.
+    RewardTerm('turn_change', PENALTY, 0.0, 'Quick reversals',
+               'points for reversing the last nonzero turn direction when the previous reversal was only a moment '
+               'before (about half a second); starting or stopping a turn and an unhurried reversal are free',
                'turn_changes'),
 ), help_prefix='Campaign Hunter: ')
 

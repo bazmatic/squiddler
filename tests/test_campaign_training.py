@@ -94,23 +94,26 @@ def test_idling_costs_a_penalty_a_decision_and_thrusting_does_not(spec):
     assert thrusting['rewards'].sum() == pytest.approx(0)
 
 
-def test_turning_the_other_way_costs_a_penalty_and_keeping_a_direction_does_not(spec):
+def test_shaking_costs_a_penalty_and_keeping_a_direction_does_not(spec):
     shaping = CampaignShaping(exit_progress=0.0, hunt_progress=0.0, idle=0.0, thrust=0.0, turn_change=-0.5)
     shaking = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot(turns=lambda n: 1 if n % 2 else -1), shaping=shaping)
-    assert shaking['rewards'].sum() == pytest.approx((len(shaking['rewards']) - 1) * shaping.turn_change)
+    # the first reversal is free; every one hot on its heels is a shake
+    assert shaking['rewards'].sum() == pytest.approx((len(shaking['rewards']) - 2) * shaping.turn_change)
     steady = fly_campaign(1, 300, spec, horizon=1.0, pilot=ScriptedPilot(turns=lambda n: 1), shaping=shaping)
     assert steady['rewards'].sum() == pytest.approx(0)
 
 
-def test_stopping_a_turn_is_free_but_reversing_after_a_pause_costs_once(spec):
+def test_a_lone_reversal_is_free_but_reversing_again_straight_away_costs(spec):
     from learning.campaign_rewards import TABLE
     shaping = CampaignShaping(**{key: 0.0 for key in TABLE.defaults if key != 'turn_change'}, turn_change=-1.0)
-    stopped = fly_campaign(1, 300, spec, horizon=.2,
-                          pilot=ScriptedPilot(turns=lambda n: -1 if n < 4 else 0), shaping=shaping)
-    reversed_ = fly_campaign(1, 300, spec, horizon=.2,
-                            pilot=ScriptedPilot(turns=lambda n: -1 if n < 4 else 0 if n < 8 else 1), shaping=shaping)
-    assert stopped['rewards'].sum() == pytest.approx(0)
-    assert reversed_['rewards'].sum() == pytest.approx(-1)
+
+    def fly(turns):
+        return fly_campaign(1, 300, spec, horizon=.2, pilot=ScriptedPilot(turns=turns), shaping=shaping)['rewards'].sum()
+
+    assert fly(lambda n: -1 if n < 4 else 0) == pytest.approx(0)                      # stopping a turn is free
+    assert fly(lambda n: -1 if n < 4 else 0 if n < 8 else 1) == pytest.approx(0)      # one reversal, after a pause
+    assert fly(lambda n: -1 if n < 4 else 1 if n < 8 else -1) == pytest.approx(-1)    # reversed back within a moment
+    assert fly(lambda n: -1 if n < 4 else 1 if n < 14 else -1) == pytest.approx(0)    # reversed back after a while
 
 
 def test_wall_penalty_scales_with_real_collision_severity(spec):

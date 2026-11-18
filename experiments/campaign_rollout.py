@@ -22,6 +22,7 @@ from learning.shooting_rewards import unaimed_shots
 PROGRESS_CAP = 0.2         # the most ground one decision can pay or cost, in maze widths
 IDLE_SPEED = 1.0           # a ship slower than this and not thrusting is idling
 FOLLOW_DEGREES = 45.0      # the ship's flight follows a compass when its velocity is this close to it
+REVERSAL_WINDOW = 5        # a reversal this many decisions (about half a second) or fewer after the last one is a shake
 START_TIME = 1000.0        # the episode clock's first reading, in seconds
 
 _INDEX = {name: i for i, name in enumerate(CAMPAIGN_FEATURE_NAMES)}
@@ -80,6 +81,7 @@ class _Recorder:
         self._observed = False
         self._routes, self._progress = MazeRoutes(), None
         self._turn = None
+        self._since_reversal = None       # decisions since the last reversal of the turn direction
         self._was_unseen = False
         self.started_unseen = False
         self.first_sighting_seconds = None
@@ -179,8 +181,13 @@ class _Recorder:
             self.controls.append((command.turn + 1, int(command.thrust), int(command.fire)))
             ship = game.ship
             self.events[-1]['thrusting'] = int(command.thrust)
-            self.events[-1]['turn_changes'] = int(command.turn != 0 and self._turn is not None
-                                                 and command.turn != self._turn)
+            if self._since_reversal is not None:
+                self._since_reversal += 1
+            reversed_ = command.turn != 0 and self._turn is not None and command.turn != self._turn
+            self.events[-1]['turn_changes'] = int(reversed_ and self._since_reversal is not None
+                                                 and self._since_reversal <= REVERSAL_WINDOW)
+            if reversed_:
+                self._since_reversal = 0
             if command.turn != 0:
                 self._turn = command.turn
             self.events[-1]['idle'] = int(not command.thrust and math.hypot(ship.vx, ship.vy) < IDLE_SPEED)

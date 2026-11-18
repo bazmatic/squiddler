@@ -50,6 +50,26 @@ def episode_block(args):
             'levels': list(args.levels)}
 
 
+SPIN_DECISIONS = 20   # turning one way this many decisions running (about two seconds) is spinning, not steering
+
+
+def spinning_share(turns):
+    """The share of decisions spent in a spin: a run of at least SPIN_DECISIONS decisions all turning the same way.
+    `turns` is the per-decision turn control (0 left, 1 straight, 2 right)."""
+    import numpy as np
+    turns = np.asarray(turns)
+    if not len(turns):
+        return 0.0
+    spun, run = 0, 0
+    for i, turn in enumerate(turns):
+        run = run + 1 if i and turn != 1 and turn == turns[i - 1] else int(turn != 1)
+        if run == SPIN_DECISIONS:
+            spun += run
+        elif run > SPIN_DECISIONS:
+            spun += 1
+    return spun / len(turns)
+
+
 def summary(flown):
     """An iteration's numbers for the training log: the share of episodes that left by the exit, that left with no
     enemy left, and that scored out, the ship's own kills per episode, the wall strikes and bullets fired per episode, and the share of decisions with the thruster on."""
@@ -62,7 +82,8 @@ def summary(flown):
                 own_kills=float(np.mean([r.own_kills for r in combat])),
                 wall_crashes=float(np.mean([r.wall_crashes for r in results])),
                 shots=float(np.mean([r.shots for r in results])),
-                thrust=float(np.mean([np.mean(e['controls'][:, 1]) for e in flown if len(e['controls'])] or [0.0])))
+                thrust=float(np.mean([np.mean(e['controls'][:, 1]) for e in flown if len(e['controls'])] or [0.0])),
+                spinning=float(np.mean([spinning_share(e['controls'][:, 0]) for e in flown if len(e['controls'])] or [0.0])))
     searches = [r for r in results if getattr(r, 'started_unseen', False)]
     if searches:
         found = [r for r in searches if r.first_sighting_seconds is not None]

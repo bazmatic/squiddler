@@ -21,7 +21,7 @@ def test_a_campaign_log_row_charts_exits_clears_score_outs_kills_and_the_shared_
     keys = set(row) | PPO_KEYS
     charted = dashboard.charted('campaign_hunter', keys)
     assert [m['key'] for m in charted] == ['mean_return', 'exited', 'cleared_exit', 'scored_out', 'own_kills',
-                                           'shots', 'thrust', 'kl', 'entropy']
+                                           'shots', 'thrust', 'spinning', 'kl', 'entropy']
     assert dashboard.unclaimed('campaign_hunter', keys) == []   # nothing left over for "Other"
 
 
@@ -173,3 +173,12 @@ def test_the_rewards_panel_shows_the_runs_campaign_points_with_score_out_as_a_pe
     assert (rules['own_kill']['kind'], rules['own_kill']['value']) == ('reward', 10.0)
     assert rules['pickup']['active'] is False
     assert rules['beacon']['recorded'] is False and rules['beacon']['value'] == 5.0   # not recorded: the default
+
+
+def test_spinning_counts_only_long_unbroken_turns_one_way():
+    from learning.adapters.campaign_hunter import SPIN_DECISIONS, spinning_share
+    n = SPIN_DECISIONS
+    assert spinning_share([2] * n + [1] * n) == 0.5                 # a long turn is a spin
+    assert spinning_share(([2] * (n - 1) + [1]) * 3) == 0                         # steering in bursts is not
+    assert spinning_share([0, 2] * n) == 0                                        # shaking is not a spin either
+    assert spinning_share([]) == 0
