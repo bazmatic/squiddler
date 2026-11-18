@@ -5,6 +5,7 @@ the number of collision checks from O(n*m) to O(k) where k is the number
 of entities in nearby grid cells.
 """
 
+import math
 from typing import List, Tuple, Set
 import config
 
@@ -142,20 +143,55 @@ class SpatialGrid:
         min_y = min(start_pos[1], end_pos[1]) - radius
         max_y = max(start_pos[1], end_pos[1]) + radius
         
-        # Get grid cells that overlap with the expanded bounding box
-        min_col = max(0, int(min_x / self.cell_size))
-        max_col = min(self.grid_cols - 1, int(max_x / self.cell_size))
-        min_row = max(0, int(min_y / self.cell_size))
-        max_row = min(self.grid_rows - 1, int(max_y / self.cell_size))
-        
-        # Collect unique wall indices from overlapping cells
+        cell = self.cell_size
+        min_col = max(0, int(min_x / cell))
+        max_col = min(self.grid_cols - 1, int(max_x / cell))
+        min_row = max(0, int(min_y / cell))
+        max_row = min(self.grid_rows - 1, int(max_y / cell))
+        grid = self.grid
         wall_indices: Set[int] = set()
-        for row in range(min_row, max_row + 1):
-            for col in range(min_col, max_col + 1):
-                wall_indices.update(self.grid[row][col])
-        
+
+        if (max_col - min_col + 1) * (max_row - min_row + 1) <= 6:
+            # A short path: its whole bounding box is only a few cells.
+            for row in range(min_row, max_row + 1):
+                for col in range(min_col, max_col + 1):
+                    wall_indices.update(grid[row][col])
+        else:
+            # A long slanted path touches only a strip of its bounding box. Walk it along its longer axis one cell
+            # band at a time and take only the cells the swept circle can reach within each band.
+            x0, y0 = start_pos
+            x1, y1 = end_pos
+            along_x = abs(x1 - x0) >= abs(y1 - y0)
+            if not along_x:
+                x0, y0, x1, y1 = y0, x0, y1, x1
+            lo_band, hi_band = (min_col, max_col) if along_x else (min_row, max_row)
+            cross_count = self.grid_rows if along_x else self.grid_cols
+            span = x1 - x0
+            slope = (y1 - y0) / span if span else 0.0
+            low_y, high_y = (y0, y1) if y0 <= y1 else (y1, y0)
+            lo_x, hi_x = (x0, x1) if x0 <= x1 else (x1, x0)
+            for band in range(lo_band, hi_band + 1):
+                # The stretch of the path whose along-axis position lies within radius of this band
+                band_lo = max(lo_x, band * cell - radius)
+                band_hi = min(hi_x, (band + 1) * cell + radius)
+                if band_lo > band_hi:
+                    continue
+                ya, yb = y0 + (band_lo - x0) * slope, y0 + (band_hi - x0) * slope
+                if ya > yb:
+                    ya, yb = yb, ya
+                lo_cross = max(0, int((ya - radius) / cell))
+                hi_cross = min(cross_count - 1, int((yb + radius) / cell))
+                if along_x:
+                    for row in range(lo_cross, hi_cross + 1):
+                        wall_indices.update(grid[row][band])
+                else:
+                    row_cells = grid[band]
+                    for col in range(lo_cross, hi_cross + 1):
+                        wall_indices.update(row_cells[col])
+
         # Return actual wall objects
-        return [self.walls[i] for i in wall_indices]
+        walls = self.walls
+        return [walls[i] for i in wall_indices]
     
     def _get_cells_for_line(
         self,
