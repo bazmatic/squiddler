@@ -427,12 +427,16 @@ def test_rail_shot_destroys_a_curved_block_whole():
     from weapons.projectile import RailProjectile
     maze = maze_with((4, 4), (5, 4))
     wall = faces(maze, (4, 4))[0]
+    destroyed = []
+    maze.on_block_destroying = lambda cell, source: destroyed.append((cell, source))
     shot = RailProjectile.__new__(RailProjectile)
     shot.x, shot.y = wall.start
     shot.active = True
+    shot.source = 'player'
     shot.hit_surface((1.0, 0.0), wall, maze, None)
     assert (4, 4) not in maze.blocks
     assert shot.active  # it keeps going through the destroyed block
+    assert destroyed == [((4, 4), 'player')]
     assert_index_consistent(maze)
 
 

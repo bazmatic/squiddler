@@ -137,6 +137,7 @@ class CollisionHandler:
             # A weaker bullet pushes the ship less
             ship.vx = before[0] + (ship.vx - before[0]) * projectile.strength
             ship.vy = before[1] + (ship.vy - before[1]) * projectile.strength
+            ship.record_hit(ship.vx - before[0], ship.vy - before[1])
             return True
         
         return False
@@ -156,6 +157,7 @@ class CollisionHandler:
             ship.vx += dvx
             ship.vy += dvy
             if not ship.is_shield_active():
+                ship.record_hit(dvx, dvy)
                 ship.flinch()
                 self.scoring.record_enemy_collision()   # it costs what touching an enemy does
                 self.sound_manager.play_bad_hit()
@@ -210,7 +212,7 @@ class CollisionHandler:
                     # Rebuilt since it was found: hit the block through one of its current segments
                     wall = next((w for w in maze.walls if w.cell == wall.cell), wall)
                 for _ in range(blast.wall_hits):
-                    if maze.damage_wall(wall, impact):
+                    if maze.damage_wall(wall, impact, source=blast.source):
                         break
 
     def handle_projectile_hunter_collision(self, projectile, hunter) -> bool:

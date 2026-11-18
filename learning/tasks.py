@@ -92,7 +92,7 @@ TASKS = {
         ('budget_seconds','seed'), 'learning.replay',
         'learning.adapters.flocker_replay', 'learning.adapters.flocker_dashboard', rewards='learning.flocker_rewards',
         cli_defaults=dict(horizon=60., bootstrap_episodes=0)),
-    'hunter': Task('hunter', 'learning.adapters.hunter', 'Hunter', dashboard='learning.adapters.hunter_dashboard',
+    'hunter': Task('hunter', 'learning.adapters.hunter', 'Hunter', options=('levels',), dashboard='learning.adapters.hunter_dashboard',
         rewards='learning.hunter_rewards',
         capabilities=Capabilities(fresh_weights=False, actor_damping=False, replay_mode='builtin',
                                   settings_scope='unclaimed'),
@@ -113,9 +113,11 @@ TASKS = {
         rewards='learning.jelly_rewards', cli_defaults=dict(horizon=60.)),
     # Trained by the hunter's PPO loop; a new run starts from the shipped hunter pilot, migrated to its senses.
     'campaign_hunter': Task('campaign_hunter', 'learning.adapters.campaign_hunter', 'Campaign Hunter',
-        dict(horizon=180.0), dashboard='learning.adapters.campaign_dashboard', rewards='learning.campaign_rewards',
+        dict(horizon=180.0), options=('levels', 'pursuit_lesson', 'combat_practice_levels'),
+        dashboard='learning.adapters.campaign_dashboard', rewards='learning.campaign_rewards',
         capabilities=Capabilities(fresh_weights=False, replay_mode='builtin', settings_scope='listed'),
-        start='assets/neural/hunter.npz', trainer=Trainer.HUNTER_LOOP, cli_defaults=dict(horizon=180.0)),
+        start='assets/neural/hunter.npz', trainer=Trainer.HUNTER_LOOP, cli='learning.adapters.campaign_hunter',
+        cli_defaults=dict(horizon=180.0)),
 }
 
 # Replayable runs recorded before config.json named its task were all Wallcrawler team runs.

@@ -77,6 +77,7 @@ class RotatingThrusterShip(GameEntity, Collidable, Drawable):
         self.prev_y = self.y
         self.base_rotation_speed = config.SHIP_ROTATION_SPEED
         self.rotation_speed_multiplier = 1.0
+        self.wall_impulse = (0.0, 0.0)  # velocity change from the most recent wall check only
     
     @property
     def max_speed(self) -> float:
@@ -198,7 +199,10 @@ class RotatingThrusterShip(GameEntity, Collidable, Drawable):
         Returns:
             True if collision occurred, False otherwise.
         """
+        before = self.vx, self.vy
+        self.wall_impulse = (0.0, 0.0)
         if thrust.sweep_walls(self, walls, spatial_grid):
+            self.wall_impulse = (self.vx - before[0], self.vy - before[1])
             self.on_wall_collision()   # hook for damage, sound, etc.
             return True
         return False

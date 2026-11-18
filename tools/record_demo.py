@@ -10,6 +10,7 @@ import numpy as np
 sys.path.insert(0, os.getcwd())
 os.environ['AUTOPLAY'] = '1'
 os.environ['SDL_AUDIODRIVER'] = 'dummy'
+os.environ['SDL_VIDEODRIVER'] = 'dummy'
 import pygame
 pygame.init()
 W, H = 1352, 878
@@ -71,7 +72,10 @@ def mix_frame():
 
 seconds = float(sys.argv[2]); out = sys.argv[1]
 n = int(seconds * 60)
-g = Game(screen)
+# Set the clock before Game starts its first level. Render speed must not
+# change score drain, gun cooldowns, or Demo transition timers.
+frame = 0
+g = Game(screen, clock=lambda: 1000.0 + frame / 60)
 aud = out + '.pcm'
 ff = subprocess.Popen(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', f'{W}x{H}',
                        '-r', '60', '-i', '-', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
@@ -79,6 +83,7 @@ ff = subprocess.Popen(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'rawvideo', '
 af = open(aud, 'wb')
 t0 = time.time(); levels = []; peak = 0
 for i in range(n):
+    frame = i
     pygame.event.pump(); g.handle_events(); g.update(1.0); g.draw()
     ff.stdin.write(pygame.image.tobytes(screen, "RGB"))
     b = mix_frame(); af.write(b)

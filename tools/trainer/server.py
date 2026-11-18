@@ -24,7 +24,8 @@ RUN_PATH = re.compile(r'/api/runs/(run\d+)/(data|config|settings|rewards)')
 
 
 def available_levels():
-    return sorted(int(p.stem) for p in (REPO / 'levels').glob('*.json') if p.stem.isdigit())
+    from learning.campaign_training_levels import EXIT_WITH_CRAWLER
+    return sorted({*(int(p.stem) for p in (REPO / 'levels').glob('*.json') if p.stem.isdigit()), EXIT_WITH_CRAWLER})
 
 
 def run_json(run):
@@ -75,7 +76,10 @@ def make_handler(root, processes, launch, allowed_hosts=()):
             if match and (root / match.group(1)).is_dir():
                 run_dir, what = root / match.group(1), match.group(2)
                 if what == 'data':
-                    return self.send(200, runs.log_rows(run_dir))
+                    from learning import dashboard
+                    config = config_of(run_dir) or {}
+                    return self.send(200, dashboard.chart_rows(config.get('task', UNTAGGED_TASK), config,
+                                                              runs.log_rows(run_dir)))
                 if what == 'config':
                     return self.send(200, config_of(run_dir) or {})
                 if what == 'rewards':

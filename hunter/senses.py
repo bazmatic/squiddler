@@ -118,6 +118,8 @@ def blocked(origin, targets, wall_starts, wall_ends):
 
 
 class Senses:
+    preferred_enemy = None  # a campaign focus, when enabled; other pilots keep distance ordering
+
     def __init__(self, settings):
         self.settings = settings
         self._memory = weakref.WeakKeyDictionary()    # enemy -> (x, y, seen_at)
@@ -172,7 +174,7 @@ class Senses:
         rays = ray_distances(origin, hunter.angle, starts, ends, reach) / reach
         out[_INDEX['ray_0']:_INDEX['ray_0'] + RAYS] = rays
 
-        def candidates(entities, limit):
+        def candidates(entities, limit, preferred=None):
             """The nearest `limit` active entities within reach and in line of sight."""
             near = []
             for e in entities:
@@ -182,6 +184,8 @@ class Senses:
                 if d <= reach:
                     near.append((d, e))
             near.sort(key=lambda item: item[0])
+            if preferred is not None:
+                near.sort(key=lambda item: item[1] is not preferred)
             near = near[:limit + 3]                                  # a few spare for the ones that are hidden
             if not near:
                 return []
@@ -200,7 +204,7 @@ class Senses:
                 out[_INDEX[f'{prefix}_relfwd']] = (rvx * ch + rvy * sh) / vmax
                 out[_INDEX[f'{prefix}_relside']] = (-rvx * sh + rvy * ch) / vmax
 
-        seen = candidates(enemies, MAX_ENEMIES)
+        seen = candidates(enemies, MAX_ENEMIES, self.preferred_enemy)
         for i, (d, e) in enumerate(seen):
             contact(f'enemy{i}', d, e)
             hits = max(0.0, float(getattr(e, 'effective_hit_points', getattr(e, 'hit_points', 1))))

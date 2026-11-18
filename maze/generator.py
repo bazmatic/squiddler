@@ -239,6 +239,8 @@ class Maze:
             cell_size=CURVED_BUCKET if self.curved else 150.0  # square walls keep the bucket they always had
         )
         self.wall_generation = 0  # Goes up each time a block is destroyed
+        # A final-hit observer sees the intact routing geometry immediately before a block is removed.
+        self.on_block_destroying = None
         self._sight_cache = None  # (walls list, its length, wall_generation, sight segments)
         # Curved blocks destroyed inside batched_destroys(), whose rock is rebuilt when it ends
         self._batch_depth = 0
@@ -364,7 +366,7 @@ class Maze:
         return (int(round(ax + dx * along)), int(round(ay + dy * along)))
     
     def damage_wall(self, wall: WallSegment, impact: Optional[Tuple[float, float]] = None,
-                    *, damage: int = 1) -> bool:
+                    *, damage: int = 1, source: Optional[str] = None) -> bool:
         """Damage the block a wall segment is a face of. Returns True if the block was destroyed.
         
         The whole block goes at once, and the faces of its neighbours that
@@ -375,6 +377,7 @@ class Maze:
             wall: The wall segment that was hit.
             impact: Where the shot landed, for the chips it knocks off.
             damage: Hit points removed in one impact (rail shots remove the whole block).
+            source: Who caused the damage, for observers; it does not change wall physics.
             
         Returns:
             True if the block was destroyed (hit points reached 0), False otherwise.
@@ -414,6 +417,10 @@ class Maze:
             self.wall_debris.hit(self.converter.cell_rect(*cell), impact)
             return False
         
+        # Only the accepted final hit reaches this point. Observers need the pre-break connectivity to decide
+        # whether clearing this block was useful. Partial hits, metal and the outer ring never emit this event.
+        if self.on_block_destroying is not None:
+            self.on_block_destroying(cell, source)
         del self.blocks[cell]
         self.wounds.pop(cell, None)
         self.wall_debris.destroy(self.converter.cell_rect(*cell))

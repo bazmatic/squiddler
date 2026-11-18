@@ -48,14 +48,14 @@ def make_game(tmp_path, monkeypatch):
     monkeypatch.setattr(level_config, 'level_has_hunter', lambda _: False)
     games = []
 
-    def make(autoplay=True, policy=StubPolicy()):
+    def make(autoplay=True, policy=StubPolicy(), **kwargs):
         if policy is not None:
             monkeypatch.setitem(Game.__init__.__globals__, 'load_campaign_policy', lambda: policy)
         if autoplay:
             monkeypatch.setenv('AUTOPLAY', '1')
         else:
             monkeypatch.delenv('AUTOPLAY', raising=False)
-        game = Game(screen)
+        game = Game(screen, **kwargs)
         games.append(game)
         return game
     make.profiles = tmp_path / 'profiles.json'
@@ -102,6 +102,7 @@ def test_demo_flies_the_ship_with_the_campaign_pilot(make_game):
     game = make_game(policy=StubPolicy((2, True, False)))   # turn right, thrust
     assert isinstance(game.ship_pilot, CampaignPilot)
     assert game.state == config.STATE_PLAYING and game.level == 4
+    assert game.ship_pilot._senses.target_recovery
     assert game.hunter is None
     ship = game.ship
     start = (ship.x, ship.y, ship.angle)
@@ -239,3 +240,35 @@ def test_the_no_kill_skip_waits_while_the_ship_heads_for_the_exit():
     assert d.end_reason(enemies_left=0) is None    # still on the way out
     clock.now += 231
     assert d.end_reason(enemies_left=0) == 'time'  # the safety net still holds
+
+
+@pytest.mark.parametrize("skip", ["time", "no_kill"])
+def test_recording_clock_drives_score_cooldown_and_level_transitions(make_game, monkeypatch, skip):
+    from hunter.campaign_senses import ShipBody
+    from hunter.settings_for import hunter_settings_for
+    clock = Clock()
+    monkeypatch.setattr(SETTINGS.autoplay, 'timeLimitSeconds', 2 if skip == 'time' else 90)
+    monkeypatch.setattr(SETTINGS.autoplay, 'noKillSeconds', 2 if skip == 'no_kill' else 0)
+    game = make_game(clock=clock)
+    assert game.scoring.get_current_time(game.clock()) == 0
+    assert game.autoplay._started_at == clock.now
+    body = ShipBody(game.ship, game, hunter_settings_for('neural'))
+    game.last_shot_time = game.clock_ms()
+    assert body.fire_remaining == pytest.approx(body.fire_interval)
+
+    # Rendering wall time cannot advance either the HUD or the gun cooldown.
+    game.draw()
+    game.draw()
+    assert game.scoring.get_current_time(game.clock()) == 0
+    assert body.fire_remaining == pytest.approx(body.fire_interval)
+    clock.now += 1
+    assert game.scoring.get_current_time(game.clock()) == 1
+    assert body.fire_remaining == 0
+    assert game.autoplay.end_reason(len(game.roster.alive())) is None
+
+    clock.now += 1.1
+    assert game.autoplay.end_reason(len(game.roster.alive())) == skip
+    game.update(1.0)
+    assert game.level == 5
+    assert game.autoplay._started_at == clock.now
+    assert game.scoring.get_current_time(game.clock()) == 0

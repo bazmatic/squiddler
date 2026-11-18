@@ -185,10 +185,10 @@ def test_a_blast_hits_each_wall_block_it_reaches_once():
     far = face((5, 5), (900.0, 0.0), (900.0, 40.0))
     hit = []
     maze = SimpleNamespace(spatial_grid=SimpleNamespace(get_nearby_walls=lambda pos, r: [*near, far]),
-                           damage_wall=lambda wall, impact: hit.append((wall.cell, impact)) or False,
+                           damage_wall=lambda wall, impact, *, source=None: hit.append((wall.cell, impact, source)) or False,
                            batched_destroys=contextlib.nullcontext)
     CollisionHandler._blast_walls(Blast((500.0, 500.0), 40.0, wall_hits=1), maze)
-    assert hit == [((1, 1), (510.0, 500.0))]
+    assert hit == [((1, 1), (510.0, 500.0), 'enemy')]
     hit.clear()
     handler().handle_blast(Blast((500.0, 500.0), 40.0, wall_hits=0), None, None, [], lambda shot: False, maze)
     assert hit == []

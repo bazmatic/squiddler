@@ -5,15 +5,14 @@ from experiments.harness import FPS, run_episode
 from hunter.rule_params import RULES
 from hunter.senses import FEATURE_NAMES, HIT_POINT_CELLS, SENSE_SIZE, blocked, ray_hits
 from learning.hunter_rewards import KILL_REWARD_TOTAL, TABLE  # noqa: F401 (KILL_REWARD_TOTAL: still read from here)
+from learning.shooting_rewards import AIM_DEGREES, unaimed_shots  # noqa: F401 (shared aiming threshold)
 BOREDOM_GRACE = 1.0             # seconds with nothing new in view before the hunter is bored
 VIEW_CELLS = 3.0                # walls further than this many cells do not count as in view for boredom: far off, a
                                 # slight move makes the rays land on different blocks, which would look new
-AIM_DEGREES = 20.0              # a shot this close to an enemy in sight is aimed, and free
 FOLLOW_DEGREES = 45.0           # the compass counts as followed when it is this close to the nose
 PANIC_WINDOW = 5.0              # seconds of score that decide whether the hunter panics
 
 _SEEN = FEATURE_NAMES.index('enemy0_present')
-_ENEMY = [tuple(FEATURE_NAMES.index(f'enemy{i}_{part}') for part in ('present', 'sin', 'cos')) for i in range(6)]
 _ALIVE = FEATURE_NAMES.index('enemies_present')
 _COMPASS = {part: FEATURE_NAMES.index(f'enemy_compass_{part}') for part in ('present', 'sin', 'cos', 'dist')}
 
@@ -274,11 +273,7 @@ class RolloutRecorder:
         shots = np.zeros(n)
         counted = np.asarray(self._shots[lo:lo + n], dtype=np.float64)
         shots[:len(counted)] = counted
-        aimed = np.zeros(n, dtype=bool)
-        for present, sin, cos in _ENEMY:
-            off = np.degrees(np.abs(np.arctan2(senses[:, sin], senses[:, cos])))
-            aimed |= (senses[:, present] == 1) & (off <= AIM_DEGREES)
-        return np.where(aimed, 0.0, shots)
+        return unaimed_shots(senses, shots, FEATURE_NAMES)
 
     def bored_steps(self, senses, views):
         """(blind steps, bored steps of those) for the dashboard."""

@@ -98,6 +98,57 @@ def test_the_campaign_vector_of_a_live_level_is_finite(game):  # noqa: F811
     assert value(vector, 'fwd_speed') == 0.0 and value(vector, 'cooldown') == 0.0
 
 
+def test_a_real_enemy_ram_reaches_the_hit_senses_once_in_ship_coordinates(game):
+    from creatures.traits.combat import RamsShip
+    ship = game.ship
+    ship.shield_active = False
+    ship.angle = 90
+    enemy = game.encounter.spawn('aggressive', (ship.x + ship.radius, ship.y), 1)
+    game.encounter.ready()
+    enemy.vx, enemy.vy = -3, 0
+    before = ship.vx, ship.vy
+    RamsShip().on_frame(enemy, game.encounter, 1)
+    dx, dy = ship.vx - before[0], ship.vy - before[1]
+    assert math.hypot(dx, dy) > 0
+    vector = _live(game)
+    assert value(vector, 'hit_present') == 1
+    assert math.isclose(value(vector, 'hit_fwd'), np.clip(dy / ship.max_speed, -1, 1), abs_tol=1e-6)
+    assert math.isclose(value(vector, 'hit_side'), np.clip(-dx / ship.max_speed, -1, 1), abs_tol=1e-6)
+    assert value(_live(game), 'hit_present') == 0
+
+
+def test_a_weak_enemy_bullet_reports_its_actual_scaled_impulse(game):
+    from entities.projectile import Projectile
+    ship = game.ship
+    ship.shield_active = False
+    bullet = Projectile((ship.x - ship.radius / 2, ship.y), 0, is_enemy=True)
+    bullet.strength = .25
+    before = ship.vx, ship.vy
+    assert game.collision_handler.handle_projectile_ship_collision(bullet, ship, game.scoring)
+    hit = ShipBody(ship, game, HunterSettings()).take_hit()
+    assert hit is not None
+    assert np.allclose(hit, (ship.vx-before[0], ship.vy-before[1]))
+
+
+def test_blasts_report_knock_but_shielded_contacts_and_walls_do_not(game):
+    from entities.explosion import Blast
+    from maze.wall_segment import WallSegment
+    ship = game.ship
+    ship.shield_active = False
+    blast = Blast((ship.x-20, ship.y), 80, push=4, wall_hits=0)
+    game.collision_handler.handle_blast(blast, ship, None, [], lambda shot: False)
+    assert value(_live(game), 'hit_present') == 1
+    ship.shield_active = True
+    game.collision_handler.handle_blast(blast, ship, None, [], lambda shot: False)
+    assert value(_live(game), 'hit_present') == 0
+    ship.shield_active = False
+    ship.prev_x, ship.prev_y = ship.x, ship.y
+    ship.vx, ship.vy = 3, 0
+    ship.check_wall_collision([WallSegment((ship.x+ship.radius/2, ship.y-50),
+                                         (ship.x+ship.radius/2, ship.y+50), 3)])
+    assert value(_live(game), 'hit_present') == 0
+
+
 def test_a_migrated_hunter_pilot_flies_the_same_with_campaign_senses(tmp_path):
     from hunter.neural.policy import NeuralPolicy
     from tools.migrate_policy import migrate

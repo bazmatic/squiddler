@@ -99,6 +99,16 @@ def resolve(task_key: str) -> dict:
                 rewards=[dict(asdict(r), stages=list(r.stages)) for r in declared.REWARD_RULES], hidden=sorted(HIDDEN_KEYS | set(declared.HIDDEN)))
 
 
+def chart_rows(task_key: str, config: dict, rows: list) -> list:
+    """Task-specific chart values derived from its recorded rows and run settings."""
+    try:
+        module = task(task_key).dashboard
+    except ValueError:
+        return rows
+    transform = getattr(importlib.import_module(module), 'chart_rows', None) if module else None
+    return transform(config, rows) if transform else rows
+
+
 def rewards(task_key: str, config: dict, row: dict) -> dict:
     """What the viewed run trained with: its task's rules with the values its own config records, the stage its last
     log row reports, and the task's cards. A value the config lacks is reported unrecorded, with the rule's default. A

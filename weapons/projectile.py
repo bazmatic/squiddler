@@ -43,7 +43,7 @@ class WeaponProjectile(Projectile):
 
     def hit_surface(self, normal, wall, maze, obstacles):
         if wall is not None and hasattr(wall,'get_segment') and not self.is_enemy:
-            maze.damage_wall(wall,self.get_pos())
+            maze.damage_wall(wall,self.get_pos(),source=self.source)
         if wall is not None and hasattr(wall,'body'):
             speed = max(1e-9,math.hypot(self.vx,self.vy))
             impulse = obstacles.settings.bulletImpulse
@@ -73,7 +73,7 @@ class RailProjectile(WeaponProjectile):
 
     def hit_surface(self, normal, wall, maze, obstacles):
         if wall is not None and hasattr(wall, 'get_segment') and wall.destructible:
-            if maze.damage_wall(wall, self.get_pos(), damage=max(1, wall.hit_points)):
+            if maze.damage_wall(wall, self.get_pos(), damage=max(1, wall.hit_points), source=self.source):
                 return  # Keep the shot's speed and remaining travel through the destroyed block.
             self.active = False
             return

@@ -20,3 +20,11 @@ def test_jobs_cycle_exactly_the_selected_levels(chosen, iteration):
 
 
 
+
+
+def test_campaign_exit_practice_is_selectable_in_trainer():
+    from learning.campaign_training_levels import EXIT_WITH_CRAWLER
+    from tools.trainer.server import available_levels
+    assert EXIT_WITH_CRAWLER in available_levels()
+    jobs = ppo.make_jobs(0, 3, 'w.npz', 6, 1.0, levels=[EXIT_WITH_CRAWLER], task='campaign_hunter')
+    assert all(job[0] == EXIT_WITH_CRAWLER for job in jobs)

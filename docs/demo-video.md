@@ -62,6 +62,7 @@ Runs the game's Demo (`AUTOPLAY=1`: the Campaign Hunter flies the ship, level af
 with sound: 1352x878, 60 fps, stereo AAC. It needs `ffmpeg` on the PATH and uses the pilot installed in
 `assets/neural/campaign_hunter.npz`, so it films whatever Demo would play now, not a particular training run.
 
+- **Timing.** Physics, score/HUD timers, gun cooldowns and Demo transitions all use the video frame clock (60 frames per second). Rendering speed does not change gameplay timing.
 - **Speed.** A fixed timestep with no real-time pacing: about 14 ms of wall clock per frame, so ten minutes of video
   renders in about eight. Drawing the game is most of that.
 - **Sound.** pygame's mixer channels are replaced by a software mixer stepped once per video frame, so every sound

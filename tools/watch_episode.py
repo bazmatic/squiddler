@@ -23,9 +23,10 @@ def episode_jobs(run, iteration):
     """The iteration's jobs, (level, seed, spec, task) each, exactly as training made them, and the shaping they flew
     with.
 
-    The run's settings are its recorded arguments (tools.run_record derives the rest from them): a resume that changed
-    the episode count or levels changes how the iterations before it list (and fly) too.
+    The run's settings are its recorded arguments (tools.run_record derives the rest from them). Resume edits to
+    the episode count or levels are rewound for iterations that preceded the edit.
 
+    Level and episode-count edits are rewound for iterations before a recorded resume.
     Iteration 0 flew the run's start, which a campaign run first migrated to its senses (into iter_start.npz, which
     training deletes when the run ends): its jobs name the start, and flying one migrates it again."""
     from tools import run_record
@@ -34,6 +35,14 @@ def episode_jobs(run, iteration):
     if not run_record.has_settings(config):
         raise SystemExit(f'{run}/config.json records no settings: the run predates replays')
     args, history = run_record.arguments(config), run_record.history(config)
+    # Resume edits apply after their recorded iteration. Rewind the job-cycle
+    # settings for earlier replays so the old episodes keep their level/seed.
+    for edit in reversed(config.get('resume_settings_changes', [])):
+        boundary = edit.get('after_iteration')
+        if boundary is not None and iteration <= boundary:
+            for change in edit.get('changes', []):
+                if change.get('setting') in ('levels', 'episodes') and 'previous' in change:
+                    setattr(args, change['setting'], change['previous'])
     weights = Path(run) / f'iter{iteration - 1:04d}.npz' if iteration else Path(run_record.start(config))
     levels = tuple(args.levels) if args.levels else None
     task = run_record.task_of(config)
@@ -67,8 +76,21 @@ def _fly_campaign(job, shaping, **watching):
     level, seed, spec, _ = job
     rewards = dict(shaping)
     horizon = rewards.pop('horizon', DEFAULT_HORIZON)
+    pursuit_lesson = rewards.pop('pursuit_lesson', False)
+    combat_levels = rewards.pop('combat_practice_levels', None) or ()
+    pursuit_lesson = pursuit_lesson and level not in combat_levels
+    ship_hit_feedback = rewards.pop('ship_hit_feedback', False)
+    graded_shooting = rewards.pop('graded_shooting', False)
+    accuracy_power = rewards.pop('accuracy_power', 1)
+    sticky_targets = rewards.pop('sticky_targets', False)
+    target_recovery = rewards.pop('target_recovery', False)
     return fly_campaign(level, seed, spec, horizon=horizon, shaping=CampaignShaping(**rewards),
-                        policy=start_policy(spec.weights, CAMPAIGN_FEATURE_NAMES), **watching)
+                        policy=start_policy(spec.weights, CAMPAIGN_FEATURE_NAMES), pursuit_lesson=pursuit_lesson,
+                        ship_hit_feedback=ship_hit_feedback,
+                        graded_shooting=graded_shooting,
+                        accuracy_power=accuracy_power,
+                        sticky_targets=sticky_targets, target_recovery=target_recovery,
+                        **watching)
 
 
 def _fly(item):

@@ -88,11 +88,11 @@ def test_the_campaign_hunter_is_declared_in_a_table_and_its_rollout_counts_only_
         recorder.add('not_an_event', 1)
 
 
-def test_the_campaign_rewards_match_the_old_hand_written_sum():
-    """The weights the rollout used to line up by position, against the table's sum by name."""
+def test_the_campaign_reward_columns_match_their_weighted_sum():
+    """The recorded event columns agree with the table's sum by name, including fractional wall impacts."""
     from learning.campaign_rewards import TABLE as CAMPAIGN, CampaignShaping
     shaping = CampaignShaping(compass_following=0.3, shot=-0.5)
-    old_events = ('own_kills', 'pickups', 'beacon', 'wall_crashes', 'following', 'idle', 'exit_progress',
+    old_events = ('own_kills', 'pickups', 'beacon', 'wall_impulse', 'following', 'idle', 'exit_progress',
                   'hunt_progress', 'thrusting', 'shots')
     weights = np.array([shaping.own_kill, shaping.pickup, shaping.beacon, shaping.wall_crash,
                         shaping.compass_following, shaping.idle, shaping.exit_progress,
@@ -102,9 +102,10 @@ def test_the_campaign_rewards_match_the_old_hand_written_sum():
         rows = []
         for _ in range(200):
             row = CAMPAIGN.row()
-            row.update({e: int(rng.integers(0, 3)) for e in ('own_kills', 'pickups', 'beacon', 'wall_crashes',
+            row.update({e: int(rng.integers(0, 3)) for e in ('own_kills', 'pickups', 'beacon',
                                                               'following', 'idle', 'thrusting', 'shots')})
-            row.update(hunt_progress=float(rng.uniform(-0.2, 0.2)), exit_progress=float(rng.uniform(-0.2, 0.2)))
+            row.update(hunt_progress=float(rng.uniform(-0.2, 0.2)), exit_progress=float(rng.uniform(-0.2, 0.2)),
+                       wall_impulse=float(rng.uniform(0, 2)))
             rows.append(row)
         old = np.asarray([[r[e] for e in old_events] for r in rows], dtype=np.float64) @ weights
         old[-1] += {'exited': shaping.exit + (shaping.cleared_exit if cleared else 0.0),
@@ -120,7 +121,9 @@ def test_the_campaign_flags_keep_their_names_and_a_run_records_only_its_settings
     args = ppo_neural.build_parser().parse_args(['--task', 'campaign_hunter', '--shot', '-0.25', '--levels', '1-3'])
     assert {'own_kill', 'cleared_exit', 'score_out', 'compass_following', 'shot'} <= set(vars(args))
     record = ppo_neural.run_record(args)
-    assert set(record) == {'task', 'args', 'observation_version', 'decision_frames', 'turn_rate'}
+    assert set(record) == {'task', 'args', 'observation_version', 'decision_frames', 'turn_rate', 'rules'}
+    assert record['rules'] == {'ship_hit_feedback': True, 'graded_shooting': True, 'accuracy_power': 2,
+                               'sticky_targets': True, 'target_recovery': True}
     assert record['args']['shot'] == -0.25
     shaping = ppo_neural.shaping_from(args)
     assert shaping['shot'] == -0.25 and shaping['wall_crash'] == -1.0 and shaping['horizon'] == args.horizon

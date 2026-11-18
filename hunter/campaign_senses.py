@@ -16,8 +16,9 @@ class ShipBody:
     """The player ship, presenting what the hunter's senses read from a hunter. Everything the ship has
     itself (position, motion, heading, guns, weapon) is the ship's; the rest is read from the game."""
 
-    def __init__(self, ship, game, settings):
+    def __init__(self, ship, game, settings, hit_feedback=True):
         self.ship, self.game, self.settings = ship, game, settings
+        self.hit_feedback = hit_feedback
         self._hit = None
 
     def __getattr__(self, name):
@@ -76,7 +77,8 @@ class ShipBody:
         return 0       # the ship fires whole volleys, not bursts
 
     def take_hit(self):
-        return None    # the ship keeps no record of knocks
+        hit = self.ship.take_hit()
+        return hit if self.hit_feedback else None
 
 
 class CampaignSurroundings:
@@ -110,6 +112,169 @@ CAMPAIGN_HIT_POINT_CELLS = 10.0
 
 class CampaignSenses(Senses):
     hit_point_cells = CAMPAIGN_HIT_POINT_CELLS
+
+    def __init__(self, settings, sticky_targets=False, target_recovery=False):
+        super().__init__(settings)
+        if target_recovery and not sticky_targets:
+            raise ValueError("target recovery requires sticky targeting")
+        self.target_recovery = target_recovery
+        self.sticky_targets = sticky_targets
+        self.preferred_enemy = None
+        self._reset_recovery()
+
+    def reset(self):
+        super().reset()
+        self.preferred_enemy = None
+        self._reset_recovery()
+
+    def observe(self, hunter, maze, enemies, projectiles, powerups, player, last_controls, now):
+        if self.sticky_targets:
+            if self.target_recovery:
+                self._recover_target((hunter.x, hunter.y), maze, enemies, now)
+            else:
+                self._select_target((hunter.x, hunter.y), maze, enemies, now)
+        return super().observe(hunter, maze, enemies, projectiles, powerups, player, last_controls, now)
+
+    def _reset_recovery(self):
+        self._target_disadvantaged_since = None
+        self._target_cooldowns = {}
+        self._target_acquired_at = self._target_progress_at = 0.0
+        self._target_progress_cost = math.inf
+        self._target_hits = None
+        self.target_switch_reason = None
+
+    def _route_cost(self, origin, maze, enemy):
+        route = self._routes.cheapest_route(maze, origin, [(enemy.x, enemy.y)], self.hit_point_cells)
+        if route is None:
+            col = int((enemy.x - maze.offset_x) // maze.cell_size_x)
+            row = int((enemy.y - maze.offset_y) // maze.cell_size_y)
+            on_boundary = (0 <= col < maze.grid_width and 0 <= row < maze.grid_height and
+                           (col in (0, maze.grid_width - 1) or row in (0, maze.grid_height - 1)))
+            if not on_boundary or math.dist(origin, (enemy.x, enemy.y)) > self.settings.sensor_range(maze):
+                return math.inf
+            # Curved rock can leave open space inside a blocked boundary cell.
+            # An enemy there is still attackable along a clear direct segment;
+            # the coarse routing grid must not make us abandon a visible chase.
+            walls = [w for w in list(maze.walls) + list(getattr(maze, 'gate_segments', ())) if w.active]
+            hidden = blocked(origin, [(enemy.x, enemy.y)],
+                             np.array([w.start for w in walls], dtype=float).reshape(-1, 2),
+                             np.array([w.end for w in walls], dtype=float).reshape(-1, 2))[0]
+            return math.inf if hidden else math.dist(origin, (enemy.x, enemy.y))
+        points = [tuple(origin)] + route[1][::-1] + [(enemy.x, enemy.y)]
+        return sum(math.dist(a, b) for a, b in zip(points, points[1:])) + route[2]
+
+    @staticmethod
+    def _remaining_hits(enemy):
+        return float(getattr(enemy, 'effective_hit_points', getattr(enemy, 'hit_points', 1)))
+
+    def _recover_target(self, origin, maze, enemies, now):
+        """Keep productive chases; release stalled ones with hysteresis against switch-back."""
+        self.target_switch_reason = None
+        alive = [e for e in enemies if e.active]
+        self._target_cooldowns = {e: until for e, until in self._target_cooldowns.items()
+                                  if e in alive and until > now}
+        costs = {}
+
+        def cost(enemy):
+            if enemy not in costs:
+                costs[enemy] = self._route_cost(origin, maze, enemy)
+            return costs[enemy]
+
+        def cheapest(candidates):
+            found = self._routes.cheapest_route(maze, origin, [(e.x, e.y) for e in candidates],
+                                                self.hit_point_cells) if candidates else None
+            return candidates[found[0]] if found is not None else None
+
+        current = self.preferred_enemy
+        eligible = [e for e in alive if e not in self._target_cooldowns]
+        best = cheapest(eligible)
+        if best is None:
+            best = cheapest(alive)  # A cooldown must never strand the only reachable enemy.
+        current_cost = cost(current) if current in alive else math.inf
+        forced = current not in alive or not math.isfinite(current_cost)
+        reason = None
+        chosen = current
+        if forced:
+            chosen = best if best is not None else min(alive, key=lambda e: math.dist(origin, (e.x, e.y)), default=None)
+            reason = 'acquired' if current is None else 'unavailable'
+        else:
+            hits = self._remaining_hits(current)
+            cell = max(maze.cell_size_x, maze.cell_size_y)
+            if hits < self._target_hits or self._target_progress_cost - current_cost >= cell * .25:
+                self._target_progress_at = now
+                self._target_progress_cost = current_cost
+            self._target_hits = hits
+            committed = now - self._target_acquired_at < 2.0
+            disadvantaged = best is not None and best is not current and current_cost > 3 * cost(best) + 4 * cell
+            if not committed and disadvantaged:
+                if self._target_disadvantaged_since is None:
+                    self._target_disadvantaged_since = now
+                if now - self._target_disadvantaged_since >= 2.0:
+                    chosen, reason = best, 'disadvantaged'
+            else:
+                self._target_disadvantaged_since = None
+            if reason is None and not committed and now - self._target_progress_at >= 4.0:
+                reach = self.settings.sensor_range(maze)
+                rivals = [e for e in eligible if e is not current and math.dist(origin, (e.x, e.y)) <= reach]
+                walls = [w for w in list(maze.spatial_grid.get_nearby_walls(origin, reach)) +
+                         list(getattr(maze, 'gate_segments', ())) if w.active]
+                hidden = blocked(origin, [(e.x, e.y) for e in rivals],
+                                 np.array([w.start for w in walls]).reshape(-1, 2),
+                                 np.array([w.end for w in walls]).reshape(-1, 2))
+                rivals = [e for e, obscured in zip(rivals, hidden) if not obscured and
+                          current_cost - cost(e) >= max(cell, current_cost * .25)]
+                if rivals:
+                    chosen, reason = min(rivals, key=cost), 'stalled'
+        if chosen is not current:
+            if not forced and current is not None:
+                self._target_cooldowns[current] = now + 6.0
+            self.preferred_enemy = chosen
+            self._target_acquired_at = self._target_progress_at = now
+            self._target_progress_cost = cost(chosen) if chosen is not None else math.inf
+            self._target_hits = self._remaining_hits(chosen) if chosen is not None else None
+            self._target_disadvantaged_since = None
+            self.target_switch_reason = reason
+
+    def _select_target(self, origin, maze, enemies, now):
+        """Keep a living, reachable target through range-order changes and temporary loss of sight.
+
+        A rival must be over three times cheaper, with four cells of slack, for two seconds before we give up
+        a chase. This allows finishing a knocked-away enemy without committing forever to a distant one.
+        """
+        alive = [e for e in enemies if e.active]
+        found = self._routes.cheapest_route(maze, origin, [(e.x, e.y) for e in alive], self.hit_point_cells) if alive else None
+        best = (alive[found[0]] if found is not None else
+                min(alive, key=lambda e: math.dist(origin, (e.x, e.y)), default=None))
+        current = self.preferred_enemy
+        keep = any(e is current for e in alive)
+        if keep and current is not best:
+            route = self._routes.cheapest_route(maze, origin, [(current.x, current.y)], self.hit_point_cells)
+            if route is None and found is not None:
+                keep = False
+            elif route is not None and found is not None:
+                def distance(enemy, result):
+                    points = [tuple(origin)] + result[1][::-1] + [(enemy.x, enemy.y)]
+                    return sum(math.dist(a, b) for a, b in zip(points, points[1:])) + result[2]
+                slack = 4 * max(maze.cell_size_x, maze.cell_size_y)
+                disadvantaged = distance(current, route) > 3 * distance(best, found) + slack
+                if disadvantaged:
+                    if self._target_disadvantaged_since is None:
+                        self._target_disadvantaged_since = now
+                    keep = now - self._target_disadvantaged_since < 2.0
+                else:
+                    self._target_disadvantaged_since = None
+            else:
+                self._target_disadvantaged_since = None
+        else:
+            self._target_disadvantaged_since = None
+        if not keep:
+            self.preferred_enemy = best
+            self._target_disadvantaged_since = None
+
+    def _enemy_compass(self, out, origin, h, reach, starts, ends, maze, enemies):
+        if self.sticky_targets and self.preferred_enemy is not None:
+            enemies = [self.preferred_enemy]
+        super()._enemy_compass(out, origin, h, reach, starts, ends, maze, enemies)
 
     def perceive(self, body, surroundings, last_controls, now):
         """The hunter's vector for `body`, then the exit compass, `exit_open`, the beacon compass, the held weapon

@@ -57,6 +57,7 @@ class Ship(RotatingThrusterShip):
         from rendering.ship_impact import ShipImpact
         self.impact = ShipImpact()
         self.damage_timer = 0
+        self._hit = None  # strongest unshielded non-wall knock since the pilot last observed
         self.glow_phase = 0.0  # For pulsing glow when damaged
         self.prev_thrusting = False  # Track previous frame's thrusting state for sound management
         self.low_power = False  # The game sets this each frame from the power gauge
@@ -286,6 +287,24 @@ class Ship(RotatingThrusterShip):
     def on_circle_collision(self) -> None:
         """Handle circle collision - set damage state."""
         self.flinch()
+
+    def check_circle_collision(self, other_pos, other_radius, other_entity=None) -> bool:
+        before = self.vx, self.vy
+        collided = super().check_circle_collision(other_pos, other_radius, other_entity)
+        if collided:
+            self.record_hit(self.vx - before[0], self.vy - before[1])
+        return collided
+
+    def record_hit(self, dvx, dvy) -> None:
+        """Keep the strongest damaging knock between decisions; walls have separate sight rays."""
+        if self.is_shield_active():
+            return
+        if self._hit is None or dvx * dvx + dvy * dvy > self._hit[0] ** 2 + self._hit[1] ** 2:
+            self._hit = (dvx, dvy)
+
+    def take_hit(self):
+        hit, self._hit = self._hit, None
+        return hit
 
     def flinch(self) -> None:
         if self.is_shield_active():

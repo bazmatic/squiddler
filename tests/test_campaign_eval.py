@@ -43,6 +43,28 @@ def test_kills_per_start_counts_an_episode_at_most_once_however_many_spawned():
     assert summary['own_kills'] == 4.5
 
 
+def test_missing_an_enemy_cannot_improve_the_reported_search_time():
+    seen = dict(row('exited', True), started_unseen=True, first_sighting_seconds=2.0)
+    missed = dict(row('scored_out', False), started_unseen=True, first_sighting_seconds=None,
+                  search_horizon_seconds=60)
+    summary = summarize([seen, missed])
+    assert summary['search_found'] == .5
+    assert summary['search_seconds'] == 31.0
+
+
+def test_pursuit_eval_counts_contact_and_rejects_visible_starts():
+    seen = dict(row('contact', False), pursuit_lesson=True, started_unseen=True,
+                first_sighting_seconds=2, search_horizon_seconds=30)
+    missed = dict(row('horizon', False), pursuit_lesson=True, started_unseen=True,
+                  first_sighting_seconds=None, search_horizon_seconds=30)
+    visible = dict(row('visible_start', False), pursuit_lesson=True, started_unseen=False,
+                   first_sighting_seconds=0)
+    summary = summarize([seen, missed, visible])
+    assert summary['lesson_contact'] == pytest.approx(1/3)
+    assert summary['search_seconds'] == 16
+    assert summary['visible_starts'] == 1
+
+
 @pytest.mark.parametrize('text', ['5-3', '0', '', '1-0', '-2', '3,,4'])
 def test_levels_must_name_a_real_rising_range(text):
     with pytest.raises(ValueError, match='level'):

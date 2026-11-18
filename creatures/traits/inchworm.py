@@ -169,6 +169,7 @@ class Inchworms(Trait):
     @staticmethod
     def _bite(target, enc):
         if target is enc.ship:
+            target.record_hit(0.0, 0.0)  # a bite hurts even when it imparts no momentum
             enc.scoring.record_enemy_collision()
         elif hasattr(target, 'health'):
             from creatures.traits.energy import damage

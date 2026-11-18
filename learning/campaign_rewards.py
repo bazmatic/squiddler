@@ -16,23 +16,52 @@ TABLE = RewardTable((   # starting values, tuned against the Demo bar
     RewardTerm('cleared_exit', REWARD, 100.0, 'Cleared exit',
                'more points for leaving through the exit with no enemy left', 'cleared_exit'),
     RewardTerm('score_out', PENALTY, -100.0, 'Score out', 'points when the score runs out', 'scored_out'),
-    RewardTerm('wall_crash', PENALTY, -1.0, 'Wall crash', 'points per wall crash', 'wall_crashes'),
+    RewardTerm('wall_crash', PENALTY, -1.0, 'Wall impact',
+               'points per ship top-speed unit of collision-induced velocity change; '
+               'glancing and slow contacts cost less, and repeated impacts accumulate', 'wall_impulse'),
     RewardTerm('compass_following', REWARD, 0.0, 'Compass following',
                "points per decision flying with the enemy compass (the exit's once none remain)", 'following'),
     # Ground along the route, in maze widths; moving away costs the same.
     RewardTerm('hunt_progress', REWARD, 20.0, 'Hunt progress',
-               'points per maze width closer to the nearest enemy by route (moving away costs the same)',
+               'points per maze width the ship advances toward its preceding enemy goal by route; '
+               'enemy movement earns nothing and retreat costs the same',
                'hunt_progress'),
     RewardTerm('exit_progress', REWARD, 20.0, 'Exit progress',
-               'points per maze width closer to the open exit by route (moving away costs the same)', 'exit_progress'),
+               'points per maze width the ship advances toward the open exit by route '
+               '(moving away costs the same)', 'exit_progress'),
+    RewardTerm('unseen_progress', REWARD, 0.0, 'Unseen enemy pursuit',
+               'extra points per maze width the ship advances toward an enemy while none is visible; '
+               'retreat costs the same, and enemy movement earns nothing', 'unseen_progress'),
+    RewardTerm('search_contact', REWARD, 0.0, 'Pursuit lesson contact',
+               'points for first seeing an enemy in a pursuit lesson that began with none visible; '
+               'never paid in normal campaign episodes', 'search_contacts'),
     RewardTerm('idle', PENALTY, -0.05, 'Idling', 'points per decision spent coasting at a crawl with no thrust', 'idle'),
     # Fuel is score, so coasting is worth learning.
     RewardTerm('thrust', PENALTY, -0.02, 'Thrusting', 'points per decision with the thruster on', 'thrusting'),
     # Ammunition is score, so each shot is worth aiming.
-    RewardTerm('shot', PENALTY, 0.0, 'Shots fired', 'points per bullet fired', 'shots'),
+    RewardTerm('shot', PENALTY, 0.0, 'Shots fired',
+               'points per shot; graded-shooting runs waive this cost for rough aim toward a seen enemy', 'shots'),
+    RewardTerm('enemy_hit', REWARD, 0.0, 'Damaging hit on an enemy',
+               'points per player projectile hit that reduces enemy health; absorbed shots and ally hits earn nothing',
+               'enemy_hits'),
+    RewardTerm('unaimed_shot', PENALTY, 0.0, 'Unaimed shot',
+               'extra points per shot outside the rough aim window; graded runs use 30 degrees around current '
+               'or intercept bearing at firing time, historical runs use the 20-degree decision snapshot',
+               'unaimed_shots'),
+    RewardTerm('missed_opportunity', PENALTY, 0.0, 'Declined firing opportunity',
+               'points per weapon firing interval spent not firing when ready and roughly aimed toward a seen '
+               'enemy with a clear reachable intercept; historical runs use the strict direct-hit check',
+               'missed_opportunities'),
+    RewardTerm('shot_accuracy', REWARD, .05, 'Shot accuracy',
+               'maximum aim-only points per volley toward a clear predicted intercept; new runs square the '
+               'alignment score so near misses earn very little. Actual damaging hits pay separately.', 'accurate_shots'),
+    RewardTerm('breach_block', REWARD, 0.0, 'Necessary block destroyed',
+               'points per player-destroyed block on a planned breach route while no enemy has an open route; '
+               'partial damage and unrelated blocks earn nothing', 'breach_blocks'),
     # Pivoting from side to side is a shake, not a turn.
     RewardTerm('turn_change', PENALTY, 0.0, 'Direction changes',
-               'points per decision that turns the opposite way from the one before', 'turn_changes'),
+               'points for reversing the last nonzero turn direction; starting or stopping a turn is free',
+               'turn_changes'),
 ), help_prefix='Campaign Hunter: ')
 
 CampaignShaping = TABLE.shaping_class('CampaignShaping', 'Points per event, one field per reward term.')

@@ -27,11 +27,17 @@ class CampaignPilot:
     """Flies the game's ship with a policy on the campaign senses, deciding every `decision_frames` frames and
     holding the controls between. A pilot with no policy holds still."""
 
-    def __init__(self, policy, decision_frames, greedy=True, rng=None):
+    def __init__(self, policy, decision_frames, greedy=True, rng=None, hit_feedback=True, sticky_targets=True, target_recovery=False):
         self.settings = hunter_settings_for('neural')
         self.controller = NeuralController(policy, decision_frames, greedy=greedy, rng=rng)
-        self._senses = CampaignSenses(self.settings)
+        self._senses = CampaignSenses(self.settings, sticky_targets=sticky_targets, target_recovery=target_recovery)
         self._listeners = []
+        self.hit_feedback = hit_feedback
+
+    @property
+    def target_enemy(self):
+        """The persistent pursuit target, or None under historical nearest-enemy rules."""
+        return self._senses.preferred_enemy
 
     def on_observed(self, listener):
         """Call `listener(senses, last_controls)` at each decision, before the policy chooses from those senses
@@ -44,7 +50,7 @@ class CampaignPilot:
         self._senses.reset()
 
     def decide(self, game):
-        body = ShipBody(game.ship, game, self.settings)
+        body = ShipBody(game.ship, game, self.settings, hit_feedback=self.hit_feedback)
         surroundings = CampaignSurroundings(game)
 
         def sense(last_controls, now):

@@ -130,6 +130,12 @@ class TestShipUpdate:
 
 class TestShipCollision:
     """Tests for ship collision detection."""
+
+    def test_a_clear_wall_check_does_not_reuse_the_previous_impact(self):
+        ship = Ship((100, 100))
+        ship.wall_impulse = (4.0, -2.0)
+        assert not ship.check_wall_collision([])
+        assert ship.wall_impulse == (0.0, 0.0)
     
     def test_check_circle_collision_overlapping(self):
         """Ship should detect collision with overlapping circle."""

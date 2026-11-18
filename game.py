@@ -97,8 +97,12 @@ class Game:
     clock_ms = pygame.time.get_ticks  # The same, in milliseconds, for the fire cooldown
     CRITICAL_WARNING_THRESHOLD = config.SETTINGS.game.criticalWarningThreshold
     
-    def __init__(self, screen: pygame.Surface):
-        """Initialize game."""
+    def __init__(self, screen: pygame.Surface, *, clock=None):
+        """Initialize game, optionally using one simulation clock for recording."""
+        self._autoplay_clock = time.monotonic if clock is None else clock
+        if clock is not None:
+            self.clock = clock
+            self.clock_ms = lambda: self.clock() * 1000.0
         self.screen = screen
         from weapons.catalog import RULESET
         self.combat_ruleset = RULESET
@@ -246,8 +250,9 @@ class Game:
         settings = config.SETTINGS.autoplay
         self.autoplay = AutoplayDirector(
             settings.firstLevel, settings.lastLevel, settings.timeLimitSeconds,
-            no_kill_seconds=settings.noKillSeconds)
-        self.ship_pilot = CampaignPilot(load_campaign_policy(), config.SETTINGS.game.neuralDecisionFrames)
+            no_kill_seconds=settings.noKillSeconds, clock=self._autoplay_clock)
+        self.ship_pilot = CampaignPilot(load_campaign_policy(), config.SETTINGS.game.neuralDecisionFrames,
+                                        target_recovery=True)
         self._begin_autoplay_level()
 
     def stop_autoplay(self) -> None:
@@ -1169,7 +1174,7 @@ class Game:
                 hit_wall = projectile.check_wall_collision(self.maze.walls, self.maze.spatial_grid)
                 if hit_wall:
                     # Damage the wall (hit_wall is already a WallSegment)
-                    self.maze.damage_wall(hit_wall, (projectile.x, projectile.y))
+                    self.maze.damage_wall(hit_wall, (projectile.x, projectile.y), source=projectile.source)
             else:
                 # Enemy projectiles just deactivate on wall collision
                 projectile.check_wall_collision(self.maze.walls, self.maze.spatial_grid)

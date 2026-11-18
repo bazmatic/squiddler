@@ -69,6 +69,20 @@ def test_run_data_skips_bad_lines_and_unknown_runs_are_404(setup):
         assert e.value.code == 404
 
 
+def test_campaign_data_serves_wall_penalty_points_without_rewriting_the_log(setup):
+    path = setup['root'] / 'run52'
+    config = json.loads((path / 'config.json').read_text())
+    config.update(task='campaign_hunter')
+    config['args'].update(task='campaign_hunter', wall_crash=-80)
+    (path / 'config.json').write_text(json.dumps(config))
+    text = 'iteration=0 wall_crashes=8 wall_impulse=0.5 update_s=1\n'
+    (path / 'train.log').write_text(text)
+    [row] = get_json(setup, '/api/runs/run52/data')
+    assert row['wall_penalty'] == 40
+    assert row['wall_crashes'] == 8
+    assert (path / 'train.log').read_text() == text
+
+
 def test_settings_carry_their_sources_and_the_levels_to_choose_from(setup):
     values = get_json(setup, '/api/runs/run52/settings')
     assert values['speed_penalty'] == {'value': 3.0, 'source': 'recorded'}

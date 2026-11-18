@@ -84,6 +84,18 @@ def test_start_refuses_while_a_run_is_training_or_paused(root, files, processes)
     assert fake.commands == []
 
 
+def test_macos_python_is_running_and_blocks_an_overlapping_launch(root):
+    from tools.trainer.runs import status
+
+    executable = '/Library/Frameworks/Python.framework/Resources/Python.app/Contents/MacOS/Python'
+    processes = [Process(9, 1, f'{executable} -m tools.ppo_neural --out {root / "run52"}')]
+    assert status(root, processes)['state'] == 'training'
+    fake = FakeLaunch()
+    with pytest.raises(TrainerError, match='run52'):
+        start(root=root, processes=processes, launch=fake)
+    assert fake.commands == []
+
+
 def test_start_refuses_a_run_without_checkpoints_and_unknown_runs(root):
     (root / 'run53').mkdir()
     fake = FakeLaunch()
@@ -277,3 +289,21 @@ def test_a_new_campaign_hunter_run_starts_from_the_shipped_hunter_pilot(root):
     assert command[command.index('--start') + 1] == str(ppo.DEFAULT_START)
     assert command[command.index('--task') + 1] == 'campaign_hunter'
     assert command[command.index('--horizon') + 1] == '180.0'
+
+
+def test_campaign_training_can_resume_with_different_levels(root):
+    path = root / 'run52'
+    config = json.loads((path / 'config.json').read_text())
+    config['task'] = config['args']['task'] = 'campaign_hunter'
+    config['args']['levels'] = [2, 16, 32, 1032]
+    (path / 'config.json').write_text(json.dumps(config))
+    (path / 'state.json').write_text('{"state":"paused","iteration":2}')
+    launch = FakeLaunch()
+    assert resume('run52', root=root, processes=[], launch=launch,
+                  changes={'levels': [2, 32, 1032]}) == 'run52'
+    updated = json.loads((path / 'config.json').read_text())
+    assert updated['args']['levels'] == [2, 32, 1032]
+    change = updated['resume_settings_changes'][-1]
+    assert change['after_iteration'] == 2
+    assert change['changes'][0]['previous'] == [2, 16, 32, 1032]
+    assert '--resume' in launch.commands[0]

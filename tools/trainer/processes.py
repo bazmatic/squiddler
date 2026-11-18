@@ -25,7 +25,7 @@ def list_processes():
 def _is_trainer(words):
     """Python running the trainer itself: `python -m tools.ppo_neural` or `python .../tools/ppo_neural.py`. Not a
     shell or an agent whose command line merely mentions it."""
-    if not words or not Path(words[0]).name.startswith('python'):
+    if not words or not Path(words[0]).name.lower().startswith('python'):
         return False
     if len(words) > 2 and words[1] == '-m' and words[2] == 'tools.ppo_neural':
         return True
