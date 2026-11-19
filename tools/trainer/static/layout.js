@@ -30,6 +30,8 @@ export function groupCharts(layout,row){
   return order.map(name=>[name,layout.metrics.filter(m=>m.section===name).flatMap(m=>{
     const key=[m.key,...m.aliases].find(k=>k in row);return key?[{...m,key}]:[]})]);
 }
+// A plain title for a key no metric declares: 'wall_strikes' -> 'Wall strikes'.
+export const plainTitle=k=>{const t=k.replace(/_+/g,' ').trim();return t.charAt(0).toUpperCase()+t.slice(1)};
 // Other: the row's finite numbers that no metric, alias or hidden key claims, sorted. Strings and booleans never.
 export function unclaimed(layout,row){
   const claimed=new Set(layout.hidden);layout.metrics.forEach(m=>[m.key,...m.aliases].forEach(k=>claimed.add(k)));
@@ -40,7 +42,7 @@ export function render(){
   const last=D.at(-1)||{};
   document.getElementById('strip').innerHTML=renderStrip(layout,D);
   const sections=groupCharts(layout,last).map(([name,metrics])=>[name,metrics.map(m=>chart({title:m.title,sub:m.sub,key:m.key,wide:m.wide,unit:m.unit})).join('')]);
-  sections.push(['Other',unclaimed(layout,last).map(k=>chart({title:esc(k),sub:'',key:k})).join('')]);
+  sections.push(['Other',unclaimed(layout,last).map(k=>chart({title:esc(plainTitle(k)),sub:'',key:k})).join('')]);
   const note=layout.note?`<div class="card wide"><p>${layout.note}</p></div>`:'';
   document.getElementById('charts').innerHTML=note+sections.filter(([,html])=>html).map(([name,html])=>`<h3 class="section">${esc(name)}</h3>${html}`).join('');
   $('chart-range').textContent=D.length?`Showing ${D[0].iteration}–${last.iteration} (${D.length} iterations)`:`No data from iteration ${S.CHART_START} yet`;

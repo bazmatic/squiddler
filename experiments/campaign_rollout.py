@@ -4,6 +4,7 @@ Unlike the hunter harness, nothing is parked or switched off: the exit finishes 
 allied hunter, and the draining score can run out. The episode is paid roughly as a good player would want: its own
 kills, pickups and the beacon pay, wall crashes cost, and leaving through the exit pays most when no enemy is left.
 """
+import functools
 import math
 import random
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from hunter.campaign_senses import CAMPAIGN_FEATURE_NAMES, CAMPAIGN_HIT_POINT_CE
 from hunter.maze_route import MazeRoutes
 from hunter.senses import MAX_ENEMIES
 from learning.campaign_rewards import TABLE, CampaignShaping
+from learning.episode_stats import collecting
 from learning.shooting_rewards import unaimed_shots
 
 PROGRESS_CAP = 0.2         # the most ground one decision can pay or cost, in maze widths
@@ -283,7 +285,7 @@ def _restore(game):
     harness._clear_overrides(game)
 
 
-def fly_campaign(level, seed, spec, horizon=180.0, shaping=CampaignShaping(), greedy=False, *, pilot=None,
+def _fly_campaign(level, seed, spec, horizon=180.0, shaping=CampaignShaping(), greedy=False, *, pilot=None,
                  policy=None, trace=None, low_graphics=True, pursuit_lesson=False, ship_hit_feedback=True,
                  graded_shooting=False, accuracy_power=2, sticky_targets=False, target_recovery=False):
     """One episode on `level` flown by the campaign policy in `spec` (sampled from `spec.sample_seed`, unless it or
@@ -468,3 +470,11 @@ def fly_campaign(level, seed, spec, horizon=180.0, shaping=CampaignShaping(), gr
                               * TABLE.weight(term, vars(shaping))) for term in TABLE.paying}
     return {'senses': senses, 'controls': controls, 'rewards': rewards, 'temperatures': temperatures,
             'result': result, 'reward_totals': totals}
+
+
+@functools.wraps(_fly_campaign)
+def fly_campaign(*args, **kwargs):
+    with collecting() as stats:
+        episode = _fly_campaign(*args, **kwargs)
+    episode['stats'] = dict(stats)   # whatever the episode recorded with learning.episode_stats.record
+    return episode
