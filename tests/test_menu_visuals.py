@@ -304,7 +304,7 @@ class TestSettingsScreen:
 
     def test_main_menu_no_longer_carries_the_key_mappings(self, screen, tmp_path):
         game, _ = self.make_game(tmp_path)
-        assert game.main_menu.menu_options == ["START GAME", "LEVELS", "FUN", "SELECT PROFILE", "SETTINGS", "QUIT"]
+        assert game.main_menu.menu_options == ["START GAME", "LEVELS", "FUN", "SELECT PROFILE", "MULTIPLAYER", "SETTINGS", "QUIT"]
         assert not hasattr(game.main_menu, 'controls_surface')
 
     def test_settings_option_opens_the_screen_and_escape_returns(self, screen, tmp_path):
@@ -375,12 +375,12 @@ def test_the_main_menu_buttons_fit_between_the_title_and_the_profile_badge(monke
     menu = MainMenu(pygame.Surface(size))
     menu.set_profile_info('Player1', 30)
     buttons = [button.get_rect() for button in menu.menu_buttons]
-    assert len(buttons) == (7 if editor else 6)
+    assert len(buttons) == (8 if editor else 7)
     assert buttons[-1].bottom < menu.profile_badge_rect().top
     assert buttons[0].top > menu.menu_title_rect.bottom
 
 
-def test_six_buttons_sit_higher_with_their_normal_spacing(monkeypatch):
+def test_seven_buttons_sit_a_little_higher_and_close_up_only_as_far_as_they_must(monkeypatch):
     from rendering.main_menu import MainMenu
     pygame.init()
     pygame.display.set_mode((320, 240))
@@ -388,5 +388,6 @@ def test_six_buttons_sit_higher_with_their_normal_spacing(monkeypatch):
     monkeypatch.setattr(config, 'SCREEN_HEIGHT', SIZE[1])
     monkeypatch.delenv('LEVEL_EDITOR', raising=False)
     menu = MainMenu(pygame.Surface(SIZE))
-    assert [button.position[1] for button in menu.menu_buttons][:2] == [int(SIZE[1] * 0.42),
-                                                                        int(SIZE[1] * 0.42) + menu._scaled(80)]
+    ys = [button.position[1] for button in menu.menu_buttons]
+    assert ys[0] <= int(SIZE[1] * 0.42)                                    # moved up to make room, never down
+    assert menu.menu_buttons[0].height < ys[1] - ys[0] <= menu._scaled(80)  # packed closer, not touching

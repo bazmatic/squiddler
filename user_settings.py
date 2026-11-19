@@ -9,6 +9,8 @@ from typing import Optional
 import sounds
 
 
+MULTIPLAYER_MODES = ("single", "coop")   # single player, or two ships flying the campaign together
+
 DEFAULT_SETTINGS_PATH = Path(__file__).resolve().parent / "player_settings.json"
 
 
@@ -18,6 +20,7 @@ class UserSettings:
     def __init__(self, path: Optional[Path] = None) -> None:
         self.path = path or DEFAULT_SETTINGS_PATH
         self.sound = True
+        self.multiplayer_mode = "single"
         self._load()
         sounds.set_muted(not self.sound)
 
@@ -31,11 +34,13 @@ class UserSettings:
             return
         if isinstance(raw, dict) and isinstance(raw.get("sound"), bool):
             self.sound = raw["sound"]
+        if isinstance(raw, dict) and raw.get("multiplayer_mode") in MULTIPLAYER_MODES:
+            self.multiplayer_mode = raw["multiplayer_mode"]
 
     def _save(self) -> None:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps({"sound": self.sound}, indent=2))
+            self.path.write_text(json.dumps({"sound": self.sound, "multiplayer_mode": self.multiplayer_mode}, indent=2))
         except OSError:
             pass
 
@@ -44,3 +49,9 @@ class UserSettings:
         self.sound = on
         sounds.set_muted(not on)
         self._save()
+
+    def set_multiplayer_mode(self, mode: str) -> None:
+        """Choose how the game is played: alone, or in a multiplayer mode."""
+        if mode in MULTIPLAYER_MODES:
+            self.multiplayer_mode = mode
+            self._save()

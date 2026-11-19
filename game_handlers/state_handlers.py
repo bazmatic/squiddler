@@ -65,7 +65,7 @@ class MenuStateHandler(StateHandler):
             selected_option = game.main_menu.get_selected_option()
             if selected_option == "START GAME":
                 game.state = config.STATE_PLAYING
-                game.level = game.initial_start_level if game.initial_start_level else game.profile_manager.get_active_level()
+                game.level = game.first_level()
                 game.start_level()
             elif selected_option == "LEVELS":
                 game.level_select_menu.refresh()
@@ -79,6 +79,8 @@ class MenuStateHandler(StateHandler):
             elif selected_option == "SELECT PROFILE":
                 game.profile_selection_menu.refresh_profiles()
                 game.state = config.STATE_PROFILE_SELECTION
+            elif selected_option == "MULTIPLAYER":
+                game.state = config.STATE_MULTIPLAYER
             elif selected_option == "SETTINGS":
                 game.state = config.STATE_SETTINGS
             elif selected_option == "QUIT":
@@ -96,7 +98,7 @@ class MenuStateHandler(StateHandler):
                 selected_option = game.main_menu.get_selected_option()
                 if selected_option == "START GAME":
                     game.state = config.STATE_PLAYING
-                    game.level = game.initial_start_level if game.initial_start_level else game.profile_manager.get_active_level()
+                    game.level = game.first_level()
                     game.start_level()
                 elif selected_option == "LEVELS":
                     game.level_select_menu.refresh()
@@ -110,6 +112,8 @@ class MenuStateHandler(StateHandler):
                 elif selected_option == "SELECT PROFILE":
                     game.profile_selection_menu.refresh_profiles()
                     game.state = config.STATE_PROFILE_SELECTION
+                elif selected_option == "MULTIPLAYER":
+                    game.state = config.STATE_MULTIPLAYER
                 elif selected_option == "SETTINGS":
                     game.state = config.STATE_SETTINGS
                 elif selected_option == "QUIT":
@@ -349,7 +353,9 @@ class SettingsStateHandler(StateHandler):
         self.navigation_debounce_interval = 0.15
 
     def handle_keyboard(self, event: 'pygame.event.Event', game: 'Game') -> bool:
-        menu = game.settings_menu
+        return self._steer_keyboard(event, game, game.settings_menu)
+
+    def _steer_keyboard(self, event: 'pygame.event.Event', game: 'Game', menu) -> bool:
         if event.key in (pygame.K_ESCAPE, pygame.K_q, pygame.K_BACKSPACE):
             game.state = config.STATE_MENU
         elif event.key in (pygame.K_UP, pygame.K_w):
@@ -363,7 +369,9 @@ class SettingsStateHandler(StateHandler):
         return True
 
     def handle_controller(self, event: 'pygame.event.Event', game: 'Game') -> bool:
-        menu = game.settings_menu
+        return self._steer_controller(event, game, game.settings_menu)
+
+    def _steer_controller(self, event: 'pygame.event.Event', game: 'Game', menu) -> bool:
         if event.type == pygame.JOYBUTTONDOWN:
             if game.input_handler.is_controller_menu_cancel_pressed(event.button):
                 game.state = config.STATE_MENU
@@ -392,6 +400,16 @@ class SettingsStateHandler(StateHandler):
                 return False
             return True
         return False
+
+
+class MultiplayerStateHandler(SettingsStateHandler):
+    """The multiplayer screen steers exactly like the settings screen, over its own rows."""
+
+    def handle_keyboard(self, event: 'pygame.event.Event', game: 'Game') -> bool:
+        return self._steer_keyboard(event, game, game.multiplayer_menu)
+
+    def handle_controller(self, event: 'pygame.event.Event', game: 'Game') -> bool:
+        return self._steer_controller(event, game, game.multiplayer_menu)
 
 
 class PlayingStateHandler(StateHandler):
@@ -719,6 +737,7 @@ class StateHandlerRegistry:
             config.STATE_MENU: MenuStateHandler(),
             config.STATE_PROFILE_SELECTION: ProfileSelectionStateHandler(),
             config.STATE_SETTINGS: SettingsStateHandler(),
+            config.STATE_MULTIPLAYER: MultiplayerStateHandler(),
             config.STATE_LEVEL_SELECT: LevelSelectStateHandler(),
             config.STATE_FUN: FunStateHandler(),
             config.STATE_EDITOR: EditorStateHandler(),
