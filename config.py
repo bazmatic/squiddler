@@ -395,6 +395,8 @@ class AutoplaySettings:
     # while enemies remain (0 turns that off).
     timeLimitSeconds: float = 120.0
     noKillSeconds: float = 20.0
+    # How long the level-complete tally shows after the ship reaches the exit, before Demo moves on.
+    tallySeconds: float = 4.0
 
 
 @dataclass

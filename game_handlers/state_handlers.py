@@ -531,12 +531,11 @@ class LevelCompleteStateHandler(StateHandler):
         elif event.key == pygame.K_SPACE or event.key == pygame.K_RETURN:
             selected_option = game.level_complete_menu.get_selected_option()
             if selected_option == "CONTINUE":
-                game.level += 1
-                game.state = config.STATE_PLAYING
-                game.start_level()
+                game.continue_after_level_complete()
             elif selected_option == "RETRY LEVEL":
                 game.restart_level()
             elif selected_option == "MAIN MENU":
+                game.stop_autoplay()
                 game.state = config.STATE_MENU
                 game.reset_scoring_to_profile_state()
             return True
@@ -592,6 +591,7 @@ class LevelCompleteStateHandler(StateHandler):
     def _apply_quit_selection(self, game: 'Game') -> bool:
         """Execute the active quit confirmation choice."""
         if game.quit_confirmation_selection == 0:
+            game.stop_autoplay()
             game.state = config.STATE_MENU
             game.reset_scoring_to_profile_state()
         else:
@@ -605,12 +605,11 @@ class LevelCompleteStateHandler(StateHandler):
             if game.input_handler.is_controller_menu_confirm_pressed(event.button):
                 selected_option = game.level_complete_menu.get_selected_option()
                 if selected_option == "CONTINUE":
-                    game.level += 1
-                    game.state = config.STATE_PLAYING
-                    game.start_level()
+                    game.continue_after_level_complete()
                 elif selected_option == "RETRY LEVEL":
                     game.restart_level()
                 elif selected_option == "MAIN MENU":
+                    game.stop_autoplay()
                     game.state = config.STATE_MENU
                     game.reset_scoring_to_profile_state()
                 return True
@@ -657,6 +656,7 @@ class FunStateHandler(StateHandler):
         if event.key in (pygame.K_RETURN, pygame.K_SPACE):
             return self._start(game)
         if event.key in (pygame.K_ESCAPE, pygame.K_q):
+            game.stop_autoplay()
             game.state = config.STATE_MENU
             return True
         return False
@@ -666,6 +666,7 @@ class FunStateHandler(StateHandler):
             if game.input_handler.is_controller_menu_confirm_pressed(event.button):
                 return self._start(game)
             if game.input_handler.is_controller_menu_cancel_pressed(event.button):
+                game.stop_autoplay()
                 game.state = config.STATE_MENU
                 return True
         now = time.monotonic()

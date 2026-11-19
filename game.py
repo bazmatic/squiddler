@@ -922,6 +922,9 @@ class Game:
             # Update star animation during level complete
             if self.star_animation:
                 self.star_animation.update(dt)
+            if (self.autoplay is not None and not self.level_complete_quit_confirm
+                    and self.clock() - self.level_complete_time >= config.SETTINGS.autoplay.tallySeconds):
+                self.continue_after_level_complete()
             return
         
         if self.state != config.STATE_PLAYING:
@@ -1279,9 +1282,8 @@ class Game:
             success: True if level was completed successfully (reached exit),
                      False if level failed (score reached zero)
         """
-        if self.autoplay is not None:
-            # Demo records nothing: the next level follows.
-            self._autoplay_level_over('exited' if success else 'scored_out')
+        if self.autoplay is not None and not success:
+            self._autoplay_level_over('scored_out')   # no tally for a level that was lost: the next one follows
             return
         self._close_hunter()
         current_time = self.clock()
@@ -1310,7 +1312,7 @@ class Game:
         star_flags = earned(tally)
         self.star_lines = describe(tally)
         self.level_result = None
-        if success:
+        if success and self.autoplay is None:
             self.level_result = self.profile_manager.record_level_result(
                 self.level, final_score, completion_time, star_count(star_flags),
             )
@@ -1334,7 +1336,7 @@ class Game:
                 star_y,
                 star_size=config.LEVEL_COMPLETE_STAR_SIZE,
                 previous_stars=(self.level_result.previous_best.stars
-                                if self.level_result.previous_best else None)
+                                if self.level_result is not None and self.level_result.previous_best else None)
             )
             # Set sound callback
             self.star_animation.set_sound_callback(self.sound_manager.play_tinkling)
@@ -1345,6 +1347,15 @@ class Game:
         self.level_complete_quit_confirm = False
         self.state = config.STATE_LEVEL_COMPLETE
     
+    def continue_after_level_complete(self) -> None:
+        """Leave the level-complete screen for the next level (in Demo, the director's next one)."""
+        if self.autoplay is not None:
+            self._autoplay_level_over('exited')
+        else:
+            self.level += 1
+            self.state = config.STATE_PLAYING
+            self.start_level()
+
     def draw(self) -> None:
         """Draw game state."""
         self.screen.fill(config.COLOR_BACKGROUND)
