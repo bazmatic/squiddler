@@ -4,6 +4,8 @@ from typing import Optional, Tuple
 from scoring.system import ScoringSystem
 
 
+ANY_CONTROLLER = -1     # a player whose ship every connected controller flies (turns passed between players)
+
 PLAYER_2_COLOR = (255, 170, 60)
 PLAYER_2_PALETTE = ((255, 220, 160), (230, 110, 30), PLAYER_2_COLOR)   # nose, rear, glow
 

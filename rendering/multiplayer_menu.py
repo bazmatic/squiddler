@@ -12,8 +12,8 @@ from rendering.menu_components import (
 )
 
 WARNING_TEXT = (255, 190, 120)
-MODE_NAMES = {"single": "SINGLE PLAYER", "coop": "CAMPAIGN CO-OP", "race": "CAMPAIGN RACE"}
-NEXT_MODE = {"single": "coop", "coop": "race", "race": "single"}
+MODE_NAMES = {"single": "SINGLE PLAYER", "compete": "LEVEL COMPETITION", "coop": "CAMPAIGN CO-OP", "race": "CAMPAIGN RACE"}
+NEXT_MODE = {"single": "compete", "compete": "coop", "coop": "race", "race": "single"}
 PLAYER_2_NAMES = {"human": "HUMAN", "hunter": "CAMPAIGN HUNTER"}
 
 
@@ -57,6 +57,10 @@ class MultiplayerMenu:
 
     def devices(self) -> Tuple[List[Tuple[str, str]], Optional[str]]:
         """Who flies which ship in the chosen mode, as (player, device) lines, and a warning when it cannot be played."""
+        if self.game.mode == 'compete':
+            hunter = self.game.user_settings.player2 == 'hunter'
+            return [("PLAYER 1", "ANY KEYBOARD OR CONTROLLER"),
+                    ("PLAYER 2", "CAMPAIGN HUNTER" if hunter else "ANY KEYBOARD OR CONTROLLER")], None
         if not self.game.coop:
             return [("PLAYER 1", "KEYBOARD OR CONTROLLER")], None
         controllers = len(self.game.input_handler.get_controllers())

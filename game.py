@@ -16,7 +16,7 @@ from rendering.exit_panel import draw_exit_panel
 from rendering.last_enemy_ring import draw_last_enemy_ring
 from rendering.star_row import STAR_ROW_SIZE, STAR_ROW_Y, draw_star_row
 from entities.ship import Ship, LOW_POWER_THRESHOLD
-from entities.player import Player, PLAYER_2_COLOR, PLAYER_2_PALETTE
+from entities.player import ANY_CONTROLLER, Player, PLAYER_2_COLOR, PLAYER_2_PALETTE
 from flora import Flora
 from maze.generator import Maze
 from physics.obstacle_world import ObstacleWorld
@@ -44,6 +44,8 @@ from rendering.level_complete_menu import LevelCompleteMenu
 from rendering.profile_selection_menu import ProfileSelectionMenu
 from rendering.settings_menu import SettingsMenu
 from rendering.multiplayer_menu import MultiplayerMenu
+from rendering.competition_screens import CompetitionScreens
+from game_handlers.competition import Competition
 from rendering.level_select_menu import LevelSelectMenu
 from rendering.fun_menu import FunMenu
 from rendering.level_editor import LevelEditor
@@ -109,6 +111,8 @@ class Game:
                               lambda self, t: setattr(self.players[0], 'last_shot_time', t))
 
     _player2_pilot = None
+    compete = False
+    competition: Optional[Competition] = None   # the level's pair of turns, in Level competition
     race = False
     race_winner = None   # in a race, the index of the player through the portal first
     coop = False   # two ships fly each level together as a team (set from the settings in __init__)
@@ -187,6 +191,7 @@ class Game:
         self.players: List[Player] = [Player()]   # always at least one; players[0] is `ship`, `scoring`, `ship_pilot`
         self.coop = self.user_settings.multiplayer_mode in ('coop', 'race')   # two ships fly each level together
         self.race = self.user_settings.multiplayer_mode == 'race'   # ... racing to the portal rather than as a team
+        self.compete = self.user_settings.multiplayer_mode == 'compete'   # one ship at a time, the players in turn
         self.race_points = [0, 0]      # levels won so far by Player 1 and Player 2
         self.race_summary: Optional[list] = None   # the level-complete figures in a race: (label, value) rows
         self.maze: Optional[Maze] = None
@@ -291,6 +296,7 @@ class Game:
         self.main_menu = MainMenu(screen)
         self.settings_menu = SettingsMenu(screen, self.user_settings)
         self.multiplayer_menu = MultiplayerMenu(screen, self)
+        self.competition_screens = CompetitionScreens(screen)
         self.level_select_menu = LevelSelectMenu(screen, self.profile_manager)
         self.fun_menu = FunMenu(screen)
         self.level_editor = LevelEditor(self, screen)
@@ -401,16 +407,77 @@ class Game:
     @property
     def mode(self) -> str:
         """How the game is played: 'single', 'coop' or 'race'."""
-        return 'race' if self.race else 'coop' if self.coop else 'single'
+        return 'race' if self.race else 'coop' if self.coop else 'compete' if self.compete else 'single'
 
     def set_mode(self, mode: str) -> None:
         """Play alone, as a co-op pair, or racing, from the next level on, and remember the choice."""
         self.coop = mode in ('coop', 'race')
         self.race = mode == 'race'
+        self.compete = mode == 'compete'
+        self.competition = None
         self.user_settings.set_multiplayer_mode(mode)
 
     def set_coop(self, coop: bool) -> None:
         self.set_mode('coop' if coop else 'single')
+
+    def begin_play(self, level: int, from_levels: bool = False) -> None:
+        """START GAME (level 1 in a multiplayer mode) or a level picked from LEVELS: play it in the chosen mode."""
+        self.new_race()
+        self.competition = None
+        if self.compete:
+            self.competition = Competition(level, from_levels)
+            self._show_turn()
+            return
+        self.level = level
+        self.state = config.STATE_PLAYING
+        self.start_level()
+
+    def _hunter_takes(self, player: Optional[int]) -> bool:
+        return player == 1 and self.user_settings.player2 == 'hunter'
+
+    def _show_turn(self) -> None:
+        """Say whose turn it is next, and wait for a button."""
+        self.sound_manager.stop_all_sounds()
+        self.state = config.STATE_TURN
+
+    def start_turn(self) -> None:
+        """The player whose turn it is flies the level: the same seed as the other's turn, so the same layout."""
+        competition = self.competition
+        player = competition.current
+        self.level = competition.level
+        self.state = config.STATE_PLAYING
+        self.start_level(maze_seed=level_config.get_level_seed(competition.level))
+        me = self.players[0]
+        me.keyboard, me.controller = True, ANY_CONTROLLER      # every device flies whichever ship is flying
+        me.driver = self._hunter_driver() if self._hunter_takes(player) else None
+        me.color = (config.COLOR_SHIP, PLAYER_2_COLOR)[player]
+        me.ship.palette = PLAYER_2_PALETTE if player == 1 else None
+
+    def _finish_turn(self, score: float) -> None:
+        """A turn is over: on to the other player's turn, or to the results once both have flown."""
+        competition = self.competition
+        competition.record(score)
+        self.players[0].driver = None
+        self.state = config.STATE_COMPETITION_RESULT if competition.finished else config.STATE_TURN
+        self.sound_manager.stop_all_sounds()
+
+    def leave_competition_result(self) -> None:
+        """From the results: back to the level list, or on to the next round of a campaign."""
+        following = self.competition.next_round()
+        if following is None:
+            self.competition = None
+            self.level_select_menu.refresh()
+            self.state = config.STATE_LEVEL_SELECT
+            return
+        self.competition = following
+        self._show_turn()
+
+    def leave_competition(self) -> None:
+        """Give up the competition for the main menu."""
+        self.competition = None
+        self.players[0].driver = None
+        self.state = config.STATE_MENU
+        self.reset_scoring_to_profile_state()
 
     def new_race(self) -> None:
         """A new run of races: the points start again from nothing."""
@@ -418,7 +485,7 @@ class Game:
 
     def first_level(self) -> int:
         """The level START GAME begins at: the profile's, or level 1 in a multiplayer mode."""
-        if self.coop:
+        if self.mode != 'single':
             return 1
         return self.initial_start_level if self.initial_start_level else self.profile_manager.get_active_level()
 
@@ -1009,6 +1076,12 @@ class Game:
                     handler = self.state_handler_registry.get_handler(self.state)
                     handler.handle_keyboard(event, self)
     
+    def _controllers_of(self, player: Player) -> list:
+        """The indices of the controllers that fly this player's ship: none, one, or every connected one."""
+        if player.controller == ANY_CONTROLLER:
+            return list(range(len(self.input_handler.get_controllers())))
+        return [] if player.controller is None else [player.controller]
+
     def _drive_player(self, player: Player, keyboard_commands: List[CommandType], keys, ignore_input: bool,
                       should_filter_commands: bool, dt: float) -> None:
         """One frame of a player's ship: its driver or the input from its own devices (a pilot replaces them), shield
@@ -1020,10 +1093,12 @@ class Game:
         if self.coop and not player.has_moved:
             player.scoring.level_start_time = self.clock()   # this ship's time drain starts when it first moves
         commands = list(keyboard_commands) if player.keyboard else []
-        if not ignore_input and player.controller is not None:
-            for cmd in self.input_handler.process_controller_input(player.controller):
-                if cmd not in commands:
-                    commands.append(cmd)
+        controllers = self._controllers_of(player)
+        if not ignore_input:
+            for index in controllers:
+                for cmd in self.input_handler.process_controller_input(index):
+                    if cmd not in commands:
+                        commands.append(cmd)
         if player.driver is not None:
             # The first player's driver is asked as it always was; a second player's is told whose ship it flies
             pilot_command = (player.driver.decide(self) if player is self.players[0]
@@ -1049,7 +1124,7 @@ class Game:
         # Down/S (or controller A) advances once per press in inventory games.
         cycle_pressed = bool(
             (player.keyboard and (keys[pygame.K_DOWN] or keys[pygame.K_s]))
-            or (player.controller is not None and self.input_handler.is_controller_shield_pressed(player.controller)))
+            or any(self.input_handler.is_controller_shield_pressed(index) for index in controllers))
         from weapons import WeaponInventory
         inventory = isinstance(player.ship.weapon, WeaponInventory)
         if inventory:
@@ -1075,8 +1150,7 @@ class Game:
                 fire_key_pressed = player.keyboard and keys[pygame.K_SPACE]
             except (IndexError, KeyError):
                 pass
-            if player.controller is not None:
-                fire_controller_pressed = self.input_handler.is_controller_fire_pressed(player.controller)
+            fire_controller_pressed = any(self.input_handler.is_controller_fire_pressed(i) for i in controllers)
         
         fire_pressed = fire_key_pressed or fire_controller_pressed
         
@@ -1176,6 +1250,8 @@ class Game:
             self.settings_menu.update(dt)
         elif self.state == config.STATE_MULTIPLAYER:
             self.multiplayer_menu.update(dt)
+        elif self.state in (config.STATE_TURN, config.STATE_COMPETITION_RESULT):
+            self.competition_screens.update(dt)
             return
         elif self.state == config.STATE_LEVEL_COMPLETE:
             self.level_complete_menu.update(dt)
@@ -1533,6 +1609,9 @@ class Game:
         self.race_summary = self._race_summary(success) if self.race and len(self.players) > 1 else None
         final_score = self.level_score_breakdown.get('final_score', 0)
         tally = self.finish_tally if self.finish_tally is not None else self.star_tally()
+        if self.competition is not None:
+            self._finish_turn(final_score if success else 0)   # a turn is scored for the competition, not the profile
+            return
         star_flags = earned(tally)
         self.star_lines = describe(tally)
         self.level_result = None
@@ -1597,6 +1676,11 @@ class Game:
             self.settings_menu.draw()
         elif self.state == config.STATE_MULTIPLAYER:
             self.multiplayer_menu.draw()
+        elif self.state == config.STATE_TURN:
+            self.competition_screens.draw_turn(self.competition, self._hunter_takes(self.competition.current))
+        elif self.state == config.STATE_COMPETITION_RESULT:
+            self.competition_screens.draw_result(
+                self.competition, 1 if self.user_settings.player2 == 'hunter' else None)
         elif self.state == config.STATE_FUN:
             self.fun_menu.draw()
         elif self.state == config.STATE_EDITOR:
@@ -1757,9 +1841,14 @@ class Game:
                     level_score=potential['final_score'],
                     progress_score=self.scoring.get_total_score()
                 )
+                if self.competition is not None:    # whose turn it is, in their colour
+                    from rendering.competition_screens import PLAYER_COLOURS, player_name
+                    turn = self.competition.current
+                    self.screen.blit(get_font(18).render(player_name(turn, self._hunter_takes(turn)), True,
+                                                         PLAYER_COLOURS[turn]), (12, 6))
             self._draw_hunter_energy(below=exit_panel.bottom)
             self.announcer.draw(self.screen)
-            if self.star_indicator.flags and len(self.players) == 1:   # the stars are one player's
+            if self.star_indicator.flags and len(self.players) == 1 and self.competition is None:   # a turn is scored by power
                 lit = self.star_indicator.star_count  # The row fills from the left, whichever goals are met
                 draw_star_row(self.screen, tuple(i < lit for i in range(5)), self.par_pulse(),
                               (config.UI_ZONE_WIDTH // 2, STAR_ROW_Y), STAR_ROW_SIZE)
@@ -1770,7 +1859,7 @@ class Game:
             for ship in self.ships:
                 ship.draw_death(self.screen)
 
-        if not self.exit_explosion_active and not (self.race and not self.game_over_active):   # no restarting a race
+        if not self.exit_explosion_active and not ((self.race or self.competition is not None) and not self.game_over_active):   # a race and a turn are single attempts
             hint = self.restart_hints[bool(self.input_handler.get_controllers())]
             if self.game_over_active:
                 # Keep the retry prompt visible over the fade, below GAME OVER.

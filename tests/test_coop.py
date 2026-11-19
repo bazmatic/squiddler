@@ -197,6 +197,7 @@ def test_the_multiplayer_menu_switches_the_mode_and_remembers_it(make_game, tmp_
     game.user_settings = UserSettings(tmp_path / 'player_settings.json')   # never the player's real file
     game.coop = False
     assert game.multiplayer_menu.rows[0].read() == 'SINGLE PLAYER'
+    game.multiplayer_menu.toggle_selected()      # level competition comes first
     game.multiplayer_menu.toggle_selected()
     assert game.coop and game.multiplayer_menu.rows[0].read() == 'CAMPAIGN CO-OP'
     assert UserSettings(tmp_path / 'player_settings.json').multiplayer_mode == 'coop'
@@ -387,14 +388,15 @@ def test_the_race_works_with_the_campaign_hunter_as_the_rival(make_game, monkeyp
     assert game.race and game.players[1].driver is not None and game.players[1].controller is None
 
 
-def test_the_mode_cycles_single_coop_race_and_is_remembered(make_game):
+def test_the_mode_cycles_through_every_mode_and_is_remembered(make_game):
     from user_settings import UserSettings
     game = make_game(autoplay=False)
     game.set_mode('single')
     names = []
-    for _ in range(3):
+    for _ in range(4):
         game.multiplayer_menu.toggle_selected()
         names.append(game.multiplayer_menu.rows[0].read())
-    assert names == ['CAMPAIGN CO-OP', 'CAMPAIGN RACE', 'SINGLE PLAYER']
-    game.multiplayer_menu.toggle_selected(); game.multiplayer_menu.toggle_selected()
+    assert names == ['LEVEL COMPETITION', 'CAMPAIGN CO-OP', 'CAMPAIGN RACE', 'SINGLE PLAYER']
+    for _ in range(3):
+        game.multiplayer_menu.toggle_selected()
     assert game.mode == 'race' and UserSettings().multiplayer_mode == 'race'
