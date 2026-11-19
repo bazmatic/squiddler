@@ -9,6 +9,7 @@ from typing import Optional
 import sounds
 
 
+PLAYER_2 = ("human", "hunter")   # who flies the second ship: a person, or the Campaign Hunter
 MULTIPLAYER_MODES = ("single", "coop")   # single player, or two ships flying the campaign together
 
 DEFAULT_SETTINGS_PATH = Path(__file__).resolve().parent / "player_settings.json"
@@ -21,6 +22,7 @@ class UserSettings:
         self.path = path or DEFAULT_SETTINGS_PATH
         self.sound = True
         self.multiplayer_mode = "single"
+        self.player2 = "human"
         self._load()
         sounds.set_muted(not self.sound)
 
@@ -36,11 +38,14 @@ class UserSettings:
             self.sound = raw["sound"]
         if isinstance(raw, dict) and raw.get("multiplayer_mode") in MULTIPLAYER_MODES:
             self.multiplayer_mode = raw["multiplayer_mode"]
+        if isinstance(raw, dict) and raw.get("player2") in PLAYER_2:
+            self.player2 = raw["player2"]
 
     def _save(self) -> None:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps({"sound": self.sound, "multiplayer_mode": self.multiplayer_mode}, indent=2))
+            self.path.write_text(json.dumps({"sound": self.sound, "multiplayer_mode": self.multiplayer_mode,
+                                              "player2": self.player2}, indent=2))
         except OSError:
             pass
 
@@ -54,4 +59,10 @@ class UserSettings:
         """Choose how the game is played: alone, or in a multiplayer mode."""
         if mode in MULTIPLAYER_MODES:
             self.multiplayer_mode = mode
+            self._save()
+
+    def set_player2(self, who: str) -> None:
+        """Choose who flies the second ship."""
+        if who in PLAYER_2:
+            self.player2 = who
             self._save()

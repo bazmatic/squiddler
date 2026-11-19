@@ -16,8 +16,9 @@ class ShipBody:
     """The player ship, presenting what the hunter's senses read from a hunter. Everything the ship has
     itself (position, motion, heading, guns, weapon) is the ship's; the rest is read from the game."""
 
-    def __init__(self, ship, game, settings, hit_feedback=True):
+    def __init__(self, ship, game, settings, hit_feedback=True, player=None):
         self.ship, self.game, self.settings = ship, game, settings
+        self.player = player if player is not None else game.players[0]   # whose power and gun clock these are
         self.hit_feedback = hit_feedback
         self._hit = None
 
@@ -29,7 +30,7 @@ class ShipBody:
         """How far the level's potential score is from running out (the ship's nearness to death), on the hunter's
         health scale. Kills bank more than the level's maximum, but that is not safety: the share stops at 1, so the
         sense says only how close to scoring out the ship is, not how well it has done."""
-        game, scoring = self.game, self.game.scoring
+        game, scoring = self.game, self.player.scoring
         potential = scoring.calculate_current_potential_score(game.clock(), self.ship.fuel, self.ship.ammo)
         share = potential['potential_score'] / scoring.calculate_max_possible_score()
         return min(share, 1.0) * self.settings.health
@@ -69,7 +70,7 @@ class ShipBody:
         weapon = self._held()
         if weapon is not None:
             return weapon.view.cooldown / config.FPS
-        ready_at = getattr(self.game, 'last_shot_time', 0) + self.fire_interval * 1000
+        ready_at = self.player.last_shot_time + self.fire_interval * 1000
         return max(0.0, ready_at - self.game.clock_ms()) / 1000
 
     @property
@@ -85,8 +86,9 @@ class CampaignSurroundings:
     """A level's surroundings as the Campaign Hunter sees them from the ship: every enemy, every projectile, the
     powerups except Jev beacons, and the allied hunter. The game stays reachable for the exit and the beacon."""
 
-    def __init__(self, game):
+    def __init__(self, game, player=None):
         self.game = game
+        self.player = player
 
     @property
     def maze(self):
@@ -102,7 +104,17 @@ class CampaignSurroundings:
         return [c for c in self.game.powerup_crystals if c.active and not isinstance(c, JevBeacon)]
 
     def friend(self):
-        return self.game.hunter
+        """The ally to keep clear of and not shoot: the allied hunter or, in co-op, the other player's ship, whichever
+        is nearer and still flying."""
+        game, me = self.game, self.player
+        if me is None:
+            return game.hunter      # no player named: a scene with just the one ship
+        others = [p.ship for p in game.players if p is not me and p.flying and p.ship is not None and p.ship.active]
+        if not others:
+            return game.hunter
+        candidates = others + ([game.hunter] if game.hunter is not None and game.hunter.active else [])
+        mine = me.ship
+        return min(candidates, key=lambda c: (c.x - mine.x) ** 2 + (c.y - mine.y) ** 2)
 
 
 # Shooting through a wall block takes time the ship could spend flying, so the campaign pilot's routes (and the ground its

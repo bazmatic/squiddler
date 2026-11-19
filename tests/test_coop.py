@@ -219,3 +219,83 @@ def test_the_multiplayer_menu_says_when_player_two_has_no_controller(make_game, 
     assert lines[1] == ('PLAYER 2', 'NO CONTROLLER') and warning
     monkeypatch.setattr(game.input_handler, 'get_controllers', lambda: [object()])
     assert game.multiplayer_menu.devices() == ([('PLAYER 1', 'KEYBOARD'), ('PLAYER 2', 'CONTROLLER')], None)
+
+
+class _Pilot:
+    """A stand-in Campaign Hunter: flies straight ahead and fires; remembers whose ship it was asked about."""
+
+    def __init__(self):
+        self.asked = []
+
+    def reset(self):
+        pass
+
+    def decide(self, game, player=None):
+        from hunter.campaign_pilot import ShipCommand
+        self.asked.append(player)
+        return ShipCommand(0, True, False)
+
+
+def test_the_campaign_hunter_can_fly_player_two_with_no_controller(coop, monkeypatch):
+    pilot = _Pilot()
+    monkeypatch.setattr(coop, '_hunter_driver', lambda: pilot)
+    coop.user_settings.player2 = 'hunter'
+    monkeypatch.setattr(coop.input_handler, 'get_controllers', lambda: [])
+    coop.start_level()
+    coop.level_start_time -= 10
+    first, second = coop.players
+    assert second.driver is pilot and second.controller is None and not second.keyboard
+    before = (second.ship.x, second.ship.y)
+    step(coop, monkeypatch, frames=10)
+    assert second.has_moved and pilot.asked and all(p is second for p in pilot.asked)
+    assert (second.ship.x, second.ship.y) != before and not first.has_moved     # the hunter moved, the keyboard did not
+
+
+def test_the_hunter_as_player_two_is_flown_with_its_own_power_and_friend(make_game, monkeypatch):
+    from hunter.campaign_pilot import CampaignPilot
+    from hunter.campaign_senses import CampaignSurroundings, ShipBody
+    game = make_game(autoplay=False)
+    game.coop = True
+    game.state = config.STATE_PLAYING
+    game.start_level()
+    first, second = game.players
+    second.scoring.record_wall_collision()
+    body = ShipBody(second.ship, game, CampaignPilot.__init__.__globals__['hunter_settings_for']('neural'), player=second)
+    assert body.player is second
+    assert CampaignSurroundings(game, second).friend() is first.ship      # the other ship is a friend
+    assert CampaignSurroundings(game, first).friend() is second.ship
+    second.dropped_out = True
+    assert CampaignSurroundings(game, first).friend() is game.hunter      # a ship out of play is no friend to follow
+
+
+def test_the_menu_chooses_a_hunter_for_player_two_and_remembers_it(make_game, tmp_path):
+    from user_settings import UserSettings
+    game = make_game(autoplay=False)
+    game.user_settings = UserSettings(tmp_path / 'player_settings.json')
+    game.coop = True
+    row = game.multiplayer_menu.rows[1]
+    assert row.read() == 'HUMAN'
+    row.toggle()
+    assert row.read() == 'CAMPAIGN HUNTER' and UserSettings(tmp_path / 'player_settings.json').player2 == 'hunter'
+    lines, warning = game.multiplayer_menu.devices()
+    assert lines[1] == ('PLAYER 2', 'CAMPAIGN HUNTER') and warning is None
+
+
+def test_the_real_campaign_pilot_flies_player_two_through_frames_of_a_co_op_level(make_game, monkeypatch):
+    from hunter.campaign_pilot import CampaignPilot
+    from tests.test_campaign_demo import StubPolicy
+    game = make_game(autoplay=False, policy=StubPolicy((1, True, False)))    # turn right and thrust
+    game.coop = True
+    game.user_settings.player2 = 'hunter'
+    monkeypatch.setattr(game.input_handler, 'get_controllers', lambda: [])
+    game.state = config.STATE_PLAYING
+    game.start_level()
+    game.level_start_time -= 10
+    first, second = game.players
+    assert isinstance(second.driver, CampaignPilot) and second.controller is None
+    monkeypatch.setattr(pygame.key, 'get_pressed', hold(set()))
+    for _ in range(300):
+        game.update(1.0)
+    assert second.has_moved                       # the hunter set off by itself, with no controller
+    assert not first.has_moved or first.keyboard  # nobody touched the keyboard
+    assert not game.game_over_active or all(p.dropped_out for p in game.players)

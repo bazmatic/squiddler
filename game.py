@@ -108,6 +108,7 @@ class Game:
     last_shot_time = property(lambda self: self.players[0].last_shot_time,
                               lambda self, t: setattr(self.players[0], 'last_shot_time', t))
 
+    _player2_pilot = None
     coop = False   # two ships fly each level together as a team (set from the settings in __init__)
 
     @property
@@ -379,6 +380,19 @@ class Game:
         # first clear has already unlocked the next level in the profile.
         self.replaying = replaying
 
+    def _hunter_driver(self) -> CampaignPilot:
+        """The Campaign Hunter as a player's driver, fresh for the level."""
+        pilot = self._player2_pilot
+        if pilot is None:
+            pilot = self._player2_pilot = CampaignPilot(
+                load_campaign_policy(), config.SETTINGS.game.neuralDecisionFrames, target_recovery=True)
+        pilot.reset()
+        return pilot
+
+    def set_player2(self, who: str) -> None:
+        """Player 2 is a person ('human') or the Campaign Hunter ('hunter'); remembered."""
+        self.user_settings.set_player2(who)
+
     def set_coop(self, coop: bool) -> None:
         """Play alone or as a co-op pair from the next level on, and remember the choice."""
         self.coop = coop
@@ -424,6 +438,8 @@ class Game:
             self.players[0].color = config.COLOR_SHIP
             self.players[1].color = PLAYER_2_COLOR
             self.players[1].ship.palette = PLAYER_2_PALETTE
+            if self.user_settings.player2 == 'hunter':
+                self.players[1].driver = self._hunter_driver()
 
     def _assign_devices(self) -> None:
         """Who flies which ship. Alone, the keyboard and the first controller fly it. In co-op with two controllers the
@@ -435,6 +451,9 @@ class Game:
         controllers = len(self.input_handler.get_controllers())
         second = rest[0]
         second.keyboard = False
+        if self.user_settings.player2 == 'hunter':
+            first.controller, second.controller = (0 if controllers else None), None   # the hunter needs no controller
+            return
         first.controller, second.controller = ((0, 1) if controllers >= 2
                                                else (None, 0 if controllers == 1 else None))
 
@@ -987,7 +1006,9 @@ class Game:
                 if cmd not in commands:
                     commands.append(cmd)
         if player.driver is not None:
-            pilot_command = player.driver.decide(self)
+            # The first player's driver is asked as it always was; a second player's is told whose ship it flies
+            pilot_command = (player.driver.decide(self) if player is self.players[0]
+                             else player.driver.decide(self, player))
             commands = []
             if pilot_command.turn < 0:
                 commands.append(CommandType.ROTATE_LEFT)

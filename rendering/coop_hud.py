@@ -10,6 +10,13 @@ from rendering.ui_elements import UIElementRenderer
 HEADER_HEIGHT = 64
 
 
+def _fit(image: pygame.Surface, width: int) -> pygame.Surface:
+    """The image, shrunk to fit `width` when it is wider."""
+    if image.get_width() <= width:
+        return image
+    return pygame.transform.smoothscale(image, (width, max(1, round(image.get_height() * width / image.get_width()))))
+
+
 def draw_coop_hud(screen: pygame.Surface, players: Sequence, powers: Sequence[Tuple[float, float]],
                   team_score: float, level: int, bottom: Optional[int] = None) -> None:
     """Draw the strip from the top down to `bottom` (default: the screen's foot). `powers[i]` is (power, maximum) for
@@ -27,10 +34,12 @@ def draw_coop_hud(screen: pygame.Surface, players: Sequence, powers: Sequence[Tu
         colour = player.color or config.COLOR_SHIP
         pygame.draw.line(screen, colour, (8, top), (width - 8, top), 2)
         status = "OUT OF POWER" if player.dropped_out else "THROUGH" if player.through else ""
-        title = f"PLAYER {index + 1}" + (f" · {status}" if status else "")
-        screen.blit(get_font(18).render(title, True, colour), (12, top + 6))
-        radius = max(14, min(34, (half - 70) // 2))
-        centre_y = top + 30 + radius + 8
+        title = f"PLAYER {index + 1}" + (" · HUNTER" if player.driver is not None else "")
+        screen.blit(_fit(get_font(18).render(title, True, colour), width - 24), (12, top + 6))
+        if status:    # on a line of its own: beside the title it would run out into the playing area
+            screen.blit(_fit(get_font(16).render(status, True, colour), width - 24), (12, top + 26))
+        radius = max(14, min(34, (half - 90) // 2))
+        centre_y = top + 46 + radius + 8
         percent = max(0.0, min(1.0, power / maximum)) if maximum else 0.0
         UIElementRenderer.draw_circular_gauge(
             screen, width // 4, centre_y, radius, percent, str(int(power)), colour,

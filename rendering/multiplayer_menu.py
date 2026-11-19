@@ -13,6 +13,7 @@ from rendering.menu_components import (
 
 WARNING_TEXT = (255, 190, 120)
 MODE_NAMES = {False: "SINGLE PLAYER", True: "CAMPAIGN CO-OP"}
+PLAYER_2_NAMES = {"human": "HUMAN", "hunter": "CAMPAIGN HUNTER"}
 
 
 class ChoiceRow:
@@ -32,6 +33,8 @@ class MultiplayerMenu:
         self.game = game
         self.rows: List[ChoiceRow] = [
             ChoiceRow("MODE", lambda: MODE_NAMES[game.coop], lambda: game.set_coop(not game.coop)),
+            ChoiceRow("PLAYER 2", lambda: PLAYER_2_NAMES[game.user_settings.player2],
+                      lambda: game.set_player2('hunter' if game.user_settings.player2 == 'human' else 'human')),
         ]
         self.selected_index = 0
         self.scale = menu_scale()
@@ -56,6 +59,9 @@ class MultiplayerMenu:
         if not self.game.coop:
             return [("PLAYER 1", "KEYBOARD OR CONTROLLER")], None
         controllers = len(self.game.input_handler.get_controllers())
+        if self.game.user_settings.player2 == 'hunter':
+            return [("PLAYER 1", "CONTROLLER OR KEYBOARD" if controllers else "KEYBOARD"),
+                    ("PLAYER 2", "CAMPAIGN HUNTER")], None
         if controllers >= 2:
             return [("PLAYER 1", "CONTROLLER 1 OR KEYBOARD"), ("PLAYER 2", "CONTROLLER 2")], None
         if controllers == 1:
