@@ -15,6 +15,7 @@ from rendering.exit_panel import draw_exit_panel
 from rendering.last_enemy_ring import draw_last_enemy_ring
 from rendering.star_row import STAR_ROW_SIZE, STAR_ROW_Y, draw_star_row
 from entities.ship import Ship, LOW_POWER_THRESHOLD
+from entities.player import Player
 from flora import Flora
 from maze.generator import Maze
 from physics.obstacle_world import ObstacleWorld
@@ -92,10 +93,39 @@ PAR_WARNING_SECONDS = 5.0  # The par star pulses for this long before par runs o
 class Game:
     """Main game class managing state and game loop."""
     autoplay = None  # An AutoplayDirector when the game runs unattended (AUTOPLAY=1)
-    ship_pilot = None  # Anything with decide(game) -> ShipCommand; when set it flies the player ship
     clock = time.time  # Wall time for scoring and cooldowns; a training harness swaps in a frame clock
     clock_ms = pygame.time.get_ticks  # The same, in milliseconds, for the fire cooldown
     CRITICAL_WARNING_THRESHOLD = config.SETTINGS.game.criticalWarningThreshold
+
+    # The first player's ship, scoring, driver and gun clock, under the names single-player code and the training
+    # harnesses use. `ship_pilot` is anything with decide(game) -> ShipCommand; when set it flies the player ship.
+    ship = property(lambda self: self.players[0].ship, lambda self, ship: setattr(self.players[0], 'ship', ship))
+    scoring = property(lambda self: self.players[0].scoring, lambda self, s: setattr(self.players[0], 'scoring', s))
+    ship_pilot = property(lambda self: self.players[0].driver, lambda self, d: setattr(self.players[0], 'driver', d))
+    last_shot_time = property(lambda self: self.players[0].last_shot_time,
+                              lambda self, t: setattr(self.players[0], 'last_shot_time', t))
+
+    @property
+    def players(self) -> List[Player]:
+        """The players, always at least one; players[0] is `ship`, `scoring` and `ship_pilot`. Made on first use, so a
+        Game built without __init__ (a test's stand-in) still has its first player."""
+        if '_players' not in self.__dict__:
+            self._players = [Player()]
+        return self._players
+
+    @players.setter
+    def players(self, players: List[Player]) -> None:
+        self._players = players
+
+    @property
+    def player_has_moved(self) -> bool:
+        """Whether anyone has made their first move: the level's enemies and hunter wake with it."""
+        return any(player.has_moved for player in self.players)
+
+    @player_has_moved.setter
+    def player_has_moved(self, moved: bool) -> None:
+        for player in self.players:
+            player.has_moved = moved
     
     def __init__(self, screen: pygame.Surface, *, clock=None):
         """Initialize game, optionally using one simulation clock for recording."""
@@ -125,7 +155,7 @@ class Game:
             self.initial_start_level = None
         self.profile_manager = ProfileManager()
         self.user_settings = UserSettings()
-        self.ship: Optional[Ship] = None
+        self.players: List[Player] = [Player()]   # always at least one; players[0] is `ship`, `scoring`, `ship_pilot`
         self.maze: Optional[Maze] = None
         self.obstacles: Optional[ObstacleWorld] = None
         self.hunter_flight: Optional[HunterFlight] = None
@@ -169,7 +199,6 @@ class Game:
 
         self.projectiles: List[Projectile] = []
         self.powerup_crystals: List[PowerupCrystal] = []
-        self.scoring = ScoringSystem()
         self.sound_manager = SoundManager()  # Game-level sound manager for enemy destruction
         self.command_recorder = CommandRecorder()  # Record player commands for replay enemy
         self.input_handler = InputHandler()  # Handle keyboard input and map to commands
@@ -209,7 +238,6 @@ class Game:
         self.play_seconds = 0.0  # Play time since the first move, which a timer exit counts
         self.star_animation: Optional[AnimatedStarRating] = None  # Animated star rating for level complete
         self.level_complete_quit_confirm = False  # Track quit confirmation on level complete screen
-        self.player_has_moved = False  # Track if player has made their first move
         self.level_start_time = 0.0  # Time when level started (to ignore initial SPACE press)
         self.keys_pressed_at_start = set()  # Track keys that were pressed when level started
         self.star_indicator = StarIndicator(
@@ -292,20 +320,21 @@ class Game:
         self.splash_screen = SplashScreenState(None, self.screen)  # State machine not needed for simple splash
         self.splash_screen.enter()
     
-    def _execute_ship_command(self, command_type: CommandType) -> None:
-        """Execute a command on the player ship.
+    def _execute_ship_command(self, ship: Ship, command_type: CommandType) -> None:
+        """Execute a command on a player's ship.
         
         Args:
+            ship: The ship.
             command_type: The command type to execute.
         """
         if command_type == CommandType.ROTATE_LEFT:
-            self.ship.rotate_left()
+            ship.rotate_left()
         elif command_type == CommandType.ROTATE_RIGHT:
-            self.ship.rotate_right()
+            ship.rotate_right()
         elif command_type == CommandType.APPLY_THRUST:
-            self.ship.apply_thrust()
+            ship.apply_thrust()
         elif command_type == CommandType.ACTIVATE_SHIELD:
-            self.ship.activate_shield()
+            ship.activate_shield()
         # NO_ACTION and FIRE are handled separately
     
     def restart_level(self) -> None:
@@ -874,6 +903,115 @@ class Game:
                     handler = self.state_handler_registry.get_handler(self.state)
                     handler.handle_keyboard(event, self)
     
+    def _drive_player(self, player: Player, commands: List[CommandType], keys, ignore_input: bool,
+                      should_filter_commands: bool, dt: float) -> None:
+        """One frame of a player's ship: its driver or the input `commands` (a pilot replaces them), shield or weapon
+        cycling, the first move, the gun's fire rate, and the ship's update and wall strikes."""
+        commands = list(commands)
+        if player.driver is not None:
+            pilot_command = player.driver.decide(self)
+            commands = []
+            if pilot_command.turn < 0:
+                commands.append(CommandType.ROTATE_LEFT)
+            elif pilot_command.turn > 0:
+                commands.append(CommandType.ROTATE_RIGHT)
+            if pilot_command.thrust:
+                commands.append(CommandType.APPLY_THRUST)
+
+        # Filter out ALL movement commands if we should ignore input
+        # This prevents keys pressed at menu from affecting gameplay
+        if should_filter_commands and player.driver is None:
+            # Filter out all movement commands (thrust, rotate)
+            commands = [cmd for cmd in commands if cmd not in (
+                CommandType.APPLY_THRUST,
+                CommandType.ROTATE_LEFT,
+                CommandType.ROTATE_RIGHT
+            )]
+        
+        # Down/S (or controller A) advances once per press in inventory games.
+        cycle_pressed = (keys[pygame.K_DOWN] or keys[pygame.K_s]
+                         or self.input_handler.is_controller_shield_pressed())
+        from weapons import WeaponInventory
+        inventory = isinstance(player.ship.weapon, WeaponInventory)
+        if inventory:
+            player.ship.cycle_weapon(cycle_pressed and not should_filter_commands
+                                   and self.autoplay is None)
+        elif player.ship.shield_initial_timer <= 0:
+            player.ship.shield_active = bool(cycle_pressed)
+
+        # Handle fire separately (has rate limiting)
+        # Check both keyboard and controller for fire input
+        # Ignore fire input during ignore period OR if SPACE was pressed at start and still pressed
+        fire_key_pressed = False
+        fire_controller_pressed = False
+        
+        # Check if we should ignore fire (same logic as command filtering)
+        space_still_pressed = pygame.K_SPACE in self.keys_pressed_at_start
+        should_ignore_fire = ignore_input or space_still_pressed or self.autoplay is not None
+        
+        if player.driver is not None:
+            fire_key_pressed = pilot_command.fire
+        elif not should_ignore_fire:
+            try:
+                fire_key_pressed = keys[pygame.K_SPACE]
+            except (IndexError, KeyError):
+                pass
+            fire_controller_pressed = self.input_handler.is_controller_fire_pressed()
+        
+        fire_pressed = fire_key_pressed or fire_controller_pressed
+        
+        if not player.has_moved:
+            # Check for explicit movement commands (not shield, not NO_ACTION)
+            has_movement = False
+            for cmd in commands:
+                if cmd in (CommandType.ROTATE_LEFT, CommandType.ROTATE_RIGHT, CommandType.APPLY_THRUST):
+                    has_movement = True
+                    break
+            
+            # Fire also counts as first move, but ignore it if we just started the level
+            if has_movement or (fire_pressed and not ignore_input):
+                # First move detected - start the game loop
+                player.has_moved = True
+                player.ship.game_started = True  # Allow shield timer to countdown
+        
+        # Execute movement commands on ship and record them
+        # Down/S is handled above as cycling (or shielding in historical rules).
+        for cmd in commands:
+            if cmd == CommandType.ACTIVATE_SHIELD:
+                continue
+            self._execute_ship_command(player.ship, cmd)
+            self.command_recorder.record_command(cmd)
+        
+        if fire_pressed:
+            current_time = self.clock_ms()
+            fire_cooldown = calculate_fire_cooldown(player.ship)
+            
+            if player.ship.weapon is not None or current_time - player.last_shot_time > fire_cooldown:
+                projectiles = player.ship.fire()
+                if projectiles:
+                    # fire() now returns a list (single or multiple projectiles)
+                    self.projectiles.extend(projectiles)
+                    player.scoring.record_shot()
+                    self.command_recorder.record_command(CommandType.FIRE)
+                    player.last_shot_time = current_time
+        
+        # Record NO_ACTION once per loop when no input is detected
+        # This allows the replay enemy to mirror periods of inactivity
+        if not commands and not fire_pressed:
+            self.command_recorder.record_command(CommandType.NO_ACTION)
+        
+        # Update ship
+        player.ship.update(dt)
+        
+        # Check ship-wall collision (use spatial grid for optimization)
+        # Walls always stop the ship; the shield only spares it the penalty
+        if player.ship.check_wall_collision(self.maze.walls, self.maze.spatial_grid):
+            if not player.ship.is_shield_active():
+                player.scoring.record_wall_collision()
+        if player.ship.wall_hit_severity is not None:
+            self.sound_manager.play_wall_hit(player.ship.wall_hit_severity)
+            player.ship.wall_hit_severity = None
+
     def update(self, dt: float) -> None:
         """Update game state."""
         if self.state == config.STATE_DUEL:
@@ -1032,111 +1170,8 @@ class Game:
             # Update the set
             self.keys_pressed_at_start = keys_still_pressed
         
-        if self.ship_pilot is not None:
-            pilot_command = self.ship_pilot.decide(self)
-            commands = []
-            if pilot_command.turn < 0:
-                commands.append(CommandType.ROTATE_LEFT)
-            elif pilot_command.turn > 0:
-                commands.append(CommandType.ROTATE_RIGHT)
-            if pilot_command.thrust:
-                commands.append(CommandType.APPLY_THRUST)
-
-        # Filter out ALL movement commands if we should ignore input
-        # This prevents keys pressed at menu from affecting gameplay
-        if should_filter_commands and self.ship_pilot is None:
-            # Filter out all movement commands (thrust, rotate)
-            commands = [cmd for cmd in commands if cmd not in (
-                CommandType.APPLY_THRUST,
-                CommandType.ROTATE_LEFT,
-                CommandType.ROTATE_RIGHT
-            )]
-        
-        # Down/S (or controller A) advances once per press in inventory games.
-        cycle_pressed = (keys[pygame.K_DOWN] or keys[pygame.K_s]
-                         or self.input_handler.is_controller_shield_pressed())
-        from weapons import WeaponInventory
-        inventory = isinstance(self.ship.weapon, WeaponInventory)
-        if inventory:
-            self.ship.cycle_weapon(cycle_pressed and not should_filter_commands
-                                   and self.autoplay is None)
-        elif self.ship.shield_initial_timer <= 0:
-            self.ship.shield_active = bool(cycle_pressed)
-
-        # Handle fire separately (has rate limiting)
-        # Check both keyboard and controller for fire input
-        # Ignore fire input during ignore period OR if SPACE was pressed at start and still pressed
-        fire_key_pressed = False
-        fire_controller_pressed = False
-        
-        # Check if we should ignore fire (same logic as command filtering)
-        space_still_pressed = pygame.K_SPACE in self.keys_pressed_at_start
-        should_ignore_fire = ignore_input or space_still_pressed or self.autoplay is not None
-        
-        if self.ship_pilot is not None:
-            fire_key_pressed = pilot_command.fire
-        elif not should_ignore_fire:
-            try:
-                fire_key_pressed = keys[pygame.K_SPACE]
-            except (IndexError, KeyError):
-                pass
-            fire_controller_pressed = self.input_handler.is_controller_fire_pressed()
-        
-        fire_pressed = fire_key_pressed or fire_controller_pressed
-        
-        if not self.player_has_moved:
-            # Check for explicit movement commands (not shield, not NO_ACTION)
-            has_movement = False
-            for cmd in commands:
-                if cmd in (CommandType.ROTATE_LEFT, CommandType.ROTATE_RIGHT, CommandType.APPLY_THRUST):
-                    has_movement = True
-                    break
-            
-            # Fire also counts as first move, but ignore it if we just started the level
-            if has_movement or (fire_pressed and not ignore_input):
-                # First move detected - start the game loop
-                self.player_has_moved = True
-                self.ship.game_started = True  # Allow shield timer to countdown
-        
-        # Execute movement commands on ship and record them
-        # Down/S is handled above as cycling (or shielding in historical rules).
-        for cmd in commands:
-            if cmd == CommandType.ACTIVATE_SHIELD:
-                continue
-            self._execute_ship_command(cmd)
-            self.command_recorder.record_command(cmd)
-        
-        if fire_pressed:
-            if not hasattr(self, 'last_shot_time'):
-                self.last_shot_time = 0
-            current_time = self.clock_ms()
-            fire_cooldown = calculate_fire_cooldown(self.ship)
-            
-            if self.ship.weapon is not None or current_time - self.last_shot_time > fire_cooldown:
-                projectiles = self.ship.fire()
-                if projectiles:
-                    # fire() now returns a list (single or multiple projectiles)
-                    self.projectiles.extend(projectiles)
-                    self.scoring.record_shot()
-                    self.command_recorder.record_command(CommandType.FIRE)
-                    self.last_shot_time = current_time
-        
-        # Record NO_ACTION once per loop when no input is detected
-        # This allows the replay enemy to mirror periods of inactivity
-        if not commands and not fire_pressed:
-            self.command_recorder.record_command(CommandType.NO_ACTION)
-        
-        # Update ship
-        self.ship.update(dt)
-        
-        # Check ship-wall collision (use spatial grid for optimization)
-        # Walls always stop the ship; the shield only spares it the penalty
-        if self.ship.check_wall_collision(self.maze.walls, self.maze.spatial_grid):
-            if not self.ship.is_shield_active():
-                self.scoring.record_wall_collision()
-        if self.ship.wall_hit_severity is not None:
-            self.sound_manager.play_wall_hit(self.ship.wall_hit_severity)
-            self.ship.wall_hit_severity = None
+        for player in self.players:
+            self._drive_player(player, commands, keys, ignore_input, should_filter_commands, dt)
         
         # Only update enemies after player has made their first move
         if self.player_has_moved:
