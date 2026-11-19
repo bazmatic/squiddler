@@ -48,8 +48,11 @@ def make_enemy(kind, pos, level, command_recorder):
     if kind not in enemy_kinds.kinds() or enemy_kinds.kind(kind).body is None:
         raise ValueError(f'cannot make an enemy of type {kind!r}')
     import creatures
+    from entities.command_recorder import recorder_for_enemy
     if kind == 'aggressive' and not os.getenv('SCRIPTED_JELLIES'):
         kind = 'neural_jelly'   # neural is the default; it chases like the scripted Jelly while no trained brain loads
+    if enemy_kinds.kind(kind).replays_player:
+        command_recorder = recorder_for_enemy(command_recorder)   # with two players, each Replay enemy copies the next
     return creatures.build(kind, pos, level, command_recorder)
 
 
@@ -135,7 +138,8 @@ class SpawnManager:
         if config.requires_command_recorder:
             if command_recorder is None:
                 raise ValueError(f"command_recorder required for {config.kind}")
-            return config.factory_func(pos, command_recorder)
+            from entities.command_recorder import recorder_for_enemy
+            return config.factory_func(pos, recorder_for_enemy(command_recorder))
         return config.factory_func(pos, None)
 
     def _select_positions(

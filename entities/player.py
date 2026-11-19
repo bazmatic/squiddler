@@ -1,6 +1,7 @@
 """A player: a ship, whoever flies it, and what is counted for it."""
 from typing import Optional, Tuple
 
+from entities.command_recorder import CommandRecorder
 from scoring.system import ScoringSystem
 
 
@@ -19,6 +20,7 @@ class Player:
         self.ship = ship
         self.driver = driver
         self.scoring = scoring if scoring is not None else ScoringSystem()
+        self.recorder = CommandRecorder()   # this player's commands, which a Replay enemy copies
         self.has_moved = False      # the first move starts this player's time drain and wakes the level
         self.last_shot_time = 0     # when this player's gun last fired, in milliseconds: its fire cooldown
         # What flies the ship: the keyboard (WASD/arrows/space) and/or one controller, by its index (None: no controller)

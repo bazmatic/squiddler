@@ -192,3 +192,48 @@ def test_the_mode_menu_offers_level_competition(compete):
     compete.set_mode('single')
     compete.multiplayer_menu.toggle_selected()
     assert compete.multiplayer_menu.rows[0].read() == 'LEVEL COMPETITION' and compete.mode == 'compete'
+
+
+# --- the multiplayer menu's promises (#46) -----------------------------------------------------------------------
+
+def test_a_simultaneous_mode_will_not_start_without_a_controller_for_player_two(make_game, monkeypatch):
+    game = make_game(autoplay=False)
+    monkeypatch.setattr(game.input_handler, 'get_controllers', lambda: [])
+    for mode in ('coop', 'race'):
+        game.set_mode(mode)
+        game.state = config.STATE_MENU
+        game.begin_play(1)
+        assert game.state == config.STATE_MULTIPLAYER           # the screen that says a controller is needed
+    game.user_settings.player2 = 'hunter'                        # a hunter needs none
+    game.begin_play(1)
+    assert game.state == config.STATE_PLAYING and len(game.players) == 2
+    game.set_mode('compete')                                     # one ship at a time: no controller needed
+    game.user_settings.player2 = 'human'
+    game.begin_play(1)
+    assert game.state == config.STATE_TURN
+
+
+def test_the_profile_file_is_never_written_in_a_multiplayer_mode(make_game, monkeypatch):
+    from tests.test_campaign_demo import profile_bytes
+    from tests.test_coop import put_in_exit
+    game = make_game(autoplay=False)
+    monkeypatch.setattr(game.input_handler, 'get_controllers', lambda: [object()])
+    before = profile_bytes(make_game)
+    for mode in ('coop', 'race', 'compete'):
+        game.set_mode(mode)
+        game.begin_play(1)
+        if mode == 'compete':
+            for _ in range(2):
+                game.start_turn()
+                fly_to_the_exit(game, monkeypatch)
+            assert game.state == config.STATE_COMPETITION_RESULT
+            continue
+        for player in game.players:
+            player.has_moved = True
+        open_exit(game)
+        for player in game.players:
+            put_in_exit(player, game)
+        step(game, monkeypatch, frames=3)
+        game.complete_level(success=True)
+        assert game.state == config.STATE_LEVEL_COMPLETE
+    assert profile_bytes(make_game) == before
