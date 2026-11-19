@@ -48,7 +48,6 @@ def test_the_first_move_of_a_human_player_starts_the_level(make_game):
     game.level_start_time -= 10      # past the opening moment when input is ignored
     assert not game.player_has_moved
     pygame.event.clear()
-    keys = pygame.key.get_pressed()
     real = pygame.key.get_pressed
     pressed = {pygame.K_UP}
     try:
