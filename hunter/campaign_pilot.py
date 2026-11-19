@@ -49,9 +49,11 @@ class CampaignPilot:
         self.controller.invalidate()
         self._senses.reset()
 
-    def decide(self, game):
-        body = ShipBody(game.ship, game, self.settings, hit_feedback=self.hit_feedback)
-        surroundings = CampaignSurroundings(game)
+    def decide(self, game, player=None):
+        """The command for `player`'s ship (the first player's by default). Any other ship is a friend."""
+        player = player if player is not None else game.players[0]
+        body = ShipBody(player.ship, game, self.settings, hit_feedback=self.hit_feedback, player=player)
+        surroundings = CampaignSurroundings(game, player)
 
         def sense(last_controls, now):
             senses = self._senses.perceive(body, surroundings, last_controls, now)

@@ -27,7 +27,8 @@ def draw_coop_hud(screen: pygame.Surface, players: Sequence, powers: Sequence[Tu
         colour = player.color or config.COLOR_SHIP
         pygame.draw.line(screen, colour, (8, top), (width - 8, top), 2)
         status = "OUT OF POWER" if player.dropped_out else "THROUGH" if player.through else ""
-        title = f"PLAYER {index + 1}" + (f" · {status}" if status else "")
+        title = f"PLAYER {index + 1}" + (" · HUNTER" if player.driver is not None else "") + (
+            f" · {status}" if status else "")
         screen.blit(get_font(18).render(title, True, colour), (12, top + 6))
         radius = max(14, min(34, (half - 70) // 2))
         centre_y = top + 30 + radius + 8
