@@ -238,7 +238,7 @@ def test_actor_damping_is_offered_only_for_the_wallcrawler(root, task, allowed):
 # Resume-time edits of each task's settings: tests/test_resume_edits.py.
 
 
-@pytest.mark.parametrize('task', ['inchworm', 'hunter', 'wallcrawler_team', 'flocker_team'])
+@pytest.mark.parametrize('task', ['inchworm', 'sea_snake', 'hunter', 'wallcrawler_team', 'flocker_team'])
 def test_resume_workers_preserves_learning_state_for_every_task(root, task):
     path = root/'run52'
     config = json.loads((path/'config.json').read_text())

@@ -29,6 +29,10 @@ A file can exist for any level, and can state as much or as little as it likes. 
 - **belemnite**: Belemnites on the level: spiky squids in pointed shells that chase the player as Jellies do, never overlapping one another. They have no guns, take 3 hits, and explode when they die, hurting the player, the hunter, nearby walls and other enemies (so one can set off the next).
 - **wallcrawler**: A gun walking on twelve little legs along curved rock or square steel. Bullets and explosions knock it loose; it cannot fire during its 0.6-second stunned tumble or its flight to the nearest wall. It has four hit points. Campaign encounters begin with a crowd of five on level 11 and rise to eight by level 21; level 27 pairs six with explosive Belemnites. Layouts place it through the editor; generated levels accept an `enemies.wallcrawler` count. Levels without a file carry five to eight on every fourth level from 11, the ones built around them.
 - **inchworm**: A six-link worm that crawls on rock and steel on grips, rears up and bites. It eats everything alive except other inchworms: the player ship, hunters and every other creature, one hit point per bite. Layouts place it through the editor beside a wall; give it open floor (a 5x5 block with at most a few wall cells), because its arch jams in a narrow dead end. The campaign has two on levels 13, 16, 19, 22, 26 and 29, as a minority predator among the level's usual enemies; level 33 is the inchworm playtest and level 34 (Looper Garden) is built around eight of them, with four Wallcrawlers. Without `assets/neural/inchworm.npz` it walks with the scripted stride.
+- **Snakes are solid to one another** (every size): bodies that meet are pushed apart, not left to pass through.
+- **mini_sea_snake**: The sea snake at about half size: same body, same trained brain (it swims in its own lengths, so it works at any size) on a clock running 2.4 times faster, but 2 hits to kill and a smaller, shorter blast (1 hit to enemies and the ship). Level 35 only so far.
+- **teeny_sea_snake**: The sea snake at about a third of its size: one hit kills it, and its blast is tiny (1 hit, a short reach). Same body and brain, but its own clock runs 3.5 times faster so it keeps up. Level 35 only so far.
+- **sea_snake**: A free-swimming eight-link serpent that wriggles through open water after the player and stings on contact, which makes the ship flinch and throws it clear. It swims by bending its body alone. It takes 10 hits, and a shot knocks it about. When it dies it thrashes, bursts link by link, and a blast goes off 1.3 seconds after the kill (2 hits to enemies, one to the ship, shoving everything within 150 px), so back off. Layouts place it through the editor anywhere in open water; it is not planted on a wall. The campaign has two each on levels 28 and 31, the open ones, as a minority predator among the level's usual enemies (not level 23: its rotating gates jam a snake's physics); level 35 is the sea snake playtest. Without `assets/neural/sea_snake.npz` it swims with the scripted wave.
 - **hunter**: `false` forbids an ally. `{"earned": true}` allows enemy kills to drop a beacon only after 65% of the starting enemies have been defeated (at least four kills). The usual 3% drop chance still applies after that threshold. No beacon starts on an earned level. An explicit `{"spawn_cell": [col, row]}` remains available for custom encounters.
 - **layout**: an exact, hand-made level, written by the level editor (see the [developer guide](../docs/development.md#level-editor)). While it is present it replaces the generated maze, the random enemy positions and the `enemies` counts. Those are kept, untouched, so removing the layout restores the generated level. `beacon` takes the place of `hunter`. A layout that cannot be played (a cell out of range, an enemy on a wall, a missing start) is ignored with a warning and the level generates from its seed.
 
@@ -189,3 +193,11 @@ shelves are square steel because a worm's arch jams in tight curved rock. On ver
 hall, and the way through has to be blasted.
 
 Start directly with `START_LEVEL=34 ./run.sh`.
+
+## Level 35: Sea snake playtest
+
+Three free-swimming sea snakes, four mini and five teeny ones in an open arena with no walls. They are not
+planted on rock like the crawlers. Ammo is unlimited and the exit is locked until every
+snake is dead. There are no other enemies. See [the sea snake note](../docs/notes/sea-snake-body.md).
+
+Start directly with `START_LEVEL=35 ./run.sh`.

@@ -114,6 +114,10 @@ _Code name_: wallcrawler
 A six-segment physical worm that crawls, rears and bites, and eats any creature except other inchworms. Driven by a trained brain.
 _Code name_: inchworm
 
+**Sea Snake**:
+A free-swimming eight-link serpent that wriggles through open water after its adversaries and stings on contact. It swims by bending, with no thrust. Driven by a trained brain.
+_Code name_: sea_snake
+
 **Egg**:
 An enemy that hatches into squidlets.
 _Code name_: egg

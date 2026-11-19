@@ -1,0 +1,117 @@
+{
+  "seed": 135,
+  "maze": {
+    "complexity": "empty",
+    "grid_size": 20
+  },
+  "enemies": {
+    "sea_snake": 3,
+    "mini_sea_snake": 4,
+    "teeny_sea_snake": 5
+  },
+  "hunter": false,
+  "exit_policy": {
+    "type": "all_cleared"
+  },
+  "ammo_policy": {
+    "type": "unlimited"
+  },
+  "layout": {
+    "walls": [],
+    "strong_walls": [],
+    "start": [
+      2,
+      10
+    ],
+    "exit": [
+      17,
+      10
+    ],
+    "enemies": [
+      {
+        "type": "sea_snake",
+        "cell": [
+          10,
+          4
+        ]
+      },
+      {
+        "type": "sea_snake",
+        "cell": [
+          14,
+          10
+        ]
+      },
+      {
+        "type": "sea_snake",
+        "cell": [
+          10,
+          16
+        ]
+      },
+      {
+        "type": "mini_sea_snake",
+        "cell": [
+          7,
+          7
+        ]
+      },
+      {
+        "type": "mini_sea_snake",
+        "cell": [
+          7,
+          13
+        ]
+      },
+      {
+        "type": "mini_sea_snake",
+        "cell": [
+          13,
+          7
+        ]
+      },
+      {
+        "type": "mini_sea_snake",
+        "cell": [
+          13,
+          13
+        ]
+      },
+      {
+        "type": "teeny_sea_snake",
+        "cell": [
+          5,
+          5
+        ]
+      },
+      {
+        "type": "teeny_sea_snake",
+        "cell": [
+          5,
+          15
+        ]
+      },
+      {
+        "type": "teeny_sea_snake",
+        "cell": [
+          12,
+          2
+        ]
+      },
+      {
+        "type": "teeny_sea_snake",
+        "cell": [
+          12,
+          18
+        ]
+      },
+      {
+        "type": "teeny_sea_snake",
+        "cell": [
+          16,
+          10
+        ]
+      }
+    ]
+  }
+}

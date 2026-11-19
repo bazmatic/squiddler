@@ -8,7 +8,8 @@
     "patrol": 1,
     "flocker": 6,
     "vibehouse": 1,
-    "belemnite": 1
+    "belemnite": 1,
+    "sea_snake": 2
   },
   "hunter": false,
   "exit_policy": {
@@ -373,6 +374,20 @@
         "cell": [
           3,
           8
+        ]
+      },
+      {
+        "type": "sea_snake",
+        "cell": [
+          12,
+          3
+        ]
+      },
+      {
+        "type": "sea_snake",
+        "cell": [
+          23,
+          11
         ]
       }
     ],

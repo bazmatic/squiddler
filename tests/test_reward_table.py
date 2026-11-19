@@ -206,6 +206,28 @@ def test_the_inchworm_is_declared_in_a_table_with_its_flags_manifest_and_checks_
     assert table.pay([row], inchworm_rewards.DEFAULTS)[0] == pytest.approx(2. - 5.)
 
 
+def test_the_sea_snake_is_declared_in_a_table_with_every_reward_it_trains_on():
+    from learning import sea_snake_rewards
+    from learning.tasks import task
+    from tools import ppo_neural
+    table = sea_snake_rewards.TABLE
+    assert task('sea_snake').reward_table() is table
+    assert tuple(sea_snake_rewards.DEFAULTS) == (
+        'progress_reward', 'sting_reward', 'effort_cost', 'wall_cost', 'reset_penalty', 'time_cost',
+        'wave_reward', 'curvature_reward', 'posture_cost', 'twitch_cost')
+    kinds = {t.key: t.kind for t in table.terms}
+    assert {k for k, kind in kinds.items() if kind is RewardKind.REWARD} == {
+        'progress_reward', 'sting_reward', 'wave_reward', 'curvature_reward'}
+    args = ppo_neural.build_parser().parse_args(['--task', 'sea_snake', '--sea-snake-reset-penalty', '9'])
+    assert sea_snake_rewards.from_args(args)['reset_penalty'] == 9.
+    with pytest.raises(ValueError, match='nonnegative'):
+        sea_snake_rewards.validate({'wall_cost': -1.})
+    # A sea snake's penalties are sizes, and a solver reset outweighs a sting.
+    row = table.row()
+    row.update(stings=1, resets=1)
+    assert table.pay([row], sea_snake_rewards.DEFAULTS)[0] < 0
+
+
 def test_the_hunter_is_declared_in_a_table_with_its_fixed_and_scaled_terms():
     from experiments.score import Weights
     from learning.hunter_rewards import TABLE as HUNTER, KILL_REWARD_TOTAL
