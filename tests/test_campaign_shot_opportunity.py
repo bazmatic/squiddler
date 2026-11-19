@@ -109,12 +109,12 @@ def test_graded_volley_feedback_waives_rough_shot_costs_and_preserves_historical
         return episode
     perfect, rough, outside = fly(0), fly(20), fly(45)
     for episode in (perfect, rough):
-        assert episode['result'].shots > 0
+        assert episode['stats'].get('shots', 0) > 0
         assert episode['reward_totals']['shot'] == episode['reward_totals']['unaimed_shot'] == 0
     assert perfect['rewards'].sum() > rough['rewards'].sum() > 0
-    assert perfect['result'].damaging_hits > 0
-    assert perfect['reward_totals']['enemy_hit'] == 4 * perfect['result'].damaging_hits
-    maximum_aim_only = perfect['reward_totals']['shot_accuracy'] / perfect['result'].shots
+    assert perfect['stats'].get('damaging_hits', 0) > 0
+    assert perfect['reward_totals']['enemy_hit'] == 4 * perfect['stats'].get('damaging_hits', 0)
+    maximum_aim_only = perfect['reward_totals']['shot_accuracy'] / perfect['stats'].get('shots', 0)
     assert maximum_aim_only == pytest.approx(.05)
     assert 5 * maximum_aim_only < shaping.enemy_hit * .1  # even five best aim-only credits stay below 10% of a hit
     historical_linear = fly(20, power=1)

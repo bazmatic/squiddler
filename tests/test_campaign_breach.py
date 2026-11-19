@@ -48,7 +48,7 @@ def test_campaign_pays_only_a_player_completed_necessary_block(spec, curved, cas
     shaping = CampaignShaping(**{key: 0.0 for key in TABLE.defaults if key != 'breach_block'}, breach_block=3)
     episode = fly_campaign(1, 300, spec, horizon=.2, pilot=ScriptedPilot(script), shaping=shaping)
     assert episode['rewards'].sum() == pytest.approx(points)
-    assert episode['result'].breach_blocks == (1 if points else 0)
+    assert episode['stats'].get('breach_blocks', 0) == (1 if points else 0)
 
 
 @pytest.mark.parametrize('curved', [False, True])

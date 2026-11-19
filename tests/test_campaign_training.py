@@ -141,7 +141,7 @@ def test_wall_penalty_scales_with_real_collision_severity(spec):
         return fly_campaign(1, 300, spec, horizon=1/60, pilot=ScriptedPilot(setup), shaping=shaping)
 
     hard, glancing, slow = collision(1), collision(.05), collision(1, .1)
-    assert [e['result'].wall_crashes for e in (hard, glancing, slow)] == [1, 1, 1]
+    assert [e['stats']['wall_crashes'] for e in (hard, glancing, slow)] == [1, 1, 1]
     hard_cost, glancing_cost, slow_cost = (-e['rewards'].sum() for e in (hard, glancing, slow))
     assert 0 < glancing_cost < hard_cost * .15
     assert slow_cost == pytest.approx(hard_cost * .1)
@@ -375,7 +375,7 @@ def test_campaign_reuses_the_hunters_visible_20_degree_shot_check(spec, bearing,
 
     shaping = CampaignShaping(**{key: 0.0 for key in TABLE.defaults if key != 'unaimed_shot'}, unaimed_shot=-.75)
     flown = fly_campaign(1, 300, spec, horizon=.6, pilot=FiringPilot(), shaping=shaping)
-    shots = flown['result'].shots
+    shots = flown['stats'].get('shots', 0)
     assert shots > 0
     assert flown['result'].unaimed_shots == (shots if penalized else 0)
     assert flown['rewards'].sum() == pytest.approx(-.75 * shots if penalized else 0)
@@ -393,7 +393,7 @@ def test_campaign_credits_only_the_players_damaging_hits(spec, source, damage, p
     shaping = CampaignShaping(**{key: 0.0 for key in TABLE.defaults if key != 'enemy_hit'}, enemy_hit=2.0)
     flown = fly_campaign(1, 300, spec, horizon=.2, pilot=ScriptedPilot(hit), shaping=shaping)
     assert flown['rewards'].sum() == pytest.approx(points)
-    assert flown['result'].damaging_hits == (1 if points else 0)
+    assert flown['stats'].get('damaging_hits', 0) == (1 if points else 0)
 
 
 def test_the_longest_spell_without_a_kill_counts_only_while_enemies_remain(spec):

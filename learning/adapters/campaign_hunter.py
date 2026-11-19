@@ -5,6 +5,8 @@ campaign senses layout; the hunter's PPO loop in tools.ppo_neural trains it.
 """
 from learning.episode_stats import recorded_means
 
+# Counters the episode records with learning.episode_stats.record: always logged, so their charts always show.
+COUNTERS = ('wall_crashes', 'shots', 'damaging_hits', 'breach_blocks')
 DEFAULT_HORIZON = 180.0       # seconds: long enough to clear a level and reach its exit
 # Lifetime defaults preserve historical observations and rewards; new runs opt in below.
 RUN_RULES = {'ship_hit_feedback': False, 'graded_shooting': False, 'accuracy_power': 1, 'sticky_targets': False, 'target_recovery': False}
@@ -82,8 +84,6 @@ def summary(flown):
                 cleared_exit=float(np.mean([r.end == 'exited' and r.cleared for r in combat])),
                 scored_out=float(np.mean([r.end == 'scored_out' for r in combat])),
                 own_kills=float(np.mean([r.own_kills for r in combat])),
-                wall_crashes=float(np.mean([r.wall_crashes for r in results])),
-                shots=float(np.mean([r.shots for r in results])),
                 thrust=float(np.mean([np.mean(e['controls'][:, 1]) for e in flown if len(e['controls'])] or [0.0])),
                 spinning=float(np.mean([spinning_share(e['controls'][:, 0]) for e in flown if len(e['controls'])] or [0.0])))
     searches = [r for r in results if getattr(r, 'started_unseen', False)]
@@ -96,12 +96,10 @@ def summary(flown):
                                                    for r in searches]))
     if results and hasattr(results[0], 'unseen_seconds'):
         metrics['unseen_seconds'] = float(np.mean([r.unseen_seconds for r in results]))
-    if results and hasattr(results[0], 'damaging_hits'):
-        metrics['damaging_hits'] = float(np.mean([r.damaging_hits for r in results]))
-        shots = sum(r.shots for r in results)
+    recorded = recorded_means((e.get('stats') for e in flown), always=COUNTERS)
+    if results and hasattr(results[0], 'unaimed_shots'):
+        shots = recorded['shots'] * len(results)
         metrics['unaimed_shot_share'] = sum(r.unaimed_shots for r in results) / shots if shots else 0.0
-    if results and hasattr(results[0], 'breach_blocks'):
-        metrics['breach_blocks'] = float(np.mean([r.breach_blocks for r in results]))
     if results and hasattr(results[0], 'wall_impulse'):
         metrics['wall_impulse'] = float(np.mean([r.wall_impulse for r in results]))
     if flown and all('reward_totals' in e for e in flown):
@@ -115,7 +113,7 @@ def summary(flown):
     lessons = [r for r in results if getattr(r, 'pursuit_lesson', False)]
     if lessons:
         metrics['lesson_contact'] = float(np.mean([r.end == 'contact' for r in lessons]))
-    return {**recorded_means(e.get('stats') for e in flown), **metrics}   # recorded stats never displace the above
+    return {**recorded, **metrics}   # a recorded stat never displaces a number logged above
 
 
 def environment(**settings):

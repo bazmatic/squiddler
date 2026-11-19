@@ -13,7 +13,8 @@ PPO_KEYS = {'policy_loss', 'value_loss', 'kl', 'entropy', 'clip_fraction', 'iter
 
 def episode(end, cleared=False, own_kills=0, thrusts=(1, 1), wall_crashes=0, shots=0):
     controls = np.array([(1, t, 0) for t in thrusts], dtype=np.int8)
-    return dict(result=SimpleNamespace(end=end, cleared=cleared, own_kills=own_kills, wall_crashes=wall_crashes, shots=shots), controls=controls)
+    return dict(result=SimpleNamespace(end=end, cleared=cleared, own_kills=own_kills), controls=controls,
+                stats=dict(wall_crashes=wall_crashes, shots=shots))
 
 
 def test_a_campaign_log_row_charts_exits_clears_score_outs_kills_and_the_shared_charts():
@@ -21,7 +22,7 @@ def test_a_campaign_log_row_charts_exits_clears_score_outs_kills_and_the_shared_
     keys = set(row) | PPO_KEYS
     charted = dashboard.charted('campaign_hunter', keys)
     assert [m['key'] for m in charted] == ['mean_return', 'exited', 'cleared_exit', 'scored_out', 'own_kills',
-                                           'shots', 'thrust', 'spinning', 'kl', 'entropy']
+                                           'breach_blocks', 'damaging_hits', 'shots', 'thrust', 'spinning', 'kl', 'entropy']
     assert dashboard.unclaimed('campaign_hunter', keys) == []   # nothing left over for "Other"
 
 
@@ -44,7 +45,7 @@ def test_impact_severity_is_reported_separately_from_contact_count():
     assert row['wall_crashes'] == 2
     assert row['wall_impulse'] == 1
     assert dashboard.unclaimed('campaign_hunter', set(row)) == []
-    rows = [dict(vars(e['result']), elapsed=10, enemies_at_start=4, max_no_kill_gap=5)
+    rows = [dict(vars(e['result']), **e['stats'], elapsed=10, enemies_at_start=4, max_no_kill_gap=5)
             for e in (first, second)]
     assert summarize(rows)['wall_impulse'] == 1
 
@@ -149,13 +150,13 @@ def test_mixed_practice_keeps_combat_outcomes_and_lesson_contact_rates_separate(
 
 def test_shooting_charts_count_damage_and_weight_unaimed_share_by_bullets():
     first, second = episode('exited', shots=5), episode('horizon', shots=15)
-    first['result'].__dict__.update(damaging_hits=2, unaimed_shots=4)
-    second['result'].__dict__.update(damaging_hits=3, unaimed_shots=6)
+    first['result'].unaimed_shots, second['result'].unaimed_shots = 4, 6
+    first['stats']['damaging_hits'], second['stats']['damaging_hits'] = 2, 3
     row = campaign_hunter.summary([first, second])
     assert row['damaging_hits'] == 2.5
     assert row['unaimed_shot_share'] == .5
     assert dashboard.unclaimed('campaign_hunter', set(row)) == []
-    first['result'].shots = first['result'].unaimed_shots = 0
+    first['stats']['shots'] = first['result'].unaimed_shots = 0
     assert campaign_hunter.summary([first])['unaimed_shot_share'] == 0
 
 
