@@ -422,6 +422,9 @@ class Game:
 
     def begin_play(self, level: int, from_levels: bool = False) -> None:
         """START GAME (level 1 in a multiplayer mode) or a level picked from LEVELS: play it in the chosen mode."""
+        if self.coop and not self._player_two_can_fly():
+            self.state = config.STATE_MULTIPLAYER      # which says a controller is needed
+            return
         self.new_race()
         self.competition = None
         if self.compete:
@@ -431,6 +434,10 @@ class Game:
         self.level = level
         self.state = config.STATE_PLAYING
         self.start_level()
+
+    def _player_two_can_fly(self) -> bool:
+        """Whether the second ship has someone to fly it: the Campaign Hunter, or a person on a controller."""
+        return self.user_settings.player2 == 'hunter' or bool(self.input_handler.get_controllers())
 
     def _hunter_takes(self, player: Optional[int]) -> bool:
         return player == 1 and self.user_settings.player2 == 'hunter'
