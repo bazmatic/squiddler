@@ -43,8 +43,9 @@ def collecting() -> Iterator[Dict[str, float]]:
         _active.reset(token)
 
 
-def recorded_means(episodes: Iterable[Optional[Mapping[str, float]]]) -> Dict[str, float]:
-    """The mean per episode of every stat any episode recorded; an episode that did not record one counts as 0."""
+def recorded_means(episodes: Iterable[Optional[Mapping[str, float]]], always: Iterable[str] = ()) -> Dict[str, float]:
+    """The mean per episode of every stat any episode recorded; an episode that did not record one counts as 0.
+    The `always` keys are logged even when no episode recorded them (as 0), so a chart that should always show does."""
     episodes = [e or {} for e in episodes]
-    keys = sorted({k for e in episodes for k in e})
-    return {k: sum(e.get(k, 0.0) for e in episodes) / len(episodes) for k in keys}
+    keys = sorted({k for e in episodes for k in e} | set(always))
+    return {k: sum(e.get(k, 0.0) for e in episodes) / len(episodes) for k in keys} if episodes else {}

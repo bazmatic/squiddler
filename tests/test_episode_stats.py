@@ -36,9 +36,10 @@ def test_a_campaign_stat_reaches_the_log_row_and_a_new_key_is_charted_under_othe
 
 
 def test_recorded_stats_never_displace_the_campaign_hunters_own_numbers():
-    plain = campaign_hunter.summary([campaign_episode('exited', wall_crashes=2)])
-    clashing = campaign_hunter.summary([dict(campaign_episode('exited', wall_crashes=2), stats={'wall_crashes': 9})])
-    assert clashing == plain
+    plain = campaign_hunter.summary([campaign_episode('exited')])
+    clashing = campaign_hunter.summary([dict(campaign_episode('exited'), stats={'exited': 0, 'shots': 7})])
+    assert clashing['exited'] == plain['exited'] == 1   # the stat the adapter computes itself wins
+    assert clashing['shots'] == 7
     assert list(campaign_hunter.summary([campaign_episode('exited')])) == list(campaign_hunter.summary(
         [dict(campaign_episode('exited'), stats={})]))   # no recorded stat: the charts and their order are as before
 

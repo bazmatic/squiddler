@@ -18,7 +18,7 @@ from hunter.campaign_senses import CAMPAIGN_FEATURE_NAMES, CAMPAIGN_HIT_POINT_CE
 from hunter.maze_route import MazeRoutes
 from hunter.senses import MAX_ENEMIES
 from learning.campaign_rewards import TABLE, CampaignShaping
-from learning.episode_stats import collecting
+from learning.episode_stats import collecting, record
 from learning.shooting_rewards import unaimed_shots
 
 PROGRESS_CAP = 0.2         # the most ground one decision can pay or cost, in maze widths
@@ -43,15 +43,11 @@ class CampaignResult:
     pickups: int              # crystals the ship collected
     beacon: bool              # the ship fetched an Ally beacon
     max_no_kill_gap: float    # the longest spell, in episode seconds, with enemies left and no kill by ship or ally
-    wall_crashes: int = 0     # times the ship struck a wall
-    shots: int = 0            # bullets the ship fired
     started_unseen: bool = False
     first_sighting_seconds: float | None = None
     unseen_seconds: float = 0.0
     search_horizon_seconds: float = 180.0
-    damaging_hits: int = 0
     unaimed_shots: int = 0
-    breach_blocks: int = 0
     wall_impulse: float = 0.0  # summed wall-induced velocity change, in ship top-speed units
     pursuit_lesson: bool = False
     missed_opportunities: float | None = None  # firing-interval equivalents; None when the rule was disabled
@@ -218,6 +214,7 @@ class _Recorder:
                 self.game.maze, self.game.ship.get_pos(), [e.get_pos() for e in self.game.roster.alive()])
             if cell in cells:
                 self.add('breach_blocks', 1)
+                record('breach_blocks')
 
     def _complete(self):
         """Decisions with both senses and controls: the episode's steps."""
@@ -385,6 +382,7 @@ def _fly_campaign(level, seed, spec, horizon=180.0, shaping=CampaignShaping(), g
                 previous_damage_callback(creature, projectile)
             if creature.allegiance == 'enemy' and projectile.source == 'player':
                 recorder.add('enemy_hits', 1)
+                record('damaging_hits')
 
         episode_encounter.on_projectile_damage = damaged_enemy
         if hasattr(pilot, 'reset'):
@@ -408,6 +406,8 @@ def _fly_campaign(level, seed, spec, horizon=180.0, shaping=CampaignShaping(), g
                 # the scoring penalty, so they also stay free of this training penalty.
                 recorder.add('wall_impulse', math.hypot(*game.ship.wall_impulse) / max(game.ship.max_speed, 1e-6))
             recorder.add('shots', scoring.shots_fired - seen['shots'])
+            record('shots', scoring.shots_fired - seen['shots'])
+            record('wall_crashes', scoring.wall_collisions - seen['walls'])
             seen.update(shots=scoring.shots_fired, own=scoring.enemies_destroyed, pickups=scoring.powerup_crystals_collected,
                         walls=scoring.wall_collisions)
             # The allied hunter arrives only when the ship fetches a beacon.
@@ -440,13 +440,11 @@ def _fly_campaign(level, seed, spec, horizon=180.0, shaping=CampaignShaping(), g
         senses, controls, rewards, temperatures = recorder.arrays(shaping)
         result = CampaignResult(level, seed, end, frames / FPS, enemies_at_start, scoring.enemies_destroyed,
                                 handler.level_kills - scoring.enemies_destroyed, cleared,
-                                scoring.powerup_crystals_collected, beacon, max_gap, scoring.wall_collisions, scoring.shots_fired,
+                                scoring.powerup_crystals_collected, beacon, max_gap,
                                 started_unseen=recorder.started_unseen,
                                 first_sighting_seconds=recorder.first_sighting_seconds,
                                 unseen_seconds=recorder.unseen_seconds, search_horizon_seconds=horizon,
-                                damaging_hits=int(sum(row['enemy_hits'] for row in recorder.events[:len(senses)])),
                                 unaimed_shots=int(sum(row['unaimed_shots'] for row in recorder.events[:len(senses)])),
-                                breach_blocks=int(sum(row['breach_blocks'] for row in recorder.events[:len(senses)])),
                                 wall_impulse=float(sum(row['wall_impulse'] for row in recorder.events[:len(senses)])),
                                 pursuit_lesson=pursuit_lesson,
                                 graded_shooting=graded_shooting,

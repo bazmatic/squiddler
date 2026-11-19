@@ -58,7 +58,7 @@ def _fly(job):
     flown = fly_campaign(level, seed, StudentSpec(weights=weights, greedy=not sampled, sample_seed=seed * 101 + level),
                          horizon=horizon, greedy=not sampled, pursuit_lesson=pursuit_lesson,
                          sticky_targets=sticky_targets, target_recovery=target_recovery)
-    return dict(dataclasses.asdict(flown['result']), reward_totals=flown['reward_totals'],
+    return dict(dataclasses.asdict(flown['result']), **flown['stats'], reward_totals=flown['reward_totals'],
                 sampled=sampled, wall=time.perf_counter() - started)
 
 
