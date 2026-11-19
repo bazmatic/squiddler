@@ -139,8 +139,9 @@ def test_leaving_demo_for_the_menu_hands_the_ship_back(make_game):
     assert game.autoplay is None and game.ship_pilot is None
 
 
-def test_reaching_the_exit_in_demo_moves_on_to_the_next_level_once(make_game):
-    game = make_game()
+def test_reaching_the_exit_in_demo_shows_the_tally_then_moves_on_once(make_game):
+    now = [1000.0]
+    game = make_game(clock=lambda: now[0])
     before = profile_bytes(make_game)
     put_ship_in_the_open_exit(game)
     game.update(1.0)
@@ -152,8 +153,16 @@ def test_reaching_the_exit_in_demo_moves_on_to_the_next_level_once(make_game):
     for _ in range(120):
         game.update(1.0)
         levels.append(game.level)
-    assert levels[-1] == 5 and set(levels) == {4, 5}
-    assert game.state == config.STATE_PLAYING and not game.exit_explosion_active
+    assert set(levels) == {4}                       # the tally holds the level until it has shown
+    assert game.state == config.STATE_LEVEL_COMPLETE and game.level_succeeded
+    game.draw()
+    game.update(1.0)
+    now[0] += SETTINGS.autoplay.tallySeconds + 1
+    game.update(1.0)
+    assert game.level == 5 and game.state == config.STATE_PLAYING and not game.exit_explosion_active
+    for _ in range(30):
+        game.update(1.0)
+    assert game.level == 5                          # and moved on only once
     assert profile_bytes(make_game) == before
 
 
@@ -177,6 +186,8 @@ def test_demo_levels_never_touch_the_profile(make_game):
     before = profile_bytes(make_game)
     game.profile_manager = Mock(wraps=game.profile_manager)
     game.complete_level(success=True)
+    assert game.state == config.STATE_LEVEL_COMPLETE
+    game.continue_after_level_complete()
     game.complete_level(success=False)
     assert game.level == 6 and game.state == config.STATE_PLAYING
     game.profile_manager.record_level_result.assert_not_called()

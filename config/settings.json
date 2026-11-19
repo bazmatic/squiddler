@@ -289,7 +289,8 @@
     "firstLevel": 1,
     "lastLevel": 40,
     "timeLimitSeconds": 240,
-    "noKillSeconds": 20
+    "noKillSeconds": 20,
+    "tallySeconds": 4
   },
   "obstacles": {
     "gateMass": 16.0,
