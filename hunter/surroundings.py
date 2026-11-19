@@ -35,7 +35,11 @@ class GameSurroundings:
         return [c for c in self._game.powerup_crystals if not isinstance(c, JevBeacon)]
 
     def friend(self):
-        return self._game.ship if self._game._hunter_sees_player() else None
+        game = self._game
+        if not game._hunter_sees_player():
+            return None
+        nearest = getattr(game, 'nearest_ship', None)   # a training scene's stand-in has just the one ship
+        return nearest(game.hunter) if nearest is not None else game.ship
 
 
 class ProtagonistSurroundings:

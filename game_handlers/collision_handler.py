@@ -64,7 +64,8 @@ class CollisionHandler:
             if weapon_id:
                 self.weapon_kills[weapon_id] += 1
         if projectile.source == 'player':
-            self.scoring.record_enemy_destroyed()
+            owner = getattr(projectile, 'owner', None)   # the player who fired it; else the first
+            (owner.scoring if owner is not None else self.scoring).record_enemy_destroyed()
             self.last_player_kill = deepcopy(enemy)
         blast = getattr(enemy, 'blast', None)
         if blast is not None:
@@ -142,7 +143,8 @@ class CollisionHandler:
         
         return False
     
-    def handle_blast(self, blast: 'Blast', ship, hunter, enemies, hit_enemy, maze: Optional['Maze'] = None) -> None:
+    def handle_blast(self, blast: 'Blast', ship, hunter, enemies, hit_enemy, maze: Optional['Maze'] = None,
+                     other_ships=()) -> None:
         """A blast goes off: it shoves and hurts the player, the hunter, each enemy and each wall block it reaches.
         The player and the hunter take one hit, as from touching an enemy; each enemy takes the blast's damage.
 
@@ -152,15 +154,16 @@ class CollisionHandler:
         a chain of them goes off.
         """
         self.sound_manager.play_enemy_destroy()
-        if ship is not None and ship.active and reaches(blast, ship.get_pos(), ship.radius):
-            dvx, dvy = push(blast, ship.get_pos())
-            ship.vx += dvx
-            ship.vy += dvy
-            if not ship.is_shield_active():
-                ship.record_hit(dvx, dvy)
-                ship.flinch()
-                self.scoring.record_enemy_collision()   # it costs what touching an enemy does
-                self.sound_manager.play_bad_hit()
+        for hurt, scoring in [(ship, self.scoring), *other_ships]:   # `other_ships`: (ship, scoring) pairs
+            if hurt is not None and hurt.active and reaches(blast, hurt.get_pos(), hurt.radius):
+                dvx, dvy = push(blast, hurt.get_pos())
+                hurt.vx += dvx
+                hurt.vy += dvy
+                if not hurt.is_shield_active():
+                    hurt.record_hit(dvx, dvy)
+                    hurt.flinch()
+                    scoring.record_enemy_collision()   # it costs what touching an enemy does
+                    self.sound_manager.play_bad_hit()
         if hunter is not None and hunter.active and reaches(blast, hunter.get_pos(), hunter.radius):
             dvx, dvy = push(blast, hunter.get_pos())
             hunter.vx += dvx

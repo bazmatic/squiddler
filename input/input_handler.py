@@ -152,7 +152,11 @@ class InputHandler:
             if ctrl.get_instance_id() != instance_id
         ]
     
-    def process_controller_input(self) -> List[CommandType]:
+    def _controller_at(self, index: int):
+        """The controller driving a player's ship, or None when that player has none."""
+        return self.controllers[index] if 0 <= index < len(self.controllers) else None
+
+    def process_controller_input(self, index: int = 0) -> List[CommandType]:
         """Process controller input and return detected commands.
         
         Returns:
@@ -161,11 +165,9 @@ class InputHandler:
         """
         commands = []
         
-        # Use first connected controller
-        if not self.controllers:
+        controller = self._controller_at(index)
+        if controller is None:
             return commands
-        
-        controller = self.controllers[0]
         
         # Get number of axes and buttons
         num_axes = controller.get_numaxes()
@@ -234,16 +236,15 @@ class InputHandler:
         
         return commands
     
-    def is_controller_fire_pressed(self) -> bool:
+    def is_controller_fire_pressed(self, index: int = 0) -> bool:
         """Check if controller fire button is pressed.
         
         Returns:
             True if fire button is pressed, False otherwise.
         """
-        if not self.controllers:
+        controller = self._controller_at(index)
+        if controller is None:
             return False
-        
-        controller = self.controllers[0]
         num_axes = controller.get_numaxes()
         num_buttons = controller.get_numbuttons()
         
@@ -266,16 +267,15 @@ class InputHandler:
         
         return False
     
-    def is_controller_shield_pressed(self) -> bool:
+    def is_controller_shield_pressed(self, index: int = 0) -> bool:
         """Check if controller shield button is pressed.
         
         Returns:
             True if shield button is pressed, False otherwise.
         """
-        if not self.controllers:
+        controller = self._controller_at(index)
+        if controller is None:
             return False
-        
-        controller = self.controllers[0]
         num_buttons = controller.get_numbuttons()
         
         # Shield: A button (button 0)

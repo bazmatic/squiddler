@@ -159,7 +159,7 @@ class Encounter:
     def target_entity_for(self, creature):
         """The creature's target itself: the nearest friend or opposite-allegiance creature, or None."""
         from game_handlers.combat_targets import nearest_friendly
-        usual = nearest_friendly(creature,self.world.ship,self.world.hunter)
+        usual = nearest_friendly(creature,getattr(self.world,'ships',None) or self.world.ship,self.world.hunter)
         targets = [t for t in getattr(self.world,'additional_targets',()) if t.active]
         targets += [c for c in self.roster.alive() if c is not creature and c.allegiance != creature.allegiance]
         if usual is not None:

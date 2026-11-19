@@ -49,6 +49,7 @@ class Ship(RotatingThrusterShip):
             start_pos: Starting position as (x, y) tuple.
         """
         super().__init__(start_pos, config.SHIP_SIZE)
+        self.palette = None   # (nose, rear, glow) colours; None: the usual ship colours (a second player's differ)
         self.fuel = 0  # Energy used (for scoring), starts at 0
         self.ammo = config.INITIAL_AMMO
         self.weapon = None
@@ -480,7 +481,7 @@ class Ship(RotatingThrusterShip):
             # Strength follows how recent the segment is, so the trail keeps
             # its fade as it runs out from the old end
             strength = 1.0 - (segments - 1 - index) / self.TRAIL_LENGTH
-            color = (*config.COLOR_SHIP, int(self.TRAIL_ALPHA * strength ** 1.5))
+            color = (*(self.palette[2] if self.palette else config.COLOR_SHIP), int(self.TRAIL_ALPHA * strength ** 1.5))
             thickness = max(1, int(round(self.radius * 1.1 * strength)))
             start = (points[index][0] - left, points[index][1] - top)
             end = (points[index + 1][0] - left, points[index + 1][1] - top)
@@ -528,9 +529,8 @@ class Ship(RotatingThrusterShip):
             glow_color = (255, 100, 100)
             glow_intensity = config.SHIP_GLOW_INTENSITY * (1.0 + 0.5 * math.sin(self.glow_phase))
         else:
-            color_nose = config.COLOR_SHIP_NOSE
-            color_rear = config.COLOR_SHIP_REAR
-            glow_color = config.COLOR_SHIP
+            color_nose, color_rear, glow_color = self.palette or (
+                config.COLOR_SHIP_NOSE, config.COLOR_SHIP_REAR, config.COLOR_SHIP)
             glow_intensity = config.SHIP_GLOW_INTENSITY
         
         if flash_factor > 0.0:
@@ -669,6 +669,18 @@ class Ship(RotatingThrusterShip):
         self.draw_thrust_plume(screen)
         self.impact.draw(screen, self.get_pos(), self.radius, vertices)
     
+    def ammo_reading(self) -> Tuple[float, str, Tuple[int, int, int]]:
+        """What the ammo gauge shows: how full it is, its text and its colour."""
+        if self.weapon is not None:
+            view = self.weapon.view
+            definition = self.weapon.catalog[view.id]
+            text = (f"{view.ammo / config.FPS:.1f}s" if definition.behaviour == 'shield'
+                    else "∞" if view.ammo is None else str(view.ammo))
+            return view.ammo_fraction, text, definition.color
+        if not self.ammo_policy.charges_for_shots():
+            return 1.0, "∞", (100, 200, 255)
+        return max(0, min(1, self.ammo / config.INITIAL_AMMO)), str(math.ceil(self.ammo)), (100, 200, 255)
+
     def draw_ui(self, screen: pygame.Surface, font: pygame.font.Font, potential_score: Optional[float] = None, max_score: float = 100.0, level: Optional[int] = None, time_seconds: Optional[float] = None, level_score: Optional[float] = None, progress_score: Optional[int] = None) -> None:
         """Draw ship UI (level, time, ammo, score) using circular gauges.
         
@@ -762,24 +774,8 @@ class Ship(RotatingThrusterShip):
             )
         
         # Ammo gauge
-        if self.weapon is not None:
-            view = self.weapon.view
-            definition = self.weapon.catalog[view.id]
-            ammo_percent = view.ammo_fraction
-            ammo_text = (f"{view.ammo / config.FPS:.1f}s" if definition.behaviour == 'shield'
-                         else "∞" if view.ammo is None else str(view.ammo))
-            ammo_color = definition.color
-            ammo_text_color = config.COLOR_TEXT
-        elif not self.ammo_policy.charges_for_shots():
-            ammo_percent = 1.0
-            ammo_text = "∞"
-            ammo_color = (100, 200, 255)
-            ammo_text_color = config.COLOR_TEXT
-        else:
-            ammo_percent = max(0, min(1, self.ammo / config.INITIAL_AMMO))
-            ammo_text = str(math.ceil(self.ammo))
-            ammo_color = (100, 200, 255)
-            ammo_text_color = config.COLOR_TEXT
+        ammo_percent, ammo_text, ammo_color = self.ammo_reading()
+        ammo_text_color = config.COLOR_TEXT
         
         draw_gauge(GAUGE_Y_POSITIONS['ammo'], ammo_percent, ammo_text, ammo_color, "AMMO", ammo_text_color)
         

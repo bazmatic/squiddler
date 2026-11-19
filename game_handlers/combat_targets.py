@@ -2,7 +2,8 @@
 
 
 def nearest_friendly(enemy, player, hunter=None):
-    candidates = [obj for obj in (player,hunter)
+    ships = player if isinstance(player, (list, tuple)) else [player]
+    candidates = [obj for obj in (*ships, hunter)
                   if obj is not None and obj.active and not getattr(obj, 'observer', False)]
     return min(candidates, key=lambda obj:(obj.x-enemy.x)**2+(obj.y-enemy.y)**2, default=None)
 

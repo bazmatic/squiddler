@@ -400,6 +400,12 @@ class AutoplaySettings:
 
 
 @dataclass
+class MultiplayerSettings:
+    # Temporary switch until the mode menu lands: two ships fly each level together as a team.
+    coop: bool = False
+
+
+@dataclass
 class ObstacleSettings:
     # Physics gates: a plank on a centre pin, free or motor-driven.
     gateMass: float = 16.0  # the ship is r^2 = 64
@@ -470,6 +476,7 @@ class Settings:
     game: GameSettings
     hunterShip: HunterShipSettings = field(default_factory=HunterShipSettings)
     autoplay: AutoplaySettings = field(default_factory=AutoplaySettings)
+    multiplayer: MultiplayerSettings = field(default_factory=MultiplayerSettings)
     obstacles: ObstacleSettings = field(default_factory=ObstacleSettings)
     flora: FloraSettings = field(default_factory=FloraSettings)
 
@@ -624,6 +631,7 @@ def load_settings() -> Settings:
         game=GameSettings(**raw["game"]),
         hunterShip=HunterShipSettings(**raw.get("hunterShip", {})),
         autoplay=AutoplaySettings(**raw.get("autoplay", {})),
+        multiplayer=MultiplayerSettings(**raw.get("multiplayer", {})),
         obstacles=ObstacleSettings(**raw.get("obstacles", {})),
         flora=FloraSettings(**raw.get("flora", {})),
     )
