@@ -16,6 +16,7 @@ class Competition:
         self.points = list(points) if points is not None else [0, 0]
         self.rounds_played = rounds_played
         self.scores: List[Optional[float]] = [None, None]
+        self.breakdowns: List[Optional[dict]] = [None, None]   # each player's score components, for the results
         self.turn = 0                       # 0 and 1: the first and second flights; 2 once both have flown
 
     @property
@@ -31,9 +32,10 @@ class Competition:
     def finished(self) -> bool:
         return self.turn >= 2
 
-    def record(self, score: float) -> None:
+    def record(self, score: float, breakdown: Optional[dict] = None) -> None:
         """The player now flying finishes their turn with `score`; the other follows, or the level is done."""
         self.scores[self.current] = max(0.0, score)
+        self.breakdowns[self.current] = breakdown
         self.turn += 1
         if self.finished:
             winner = self.winner

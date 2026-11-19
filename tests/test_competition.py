@@ -1,4 +1,5 @@
 """Level competition: two players take turns on one level, each a single attempt; the higher score wins it."""
+from rendering.competition_screens import score_rows
 import pygame
 import pytest
 
@@ -121,6 +122,24 @@ def test_after_both_turns_the_results_name_the_winner_and_levels_returns_to_the_
     compete.draw()
     compete.leave_competition_result()
     assert compete.state == config.STATE_LEVEL_SELECT and compete.competition is None
+
+
+def test_the_results_break_each_score_down_into_what_made_it(compete, monkeypatch):
+    compete.begin_play(3, from_levels=True)
+    compete.start_turn()
+    fly_to_the_exit(compete, monkeypatch)
+    compete.start_turn()
+    fly_to_the_exit(compete, monkeypatch)
+    competition = compete.competition
+    assert [b['final_score'] for b in competition.breakdowns] == pytest.approx(competition.scores)
+    compete.draw()
+
+
+def test_only_the_parts_of_the_score_either_player_had_are_listed():
+    ours = {"time_penalty": 30, "wall_collision_penalty": 4, "enemy_destruction_bonus": 15}
+    theirs = {"time_penalty": 70, "collision_penalty": 40}
+    assert score_rows([ours, theirs]) == [
+        ("TIME", -30, -70), ("ENEMY HITS", 0, -40), ("WALL BUMPS", -4, 0), ("KILLS", 15, 0)]
 
 
 def test_a_campaign_goes_on_to_the_next_level_with_the_other_player_first(compete, monkeypatch):

@@ -474,10 +474,10 @@ class Game:
         me.color = (config.COLOR_SHIP, PLAYER_2_COLOR)[player]
         me.ship.palette = PLAYER_2_PALETTE if player == 1 else None
 
-    def _finish_turn(self, score: float) -> None:
+    def _finish_turn(self, score: float, breakdown: Optional[dict] = None) -> None:
         """A turn is over: on to the other player's turn, or to the results once both have flown."""
         competition = self.competition
-        competition.record(score)
+        competition.record(score, breakdown)
         self.players[0].driver = None
         self.state = config.STATE_COMPETITION_RESULT if competition.finished else config.STATE_TURN
         self.sound_manager.stop_all_sounds()
@@ -1633,7 +1633,7 @@ class Game:
         final_score = self.level_score_breakdown.get('final_score', 0)
         tally = self.finish_tally if self.finish_tally is not None else self.star_tally()
         if self.competition is not None:
-            self._finish_turn(final_score if success else 0)   # a turn is scored for the competition, not the profile
+            self._finish_turn(final_score if success else 0, self.level_score_breakdown)   # a turn is scored for the competition, not the profile
             return
         star_flags = earned(tally)
         self.star_lines = describe(tally)
@@ -1700,10 +1700,9 @@ class Game:
         elif self.state == config.STATE_MULTIPLAYER:
             self.multiplayer_menu.draw()
         elif self.state == config.STATE_TURN:
-            self.competition_screens.draw_turn(self.competition, self._hunter_takes(self.competition.current))
+            self.competition_screens.draw_turn(self.competition)
         elif self.state == config.STATE_COMPETITION_RESULT:
-            self.competition_screens.draw_result(
-                self.competition, 1 if self.user_settings.player2 == 'hunter' else None)
+            self.competition_screens.draw_result(self.competition)
         elif self.state == config.STATE_FUN:
             self.fun_menu.draw()
         elif self.state == config.STATE_EDITOR:
@@ -1867,7 +1866,7 @@ class Game:
                 if self.competition is not None:    # whose turn it is, in their colour
                     from rendering.competition_screens import PLAYER_COLOURS, player_name
                     turn = self.competition.current
-                    self.screen.blit(get_font(18).render(player_name(turn, self._hunter_takes(turn)), True,
+                    self.screen.blit(get_font(18).render(player_name(turn), True,
                                                          PLAYER_COLOURS[turn]), (12, 6))
             self._draw_hunter_energy(below=exit_panel.bottom)
             self.announcer.draw(self.screen)
