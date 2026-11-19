@@ -2,6 +2,7 @@
 
 import pygame
 import math
+from types import SimpleNamespace
 import time
 import random
 import os
@@ -15,10 +16,11 @@ from rendering.exit_panel import draw_exit_panel
 from rendering.last_enemy_ring import draw_last_enemy_ring
 from rendering.star_row import STAR_ROW_SIZE, STAR_ROW_Y, draw_star_row
 from entities.ship import Ship, LOW_POWER_THRESHOLD
-from entities.player import Player
+from entities.player import Player, PLAYER_2_COLOR, PLAYER_2_PALETTE
 from flora import Flora
 from maze.generator import Maze
 from physics.obstacle_world import ObstacleWorld
+from physics.side_by_side import side_by_side_starts
 from rendering.gates import draw_gate
 import level_rules
 import level_config
@@ -105,6 +107,8 @@ class Game:
     last_shot_time = property(lambda self: self.players[0].last_shot_time,
                               lambda self, t: setattr(self.players[0], 'last_shot_time', t))
 
+    coop = False   # two ships fly each level together as a team (set from the settings in __init__)
+
     @property
     def players(self) -> List[Player]:
         """The players, always at least one; players[0] is `ship`, `scoring` and `ship_pilot`. Made on first use, so a
@@ -116,6 +120,27 @@ class Game:
     @players.setter
     def players(self, players: List[Player]) -> None:
         self._players = players
+
+    @property
+    def ships(self) -> list:
+        """Every player's ship, flying or not."""
+        return [player.ship for player in self.players if player.ship is not None]
+
+    def flying_players(self) -> List[Player]:
+        """The players still in play: not dropped out, not yet through the portal, ship alive."""
+        return [p for p in self.players if p.flying and p.ship is not None and p.ship.active]
+
+    def _ships_in_play(self) -> list:
+        """The ships that fly, fight and pick things up: the one ship when alone, else those still flying."""
+        return [self.ship] if len(self.players) == 1 else [p.ship for p in self.flying_players()]
+
+    def nearest_ship(self, to=None):
+        """The living ship nearest `to` (anything with x and y; the first player's ship when None), or the first
+        player's ship when none is flying."""
+        flying = [p.ship for p in self.flying_players()]
+        if not flying or to is None:
+            return flying[0] if flying else self.ship
+        return min(flying, key=lambda ship: (ship.x - to.x) ** 2 + (ship.y - to.y) ** 2)
 
     @property
     def player_has_moved(self) -> bool:
@@ -156,6 +181,7 @@ class Game:
         self.profile_manager = ProfileManager()
         self.user_settings = UserSettings()
         self.players: List[Player] = [Player()]   # always at least one; players[0] is `ship`, `scoring`, `ship_pilot`
+        self.coop = config.SETTINGS.multiplayer.coop   # two ships fly each level together as a team
         self.maze: Optional[Maze] = None
         self.obstacles: Optional[ObstacleWorld] = None
         self.hunter_flight: Optional[HunterFlight] = None
@@ -351,6 +377,54 @@ class Game:
         # first clear has already unlocked the next level in the profile.
         self.replaying = replaying
 
+    def _create_players(self) -> None:
+        """New ships for the level: the first player's, and in co-op a second beside it, each ready to fly."""
+        from weapons import EquippedWeapon, WeaponInventory, RULESET
+        from weapons.catalog import PICKUP_RULESETS, default_catalog
+        first = self.players[0]
+        self.players = [first] + ([Player()] if self.coop else [])
+        for player in self.players:
+            player.dropped_out = player.through = False
+            player.final_power = None
+        exit_pos = (self.maze.exit.x, self.maze.exit.y)
+        initial_angle = get_angle_to_point(self.maze.start_pos, exit_pos)   # towards the exit (opposite corner)
+        starts = [self.maze.start_pos]
+        if len(self.players) > 1:
+            starts = side_by_side_starts(self.maze, self.maze.start_pos, exit_pos, config.SHIP_SIZE)
+        ruleset = getattr(self, 'combat_ruleset', 'legacy')
+        catalog = getattr(self, 'weapon_catalog', None) or default_catalog(ruleset)
+        for player, start in zip(self.players, starts):
+            ship = player.ship = Ship(start)
+            if ruleset in PICKUP_RULESETS:
+                state_type = WeaponInventory if ruleset == RULESET else EquippedWeapon
+                ship.weapon = state_type(catalog)
+            ship.observer = config.observer_mode_enabled()
+            ship.vx = ship.vy = 0.0       # no visual jumps
+            ship.prev_x, ship.prev_y = ship.x, ship.y
+            ship.angle = initial_angle
+            ship.shield_active = True     # initial activation, no fuel consumed
+            ship.reset_gun_upgrade()
+            ship.ammo_policy = level_config.get_level_ammo_policy(self.level)
+            ship.game_started = False     # the shield timer waits for this ship's first move
+        self._assign_devices()
+        if len(self.players) > 1:
+            self.players[0].color = config.COLOR_SHIP
+            self.players[1].color = PLAYER_2_COLOR
+            self.players[1].ship.palette = PLAYER_2_PALETTE
+
+    def _assign_devices(self) -> None:
+        """Who flies which ship. Alone, the keyboard and the first controller fly it. In co-op with two controllers the
+        keyboard joins the first player; with one, the keyboard is Player 1 and the controller Player 2."""
+        first, *rest = self.players
+        first.keyboard, first.controller = True, 0
+        if not rest:
+            return
+        controllers = len(self.input_handler.get_controllers())
+        second = rest[0]
+        second.keyboard = False
+        first.controller, second.controller = ((0, 1) if controllers >= 2
+                                               else (None, 0 if controllers == 1 else None))
+
     def start_level(self, *, maze_seed: Optional[int] = None) -> None:
         """Start a new level."""
         self._close_hunter()
@@ -403,46 +477,26 @@ class Game:
         self.obstacles = ObstacleWorld(self.maze, layout.gates) if layout is not None and layout.gates else None
         self.maze.gate_segments = self.obstacles.segments() if self.obstacles else []
         
-        # Create ship at start position
-        self.ship = Ship(self.maze.start_pos)
-        from weapons import EquippedWeapon, WeaponInventory, RULESET
-        from weapons.catalog import PICKUP_RULESETS, default_catalog
+        # Create the ships at the start position: one, or two side by side in co-op
+        self._create_players()
+        from weapons.catalog import default_catalog
         ruleset = getattr(self, 'combat_ruleset', 'legacy')
         catalog = getattr(self, 'weapon_catalog', None) or default_catalog(ruleset)
-        if ruleset in PICKUP_RULESETS:
-            state_type = WeaponInventory if ruleset == RULESET else EquippedWeapon
-            self.ship.weapon = state_type(catalog)
-        self.collision_handler.combat_ruleset = getattr(self, 'combat_ruleset', 'legacy')
+        self.collision_handler.combat_ruleset = ruleset
         self.collision_handler.weapon_catalog = catalog
         data = level_config.load_level_config(self.level) or {}
         self.collision_handler.weapon_allowlist = data.get('weapons')
-        self.ship.observer = config.observer_mode_enabled()
-        # Explicitly reset velocity and previous position to prevent visual jumps
-        self.ship.vx = 0.0
-        self.ship.vy = 0.0
-        self.ship.prev_x = self.ship.x
-        self.ship.prev_y = self.ship.y
-        # Set initial angle to point towards exit (opposite corner)
-        exit_pos = (self.maze.exit.x, self.maze.exit.y)
-        initial_angle = get_angle_to_point(self.maze.start_pos, exit_pos)
-        self.ship.angle = initial_angle
-        # Activate shield at level start (initial activation, no fuel consumed)
-        self.ship.shield_active = True
-        # Reset gun upgrade state
-        self.ship.reset_gun_upgrade()
         self.exit_policy = level_config.get_level_exit_policy(self.level)
         # The mission is easy to miss in the side panel: announce it until the player starts flying
         self.announcer = Announcer()
         mission = self.exit_policy.mission()
         if mission is not None:
             self.announcer.show('MISSION', mission)
-        self.ship.ammo_policy = level_config.get_level_ammo_policy(self.level)
         self.exit_opened = False
         self.play_seconds = 0.0
         
         # Reset player movement flag - game loop won't start until first move
-        self.player_has_moved = False
-        self.ship.game_started = False  # Prevent shield timer countdown until first move
+        self.player_has_moved = False   # game loop won't start until a first move; no ship's shield timer runs yet
         
         # Spawn all enemies using SpawnManager
         # Check for level config overrides, fall back to defaults if not present
@@ -469,7 +523,7 @@ class Game:
             placed = level_config.get_level_hunter_config(self.level)
             if placed is not None:
                 try:
-                    beacon_pos = resolve_hunter_spawn(placed, self.maze, self.ship)
+                    beacon_pos = resolve_hunter_spawn(placed, self.maze, self.ship)   # the first ship, as it starts
                 except ValueError as exc:
                     logging.getLogger(__name__).warning('Jev beacon placement rejected: %s; using automatic placement', exc)
             if beacon_pos is None:
@@ -503,7 +557,8 @@ class Game:
         
         # Start scoring
         current_time = self.clock()
-        self.scoring.start_level(current_time)
+        for player in self.players:
+            player.scoring.start_level(current_time)
         self.level_start_time = current_time  # Record level start time to ignore initial SPACE press
         
         # Reset star indicator
@@ -546,7 +601,7 @@ class Game:
     def _summon_hunter(self, near) -> None:
         """Bring the hunter in beside a collected Jev beacon, replacing one that has died."""
         try:
-            pos = nearest_hunter_spawn(near, self.maze, self.ship)
+            pos = nearest_hunter_spawn(near, self.maze, self.nearest_ship(SimpleNamespace(x=near[0], y=near[1])))
         except ValueError as exc:
             logging.getLogger(__name__).warning('Hunter not summoned: %s', exc)
             return
@@ -676,7 +731,7 @@ class Game:
         """
         if self.ship is not None and getattr(self.ship, 'observer', False):
             return self.hunter
-        return self.ship
+        return self.nearest_ship()
 
     def rules_worker(self):
         """A new pilot worker for a Terminator's rules pilot."""
@@ -723,7 +778,7 @@ class Game:
 
     def _step_gates(self, dt):
         """Let the gates turn and push back on whatever flies into them; anemones and flighthouses jam them."""
-        movers, anchored, seen = [self.ship], [], set()
+        movers, anchored, seen = list(self.ships), [], set()
         if self.hunter is not None and self.hunter.active:
             movers.append(self.hunter)
         seen.update(id(m) for m in movers)
@@ -747,7 +802,7 @@ class Game:
         for blast in self.collision_handler.explosions.update(dt):
             self.collision_handler.handle_blast(
                 blast, self.ship, self.hunter, self.roster.alive(), self._hit_enemies,
-                self.maze)
+                self.maze, other_ships=[(p.ship, p.scoring) for p in self.players[1:] if p.flying])
             self._stop_dead_hunter()
 
     def _close_enemy_hunters(self):
@@ -903,11 +958,21 @@ class Game:
                     handler = self.state_handler_registry.get_handler(self.state)
                     handler.handle_keyboard(event, self)
     
-    def _drive_player(self, player: Player, commands: List[CommandType], keys, ignore_input: bool,
+    def _drive_player(self, player: Player, keyboard_commands: List[CommandType], keys, ignore_input: bool,
                       should_filter_commands: bool, dt: float) -> None:
-        """One frame of a player's ship: its driver or the input `commands` (a pilot replaces them), shield or weapon
-        cycling, the first move, the gun's fire rate, and the ship's update and wall strikes."""
-        commands = list(commands)
+        """One frame of a player's ship: its driver or the input from its own devices (a pilot replaces them), shield
+        or weapon cycling, the first move, the gun's fire rate, and the ship's update and wall strikes."""
+        if not player.flying or not player.ship.active:
+            if player.ship.is_dying:
+                player.ship.update_death(dt)
+            return
+        if self.coop and not player.has_moved:
+            player.scoring.level_start_time = self.clock()   # this ship's time drain starts when it first moves
+        commands = list(keyboard_commands) if player.keyboard else []
+        if not ignore_input and player.controller is not None:
+            for cmd in self.input_handler.process_controller_input(player.controller):
+                if cmd not in commands:
+                    commands.append(cmd)
         if player.driver is not None:
             pilot_command = player.driver.decide(self)
             commands = []
@@ -929,8 +994,9 @@ class Game:
             )]
         
         # Down/S (or controller A) advances once per press in inventory games.
-        cycle_pressed = (keys[pygame.K_DOWN] or keys[pygame.K_s]
-                         or self.input_handler.is_controller_shield_pressed())
+        cycle_pressed = bool(
+            (player.keyboard and (keys[pygame.K_DOWN] or keys[pygame.K_s]))
+            or (player.controller is not None and self.input_handler.is_controller_shield_pressed(player.controller)))
         from weapons import WeaponInventory
         inventory = isinstance(player.ship.weapon, WeaponInventory)
         if inventory:
@@ -953,10 +1019,11 @@ class Game:
             fire_key_pressed = pilot_command.fire
         elif not should_ignore_fire:
             try:
-                fire_key_pressed = keys[pygame.K_SPACE]
+                fire_key_pressed = player.keyboard and keys[pygame.K_SPACE]
             except (IndexError, KeyError):
                 pass
-            fire_controller_pressed = self.input_handler.is_controller_fire_pressed()
+            if player.controller is not None:
+                fire_controller_pressed = self.input_handler.is_controller_fire_pressed(player.controller)
         
         fire_pressed = fire_key_pressed or fire_controller_pressed
         
@@ -990,6 +1057,8 @@ class Game:
                 projectiles = player.ship.fire()
                 if projectiles:
                     # fire() now returns a list (single or multiple projectiles)
+                    for shot in projectiles:
+                        shot.owner = player   # whose kill it counts as
                     self.projectiles.extend(projectiles)
                     player.scoring.record_shot()
                     self.command_recorder.record_command(CommandType.FIRE)
@@ -1069,8 +1138,9 @@ class Game:
             return  # Don't update if not playing (including quit confirmation)
         
         if self.game_over_active:
-            if self.ship is not None and self.ship.is_dying:
-                self.ship.update_death(dt)
+            for ship in self.ships:
+                if ship.is_dying:
+                    ship.update_death(dt)
             elapsed = self.clock() - self.game_over_start_time
             if elapsed >= self.game_over_death_duration + self.game_over_fade_duration + self.game_over_text_duration:
                 self.complete_level(success=False)
@@ -1106,23 +1176,25 @@ class Game:
         
         # Update exit animation and check player proximity
         if self.maze.exit.active:
-            player_pos = (self.ship.x, self.ship.y) if self.ship else None
-            self.maze.exit.update(dt, player_pos)
+            near = self.nearest_ship(self.maze.exit)
+            self.maze.exit.update(dt, (near.x, near.y) if near else None)
         
-        # Apply exit portal attraction force to ship
-        if self.ship and self.maze.exit.active:
-            attraction_force = self.maze.exit.get_attraction_force((self.ship.x, self.ship.y))
+        # Apply exit portal attraction force to each ship still in play
+        for ship in self._ships_in_play():
+            if not (ship and self.maze.exit.active):
+                continue
+            attraction_force = self.maze.exit.get_attraction_force((ship.x, ship.y))
             if attraction_force is not None:
                 # Apply attraction force to ship velocity
-                self.ship.vx += attraction_force[0]
-                self.ship.vy += attraction_force[1]
+                ship.vx += attraction_force[0]
+                ship.vy += attraction_force[1]
                 
                 # Limit max speed (same as thrust)
-                speed = math.sqrt(self.ship.vx * self.ship.vx + self.ship.vy * self.ship.vy)
-                if speed > self.ship.max_speed:
-                    scale = self.ship.max_speed / speed
-                    self.ship.vx *= scale
-                    self.ship.vy *= scale
+                speed = math.sqrt(ship.vx * ship.vx + ship.vy * ship.vy)
+                if speed > ship.max_speed:
+                    scale = ship.max_speed / speed
+                    ship.vx *= scale
+                    ship.vy *= scale
         
         # Ignore input for a short period after level start to avoid counting menu key presses
         current_time = self.clock()
@@ -1138,17 +1210,6 @@ class Game:
             # Check if any of the mapped keys are pressed
             if any(keys[key_code] for key_code in key_codes):
                 keyboard_commands.append(command_type)
-        
-        # Process controller input only if not ignoring input
-        controller_commands = []
-        if not ignore_input:
-            controller_commands = self.input_handler.process_controller_input()
-        
-        # Combine commands
-        commands = keyboard_commands[:]
-        for cmd in controller_commands:
-            if cmd not in commands:
-                commands.append(cmd)
         
         # Filter out problematic commands during ignore period OR if keys were pressed at start (until released)
         should_filter_commands = ignore_input
@@ -1171,7 +1232,8 @@ class Game:
             self.keys_pressed_at_start = keys_still_pressed
         
         for player in self.players:
-            self._drive_player(player, commands, keys, ignore_input, should_filter_commands, dt)
+            self._drive_player(player, keyboard_commands, keys, ignore_input, should_filter_commands, dt)
+        self._bounce_ships()
         
         # Only update enemies after player has made their first move
         if self.player_has_moved:
@@ -1184,8 +1246,8 @@ class Game:
             self._step_gates(dt)
 
         if self.player_has_moved:
-            self.collision_handler.handle_hunter_contacts(
-                self.hunter, self.ship, self.roster.alive())
+            for ship in self._ships_in_play():
+                self.collision_handler.handle_hunter_contacts(self.hunter, ship, self.roster.alive())
             self._stop_dead_hunter()
 
         # Update projectiles and handle collisions
@@ -1221,7 +1283,8 @@ class Game:
                 projectile.check_wall_collision(self.maze.walls, self.maze.spatial_grid)
             
             # Check enemy projectile-ship collision
-            if self.collision_handler.handle_projectile_ship_collision(projectile, self.ship, self.scoring):
+            if any(self.collision_handler.handle_projectile_ship_collision(projectile, player.ship, player.scoring)
+                   for player in self.players if player.flying):
                 continue  # Projectile destroyed, skip adding to active list
             
             if self.collision_handler.handle_projectile_hunter_collision(projectile, self.hunter):
@@ -1243,8 +1306,18 @@ class Game:
         
         self._update_powerup_crystals(dt)
         
-        # Check exit reached
-        if self.maze.check_exit_reached((self.ship.x, self.ship.y), self.ship.radius):
+        # Check exit reached. In co-op each ship that touches the open portal goes through and waits out of play, its
+        # power frozen; the level ends once every ship still flying is through.
+        current_time = self.clock()
+        reached = [p for p in self.players if p.flying and p.ship.active
+                   and self.maze.check_exit_reached((p.ship.x, p.ship.y), p.ship.radius)]
+        if len(self.players) > 1:
+            for player in reached:
+                self._send_through(player, current_time)
+            level_done = any(p.through for p in self.players) and not self.flying_players()
+        else:
+            level_done = bool(reached)
+        if level_done:
             if not self.exit_explosion_active:
                 # Start exit explosion; nothing after this changes the stars
                 self.finish_tally = self.star_tally()
@@ -1262,24 +1335,70 @@ class Game:
                 self.critical_warning_active = False
             return  # Don't update game during explosion
         
-        # Check if score has reached zero (level failed)
-        current_time = self.clock()
-        potential = self.scoring.calculate_current_potential_score(
-            current_time,
-            self.ship.fuel,
-            self.ship.ammo
-        )
-        potential_score = potential['potential_score']
-        self._update_critical_warning(potential_score)
-        self.ship.low_power = potential['score_percentage'] <= LOW_POWER_THRESHOLD
-
+        # Check if score has reached zero (level failed). In co-op a ship out of power drops out and the level goes
+        # on for the other; the level fails when none is left flying and none got through.
+        powers = []
+        for player in ([self.players[0]] if len(self.players) == 1 else self.flying_players()):
+            potential = player.scoring.calculate_current_potential_score(
+                current_time,
+                player.ship.fuel,
+                player.ship.ammo
+            )
+            player.ship.low_power = potential['score_percentage'] <= LOW_POWER_THRESHOLD
+            if potential['potential_score'] <= 0 and len(self.players) > 1:
+                self._drop_out(player)
+            else:
+                powers.append(potential['potential_score'])
+        if powers:
+            self._update_critical_warning(min(powers))
         # When score reaches zero, freeze all action and start fade
-        if potential_score <= 0 and not self.game_frozen:
-            self.game_frozen = True
-            self._start_game_over_sequence(current_time)
+        if not self.game_frozen and (powers == [] or (len(self.players) == 1 and powers[0] <= 0)):
+            if len(self.players) == 1 or not any(p.through for p in self.players):
+                self.game_frozen = True
+                self._start_game_over_sequence(current_time)
         
         # The stars the player would get by reaching the exit now; a change chimes
         self.star_indicator.update(earned(self.star_tally()))
+
+    def _send_through(self, player: Player, current_time: float) -> None:
+        """A co-op ship touches the open portal: it leaves play, its power frozen as it stands."""
+        player.final_power = max(0.0, player.scoring.calculate_current_potential_score(
+            current_time, player.ship.fuel, player.ship.ammo)['potential_score'])
+        player.through = True
+        player.ship.sound_manager.stop_thruster()
+        player.ship.active = False   # gone, not dead: no death animation
+
+    def _drop_out(self, player: Player) -> None:
+        """A co-op ship has no power left: it dies and its player is out until the next level."""
+        player.dropped_out = True
+        player.final_power = 0.0
+        player.ship.sound_manager.stop_thruster()
+        player.ship.die()
+        self.sound_manager.play_power_down()
+
+    def team_power(self, current_time: float) -> float:
+        """The co-op team's score: every ship's remaining power added together. A ship that dropped out adds
+        nothing, one that went through adds what it took through."""
+        total = 0.0
+        for player in self.players:
+            if player.final_power is not None:
+                total += player.final_power
+            elif player.flying and player.ship is not None:
+                total += max(0.0, player.scoring.calculate_current_potential_score(
+                    current_time, player.ship.fuel, player.ship.ammo)['potential_score'])
+        return total
+
+    def _bounce_ships(self) -> None:
+        """Ships bounce off each other like off rock, each taking the wall-collision penalty to its own power unless
+        its shield is up. They cannot shoot each other."""
+        flying = self.flying_players()
+        for i, a in enumerate(flying):
+            for b in flying[i + 1:]:
+                if a.ship.check_circle_collision((b.ship.x, b.ship.y), b.ship.radius, b.ship):
+                    for player in (a, b):
+                        if not player.ship.is_shield_active():
+                            player.scoring.record_wall_collision()
+                    self.sound_manager.play_wall_hit(0.5)
 
     def _update_critical_warning(self, potential_score: float) -> None:
         """Start/stop critical warning sound based on remaining potential score."""
@@ -1302,8 +1421,9 @@ class Game:
         """Start the game over sequence: freeze action, fade to black, power down sound, then GAME OVER text."""
         self.game_over_active = True
         self.game_over_start_time = current_time
-        if self.ship is not None and self.ship.active:
-            self.ship.die()
+        for ship in self.ships:
+            if ship.active:
+                ship.die()
         # Stop all sounds for dramatic effect
         self.sound_manager.stop_all_sounds()
         self.critical_warning_active = False
@@ -1342,12 +1462,15 @@ class Game:
         # Store completion time for display
         self.completion_time_seconds = completion_time
         
+        if len(self.players) > 1:
+            # The team's score: the ships' remaining power added together
+            self.level_score_breakdown['final_score'] = self.team_power(current_time) if success else 0
         final_score = self.level_score_breakdown.get('final_score', 0)
         tally = self.finish_tally if self.finish_tally is not None else self.star_tally()
         star_flags = earned(tally)
         self.star_lines = describe(tally)
         self.level_result = None
-        if success and self.autoplay is None:
+        if success and self.autoplay is None and len(self.players) == 1:   # multiplayer leaves profiles alone
             self.level_result = self.profile_manager.record_level_result(
                 self.level, final_score, completion_time, star_count(star_flags),
             )
@@ -1452,20 +1575,25 @@ class Game:
             dt: Delta time since last update.
         """
         remaining = []
-        player_pos = (self.ship.x, self.ship.y) if self.ship else None
+        players = self.players[:1] if len(self.players) == 1 else self.flying_players()
         for crystal in self.powerup_crystals:
             if crystal.active:
+                near = self.nearest_ship(crystal)
                 if isinstance(crystal, JevBeacon):
-                    crystal.update(dt, player_pos)
+                    crystal.update(dt, (near.x, near.y) if near else None)
                 else:
-                    # A crystal is drawn to whichever of the player and the hunter is nearer.
-                    crystal.update(dt, nearest_friendly_pos(crystal, self.ship, self.hunter))
-                if isinstance(crystal, JevBeacon):
-                    if crystal.check_circle_collision((self.ship.x, self.ship.y), self.ship.radius):
-                        self.sound_manager.play_powerup_activation('beacon')
-                        self._summon_hunter(crystal.get_pos())
-                else:
-                    self.collision_handler.handle_ship_crystal_collision(self.ship, crystal, self.scoring)
+                    # A crystal is drawn to whichever of the ships and the hunter is nearest.
+                    crystal.update(dt, nearest_friendly_pos(crystal, [p.ship for p in players], self.hunter))
+                for player in players:   # either ship can take it; the first to reach it wins
+                    if not crystal.active:
+                        break
+                    if isinstance(crystal, JevBeacon):
+                        if crystal.check_circle_collision((player.ship.x, player.ship.y), player.ship.radius):
+                            self.sound_manager.play_powerup_activation('beacon')
+                            self._summon_hunter(crystal.get_pos())
+                    else:
+                        self.collision_handler.handle_ship_crystal_collision(player.ship, crystal, player.scoring)
+                if crystal.active and not isinstance(crystal, JevBeacon):
                     self.collision_handler.handle_hunter_crystal_collision(self.hunter, crystal)
             elif crystal.is_dying:
                 crystal.update_death(dt)
@@ -1475,6 +1603,19 @@ class Game:
         
         self.powerup_crystals = remaining
     
+    def _draw_coop_hud(self, current_time: float, bottom: int) -> None:
+        """The split left strip: each player's power and ammo, and the team's score."""
+        from rendering.coop_hud import draw_coop_hud
+        powers = []
+        for player in self.players:
+            maximum = player.scoring.calculate_max_possible_score()
+            if player.final_power is not None:
+                powers.append((player.final_power, maximum))
+            else:
+                powers.append((max(0.0, player.scoring.calculate_current_potential_score(
+                    current_time, player.ship.fuel, player.ship.ammo)['potential_score']), maximum))
+        draw_coop_hud(self.screen, self.players, powers, self.team_power(current_time), self.level, bottom)
+
     def draw_game(self) -> None:
         """Draw game play screen."""
         if not self.maze or not self.ship:
@@ -1511,30 +1652,15 @@ class Game:
         
         # An observer shows faintly.
         if not self.exit_explosion_active:
-            if self.ship.observer:
-                self.ship.draw_as_observer(self.screen)
-            else:
-                self.ship.draw(self.screen)
+            for ship in self.ships:
+                if ship.observer:
+                    ship.draw_as_observer(self.screen)
+                else:
+                    ship.draw(self.screen)
         
         # Draw UI (hide during exit explosion)
         if not self.exit_explosion_active:
             current_time = self.clock()
-            potential = self.scoring.calculate_current_potential_score(
-                current_time,
-                self.ship.fuel,
-                self.ship.ammo
-            )
-            elapsed = self.scoring.get_current_time(current_time)
-            self.ship.draw_ui(
-                self.screen,
-                self.small_font,
-                potential_score=potential['potential_score'],
-                max_score=potential['max_score'],
-                level=self.level,
-                time_seconds=elapsed,
-                level_score=potential['final_score'],
-                progress_score=self.scoring.get_total_score()
-            )
             # Room above the restart hint, less the hunter's gauge while one flies
             room = self.screen.get_height() - 6 - self.restart_hints[False].get_height()
             if self._hunter_energy_reading() is not None:
@@ -1542,9 +1668,28 @@ class Game:
             exit_panel = draw_exit_panel(
                 self.screen, [] if self.exit_opened else self.exit_policy.describe(self.exit_state()), self.exit_opened,
                 bottom=room)
+            if len(self.players) > 1:
+                self._draw_coop_hud(current_time, exit_panel.top - 4)
+            else:
+                potential = self.scoring.calculate_current_potential_score(
+                    current_time,
+                    self.ship.fuel,
+                    self.ship.ammo
+                )
+                elapsed = self.scoring.get_current_time(current_time)
+                self.ship.draw_ui(
+                    self.screen,
+                    self.small_font,
+                    potential_score=potential['potential_score'],
+                    max_score=potential['max_score'],
+                    level=self.level,
+                    time_seconds=elapsed,
+                    level_score=potential['final_score'],
+                    progress_score=self.scoring.get_total_score()
+                )
             self._draw_hunter_energy(below=exit_panel.bottom)
             self.announcer.draw(self.screen)
-            if self.star_indicator.flags:
+            if self.star_indicator.flags and len(self.players) == 1:   # the stars are one player's
                 lit = self.star_indicator.star_count  # The row fills from the left, whichever goals are met
                 draw_star_row(self.screen, tuple(i < lit for i in range(5)), self.par_pulse(),
                               (config.UI_ZONE_WIDTH // 2, STAR_ROW_Y), STAR_ROW_SIZE)
@@ -1552,7 +1697,8 @@ class Game:
         # Draw game over sequence (fade to black and text)
         if self.game_over_active:
             self._draw_game_over_sequence()
-            self.ship.draw_death(self.screen)
+            for ship in self.ships:
+                ship.draw_death(self.screen)
 
         if not self.exit_explosion_active:
             hint = self.restart_hints[bool(self.input_handler.get_controllers())]
