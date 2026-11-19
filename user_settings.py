@@ -10,7 +10,7 @@ import sounds
 
 
 PLAYER_2 = ("human", "hunter")   # who flies the second ship: a person, or the Campaign Hunter
-MULTIPLAYER_MODES = ("single", "coop")   # single player, or two ships flying the campaign together
+MULTIPLAYER_MODES = ("single", "coop", "race")   # alone; two ships flying the campaign as a team; or racing
 
 DEFAULT_SETTINGS_PATH = Path(__file__).resolve().parent / "player_settings.json"
 

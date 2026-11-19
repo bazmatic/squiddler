@@ -80,6 +80,8 @@ class LevelCompleteMenu:
         self.hints = render_hint_row(
             get_font(self._scaled(28)), [("ARROWS", "Navigate"), ("SPACE / A", "Select"), ("R", "Retry level")]
         )
+        self.hints_without_retry = render_hint_row(
+            get_font(self._scaled(28)), [("ARROWS", "Navigate"), ("SPACE / A", "Select")])   # a won race is not retried
         self.number_sprite = NumberSprite()
         self.menu_options: list[str] = []
         self.menu_buttons: list[Button] = []
@@ -292,7 +294,8 @@ class LevelCompleteMenu:
         show_quit_confirmation: bool,
         draw_quit_confirmation_callback,
         level_result: Optional[LevelResult] = None,
-        star_lines: Sequence[str] = ()
+        star_lines: Sequence[str] = (),
+        stats_override: Optional[Sequence[Tuple[str, str]]] = None
     ) -> None:
         """Draw level complete or failed screen.
 
@@ -357,6 +360,8 @@ class LevelCompleteMenu:
         else:
             stats = [("PROGRESS SCORE", f"{total_score:,}")]
         comparisons = comparison_lines(level_result, level_score_breakdown.get('final_score', 0), completion_time_seconds) if level_succeeded else ()
+        if stats_override is not None:      # a race: who won and the points, not scores
+            stats, comparisons = list(stats_override), ()
         self._draw_stats(layout['stats'], stats, comparisons)
 
         # Draw buttons
@@ -368,7 +373,8 @@ class LevelCompleteMenu:
             button.selected = (i == self.menu_selected_index)
             button.draw(self.screen, self.menu_pulse_phase)
 
-        self.screen.blit(self.hints, layout['hints'])
+        hints = self.hints_without_retry if stats_override is not None and level_succeeded else self.hints
+        self.screen.blit(hints, hints.get_rect(midbottom=layout['hints'].midbottom))
 
         # Draw quit confirmation overlay if active
         if show_quit_confirmation:

@@ -12,7 +12,8 @@ from rendering.menu_components import (
 )
 
 WARNING_TEXT = (255, 190, 120)
-MODE_NAMES = {False: "SINGLE PLAYER", True: "CAMPAIGN CO-OP"}
+MODE_NAMES = {"single": "SINGLE PLAYER", "coop": "CAMPAIGN CO-OP", "race": "CAMPAIGN RACE"}
+NEXT_MODE = {"single": "coop", "coop": "race", "race": "single"}
 PLAYER_2_NAMES = {"human": "HUMAN", "hunter": "CAMPAIGN HUNTER"}
 
 
@@ -32,7 +33,7 @@ class MultiplayerMenu:
         self.screen = screen
         self.game = game
         self.rows: List[ChoiceRow] = [
-            ChoiceRow("MODE", lambda: MODE_NAMES[game.coop], lambda: game.set_coop(not game.coop)),
+            ChoiceRow("MODE", lambda: MODE_NAMES[game.mode], lambda: game.set_mode(NEXT_MODE[game.mode])),
             ChoiceRow("PLAYER 2", lambda: PLAYER_2_NAMES[game.user_settings.player2],
                       lambda: game.set_player2('hunter' if game.user_settings.player2 == 'human' else 'human')),
         ]
