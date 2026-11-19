@@ -189,3 +189,33 @@ def test_single_player_is_unchanged_by_the_coop_code(make_game, monkeypatch):
     game.start_level()
     assert len(game.players) == 1 and game.players[0].keyboard and game.players[0].controller == 0
     assert game.ship.palette is None
+
+
+def test_the_multiplayer_menu_switches_the_mode_and_remembers_it(make_game, tmp_path):
+    from user_settings import UserSettings
+    game = make_game(autoplay=False)
+    game.user_settings = UserSettings(tmp_path / 'player_settings.json')   # never the player's real file
+    game.coop = False
+    assert game.multiplayer_menu.rows[0].read() == 'SINGLE PLAYER'
+    game.multiplayer_menu.toggle_selected()
+    assert game.coop and game.multiplayer_menu.rows[0].read() == 'CAMPAIGN CO-OP'
+    assert UserSettings(tmp_path / 'player_settings.json').multiplayer_mode == 'coop'
+
+
+def test_start_game_begins_at_level_one_in_co_op_whatever_the_profile(make_game):
+    game = make_game(autoplay=False)
+    game.profile_manager.get_active_level = lambda: 7
+    game.coop = False
+    assert game.first_level() == 7
+    game.coop = True
+    assert game.first_level() == 1
+
+
+def test_the_multiplayer_menu_says_when_player_two_has_no_controller(make_game, monkeypatch):
+    game = make_game(autoplay=False)
+    game.coop = True
+    monkeypatch.setattr(game.input_handler, 'get_controllers', lambda: [])
+    lines, warning = game.multiplayer_menu.devices()
+    assert lines[1] == ('PLAYER 2', 'NO CONTROLLER') and warning
+    monkeypatch.setattr(game.input_handler, 'get_controllers', lambda: [object()])
+    assert game.multiplayer_menu.devices() == ([('PLAYER 1', 'KEYBOARD'), ('PLAYER 2', 'CONTROLLER')], None)

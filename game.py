@@ -43,6 +43,7 @@ from rendering.main_menu import MainMenu
 from rendering.level_complete_menu import LevelCompleteMenu
 from rendering.profile_selection_menu import ProfileSelectionMenu
 from rendering.settings_menu import SettingsMenu
+from rendering.multiplayer_menu import MultiplayerMenu
 from rendering.level_select_menu import LevelSelectMenu
 from rendering.fun_menu import FunMenu
 from rendering.level_editor import LevelEditor
@@ -181,7 +182,7 @@ class Game:
         self.profile_manager = ProfileManager()
         self.user_settings = UserSettings()
         self.players: List[Player] = [Player()]   # always at least one; players[0] is `ship`, `scoring`, `ship_pilot`
-        self.coop = config.SETTINGS.multiplayer.coop   # two ships fly each level together as a team
+        self.coop = self.user_settings.multiplayer_mode == 'coop'   # two ships fly each level together as a team
         self.maze: Optional[Maze] = None
         self.obstacles: Optional[ObstacleWorld] = None
         self.hunter_flight: Optional[HunterFlight] = None
@@ -283,6 +284,7 @@ class Game:
         # Menu UI components
         self.main_menu = MainMenu(screen)
         self.settings_menu = SettingsMenu(screen, self.user_settings)
+        self.multiplayer_menu = MultiplayerMenu(screen, self)
         self.level_select_menu = LevelSelectMenu(screen, self.profile_manager)
         self.fun_menu = FunMenu(screen)
         self.level_editor = LevelEditor(self, screen)
@@ -376,6 +378,17 @@ class Game:
         # Retrying an ordinary clear replaces that attempt, even though the
         # first clear has already unlocked the next level in the profile.
         self.replaying = replaying
+
+    def set_coop(self, coop: bool) -> None:
+        """Play alone or as a co-op pair from the next level on, and remember the choice."""
+        self.coop = coop
+        self.user_settings.set_multiplayer_mode('coop' if coop else 'single')
+
+    def first_level(self) -> int:
+        """The level START GAME begins at: the profile's, or level 1 in a multiplayer mode."""
+        if self.coop:
+            return 1
+        return self.initial_start_level if self.initial_start_level else self.profile_manager.get_active_level()
 
     def _create_players(self) -> None:
         """New ships for the level: the first player's, and in co-op a second beside it, each ready to fly."""
@@ -944,7 +957,7 @@ class Game:
                     handler.handle_controller(event, self)
             elif event.type == pygame.JOYHATMOTION or event.type == pygame.JOYAXISMOTION:
                 # Handle controller hat (d-pad) and axis (stick) events for menu navigation
-                if self.state in (config.STATE_MENU, config.STATE_PROFILE_SELECTION, config.STATE_LEVEL_SELECT, config.STATE_LEVEL_COMPLETE, config.STATE_SETTINGS, config.STATE_FUN, config.STATE_QUIT_CONFIRM, config.STATE_EDITOR):
+                if self.state in (config.STATE_MENU, config.STATE_PROFILE_SELECTION, config.STATE_LEVEL_SELECT, config.STATE_LEVEL_COMPLETE, config.STATE_SETTINGS, config.STATE_MULTIPLAYER, config.STATE_FUN, config.STATE_QUIT_CONFIRM, config.STATE_EDITOR):
                     handler = self.state_handler_registry.get_handler(self.state)
                     handler.handle_controller(event, self)
             elif event.type == pygame.KEYDOWN:
@@ -1121,6 +1134,8 @@ class Game:
             return
         elif self.state == config.STATE_SETTINGS:
             self.settings_menu.update(dt)
+        elif self.state == config.STATE_MULTIPLAYER:
+            self.multiplayer_menu.update(dt)
             return
         elif self.state == config.STATE_LEVEL_COMPLETE:
             self.level_complete_menu.update(dt)
@@ -1529,6 +1544,8 @@ class Game:
             self.level_select_menu.draw()
         elif self.state == config.STATE_SETTINGS:
             self.settings_menu.draw()
+        elif self.state == config.STATE_MULTIPLAYER:
+            self.multiplayer_menu.draw()
         elif self.state == config.STATE_FUN:
             self.fun_menu.draw()
         elif self.state == config.STATE_EDITOR:

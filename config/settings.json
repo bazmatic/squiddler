@@ -292,9 +292,6 @@
     "noKillSeconds": 20,
     "tallySeconds": 4
   },
-  "multiplayer": {
-    "coop": false
-  },
   "obstacles": {
     "gateMass": 16.0,
     "gateLengthCells": 3.0,
