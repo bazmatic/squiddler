@@ -109,6 +109,8 @@ class Game:
                               lambda self, t: setattr(self.players[0], 'last_shot_time', t))
 
     _player2_pilot = None
+    race = False
+    race_winner = None   # in a race, the index of the player through the portal first
     coop = False   # two ships fly each level together as a team (set from the settings in __init__)
 
     @property
@@ -183,7 +185,10 @@ class Game:
         self.profile_manager = ProfileManager()
         self.user_settings = UserSettings()
         self.players: List[Player] = [Player()]   # always at least one; players[0] is `ship`, `scoring`, `ship_pilot`
-        self.coop = self.user_settings.multiplayer_mode == 'coop'   # two ships fly each level together as a team
+        self.coop = self.user_settings.multiplayer_mode in ('coop', 'race')   # two ships fly each level together
+        self.race = self.user_settings.multiplayer_mode == 'race'   # ... racing to the portal rather than as a team
+        self.race_points = [0, 0]      # levels won so far by Player 1 and Player 2
+        self.race_summary: Optional[list] = None   # the level-complete figures in a race: (label, value) rows
         self.maze: Optional[Maze] = None
         self.obstacles: Optional[ObstacleWorld] = None
         self.hunter_flight: Optional[HunterFlight] = None
@@ -393,10 +398,23 @@ class Game:
         """Player 2 is a person ('human') or the Campaign Hunter ('hunter'); remembered."""
         self.user_settings.set_player2(who)
 
+    @property
+    def mode(self) -> str:
+        """How the game is played: 'single', 'coop' or 'race'."""
+        return 'race' if self.race else 'coop' if self.coop else 'single'
+
+    def set_mode(self, mode: str) -> None:
+        """Play alone, as a co-op pair, or racing, from the next level on, and remember the choice."""
+        self.coop = mode in ('coop', 'race')
+        self.race = mode == 'race'
+        self.user_settings.set_multiplayer_mode(mode)
+
     def set_coop(self, coop: bool) -> None:
-        """Play alone or as a co-op pair from the next level on, and remember the choice."""
-        self.coop = coop
-        self.user_settings.set_multiplayer_mode('coop' if coop else 'single')
+        self.set_mode('coop' if coop else 'single')
+
+    def new_race(self) -> None:
+        """A new run of races: the points start again from nothing."""
+        self.race_points = [0, 0]
 
     def first_level(self) -> int:
         """The level START GAME begins at: the profile's, or level 1 in a multiplayer mode."""
@@ -468,6 +486,7 @@ class Game:
         self.collision_handler.weapon_pickups.clear()
         self.collision_handler.explosions.clear()
         self.finish_tally = None
+        self.race_winner = None
         self.replaying = self.level < self.profile_manager.get_active_level()
         self.level_result = None
         # Store total score before starting level (for replay functionality)
@@ -1350,7 +1369,10 @@ class Game:
         if len(self.players) > 1:
             for player in reached:
                 self._send_through(player, current_time)
-            level_done = any(p.through for p in self.players) and not self.flying_players()
+            if self.race and reached and not self.exit_explosion_active:
+                self.race_winner = self.players.index(reached[0])
+                self.race_points[self.race_winner] += 1   # the first through wins the level
+            level_done = any(p.through for p in self.players) and (self.race or not self.flying_players())
         else:
             level_done = bool(reached)
         if level_done:
@@ -1411,6 +1433,13 @@ class Game:
         player.ship.sound_manager.stop_thruster()
         player.ship.die()
         self.sound_manager.play_power_down()
+
+    def _race_summary(self, success: bool) -> list:
+        """The level-complete figures of a race: who won it, and the points so far."""
+        winner = self.race_winner if success else None
+        rows = [("WINNER", f"PLAYER {winner + 1}" if winner is not None else "NOBODY SCORES")]
+        rows.append(("POINTS", f"{self.race_points[0]} – {self.race_points[1]}"))
+        return rows
 
     def team_power(self, current_time: float) -> float:
         """The co-op team's score: every ship's remaining power added together. A ship that dropped out adds
@@ -1501,6 +1530,7 @@ class Game:
         if len(self.players) > 1:
             # The team's score: the ships' remaining power added together
             self.level_score_breakdown['final_score'] = self.team_power(current_time) if success else 0
+        self.race_summary = self._race_summary(success) if self.race and len(self.players) > 1 else None
         final_score = self.level_score_breakdown.get('final_score', 0)
         tally = self.finish_tally if self.finish_tally is not None else self.star_tally()
         star_flags = earned(tally)
@@ -1516,8 +1546,8 @@ class Game:
             self.scoring.total_score = self.total_score_before_level
             self.level_score_breakdown['total_score'] = self.total_score_before_level
         
-        # Initialize animated star rating if level succeeded
-        if success:
+        # Initialize animated star rating if level succeeded (a race reports no score and no stars)
+        if success and self.race_summary is None:
             # Calculate star spacing (default is star_size * 1.2)
             star_spacing = int(config.LEVEL_COMPLETE_STAR_SIZE * 1.2)
             # Center the stars: first star center should be at screen_center - 2 * star_spacing
@@ -1597,7 +1627,8 @@ class Game:
                     self.quit_confirmation_selection
                 ),
                 level_result=self.level_result,
-                star_lines=self.star_lines
+                star_lines=self.star_lines,
+                stats_override=self.race_summary
             )
         
         pygame.display.flip()
@@ -1652,7 +1683,8 @@ class Game:
             else:
                 powers.append((max(0.0, player.scoring.calculate_current_potential_score(
                     current_time, player.ship.fuel, player.ship.ammo)['potential_score']), maximum))
-        draw_coop_hud(self.screen, self.players, powers, self.team_power(current_time), self.level, bottom)
+        draw_coop_hud(self.screen, self.players, powers, self.team_power(current_time), self.level, bottom,
+                      tally=tuple(self.race_points) if self.race else None)
 
     def draw_game(self) -> None:
         """Draw game play screen."""
@@ -1738,7 +1770,7 @@ class Game:
             for ship in self.ships:
                 ship.draw_death(self.screen)
 
-        if not self.exit_explosion_active:
+        if not self.exit_explosion_active and not (self.race and not self.game_over_active):   # no restarting a race
             hint = self.restart_hints[bool(self.input_handler.get_controllers())]
             if self.game_over_active:
                 # Keep the retry prompt visible over the fade, below GAME OVER.

@@ -64,10 +64,12 @@ class MenuStateHandler(StateHandler):
         elif event.key == pygame.K_SPACE or event.key == pygame.K_RETURN:
             selected_option = game.main_menu.get_selected_option()
             if selected_option == "START GAME":
+                game.new_race()
                 game.state = config.STATE_PLAYING
                 game.level = game.first_level()
                 game.start_level()
             elif selected_option == "LEVELS":
+                game.new_race()
                 game.level_select_menu.refresh()
                 game.state = config.STATE_LEVEL_SELECT
             elif selected_option == "FUN":
@@ -97,10 +99,12 @@ class MenuStateHandler(StateHandler):
             if game.input_handler.is_controller_menu_confirm_pressed(event.button):
                 selected_option = game.main_menu.get_selected_option()
                 if selected_option == "START GAME":
+                    game.new_race()
                     game.state = config.STATE_PLAYING
                     game.level = game.first_level()
                     game.start_level()
                 elif selected_option == "LEVELS":
+                    game.new_race()
                     game.level_select_menu.refresh()
                     game.state = config.STATE_LEVEL_SELECT
                 elif selected_option == "FUN":
@@ -417,7 +421,7 @@ class PlayingStateHandler(StateHandler):
     
     def handle_keyboard(self, event: 'pygame.event.Event', game: 'Game') -> bool:
         """Handle keyboard events in playing state."""
-        if event.key == pygame.K_r:
+        if event.key == pygame.K_r and not game.race:     # a race cannot be restarted
             game.restart_level()
             return True
         if game.game_over_active:
@@ -432,7 +436,7 @@ class PlayingStateHandler(StateHandler):
         """Handle controller events in playing state."""
         if event.type != pygame.JOYBUTTONDOWN:
             return False
-        if game.input_handler.is_controller_restart_pressed(event.button):
+        if game.input_handler.is_controller_restart_pressed(event.button) and not game.race:
             game.restart_level()
             return True
         if game.game_over_active:
@@ -557,8 +561,8 @@ class LevelCompleteStateHandler(StateHandler):
                 game.state = config.STATE_MENU
                 game.reset_scoring_to_profile_state()
             return True
-        elif event.key == pygame.K_r:
-            # R key still works for quick retry
+        elif event.key == pygame.K_r and not (game.race and game.level_succeeded):
+            # R key still works for quick retry (not after a race is won: the point is scored)
             game.restart_level()
             return True
         elif event.key == pygame.K_ESCAPE or event.key == pygame.K_q:

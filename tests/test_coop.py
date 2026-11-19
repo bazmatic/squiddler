@@ -299,3 +299,102 @@ def test_the_real_campaign_pilot_flies_player_two_through_frames_of_a_co_op_leve
     assert second.has_moved                       # the hunter set off by itself, with no controller
     assert not first.has_moved or first.keyboard  # nobody touched the keyboard
     assert not game.game_over_active or all(p.dropped_out for p in game.players)
+
+
+# --- Campaign race ---------------------------------------------------------------------------------------------
+
+@pytest.fixture
+def race(coop):
+    coop.race = True
+    coop.new_race()
+    return coop
+
+
+def test_the_first_ship_through_wins_the_level_and_the_point_and_the_level_ends_there(race, monkeypatch):
+    first, second = race.players
+    first.has_moved = second.has_moved = True
+    open_exit(race)
+    put_in_exit(second, race)           # Player 2 gets there first, while Player 1 is still flying
+    step(race, monkeypatch)
+    assert race.race_points == [0, 1] and race.exit_explosion_active and first.flying
+    put_in_exit(first, race)            # arriving during the finish adds nothing
+    step(race, monkeypatch)
+    assert race.race_points == [0, 1] and race.race_winner == 1
+
+
+def test_if_one_player_runs_out_of_power_the_other_can_still_win(race, monkeypatch):
+    first, second = race.players
+    first.has_moved = second.has_moved = True
+    first.scoring.level_start_time -= 10_000
+    step(race, monkeypatch)
+    assert first.dropped_out and not race.game_over_active and race.race_points == [0, 0]
+    open_exit(race)
+    put_in_exit(second, race)
+    step(race, monkeypatch)
+    assert race.race_points == [0, 1] and race.exit_explosion_active
+
+
+def test_nobody_scores_when_both_run_out_and_the_level_is_replayed(race, monkeypatch):
+    for player in race.players:
+        player.has_moved = True
+        player.scoring.level_start_time -= 10_000
+    step(race, monkeypatch)
+    assert race.game_over_active and race.race_points == [0, 0]
+    race.complete_level(success=False)
+    assert race.race_summary == [("WINNER", "NOBODY SCORES"), ("POINTS", "0 – 0")]
+    assert race.level_complete_menu.menu_options[0] == "RETRY LEVEL"
+
+
+def test_a_won_race_reports_the_winner_and_points_and_no_score_or_stars(race, monkeypatch):
+    first, second = race.players
+    first.has_moved = second.has_moved = True
+    open_exit(race)
+    put_in_exit(first, race)
+    step(race, monkeypatch)
+    race.complete_level(success=True)
+    assert race.race_summary == [("WINNER", "PLAYER 1"), ("POINTS", "1 – 0")] and race.star_animation is None
+    race.draw()      # the level-complete screen draws with the race figures
+
+
+def test_a_race_cannot_be_restarted_and_a_new_run_starts_the_points_again(race, monkeypatch):
+    from game_handlers.state_handlers import StateHandlerRegistry
+    race.race_points = [3, 2]
+    restarted = []
+    monkeypatch.setattr(race, 'restart_level', lambda: restarted.append(True))
+    handler = StateHandlerRegistry().get_handler(config.STATE_PLAYING)
+    handler.handle_keyboard(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_r), race)
+    assert not restarted
+    race.race = False
+    handler.handle_keyboard(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_r), race)
+    assert restarted
+    race.new_race()
+    assert race.race_points == [0, 0]
+
+
+def test_the_race_hud_shows_each_players_points_and_no_restart_hint(race):
+    race.race_points = [2, 1]
+    race.draw_game()      # draws without a team score or the restart hint
+
+
+def test_the_race_works_with_the_campaign_hunter_as_the_rival(make_game, monkeypatch):
+    from tests.test_campaign_demo import StubPolicy
+    game = make_game(autoplay=False, policy=StubPolicy((1, True, False)))
+    game.set_mode('race')
+    game.user_settings.player2 = 'hunter'
+    monkeypatch.setattr(game.input_handler, 'get_controllers', lambda: [])
+    game.state = config.STATE_PLAYING
+    game.start_level()
+    assert game.race and game.players[1].driver is not None and game.players[1].controller is None
+
+
+def test_the_mode_cycles_single_coop_race_and_is_remembered(make_game):
+    from user_settings import UserSettings
+    game = make_game(autoplay=False)
+    game.set_mode('single')
+    names = []
+    for _ in range(3):
+        game.multiplayer_menu.toggle_selected()
+        names.append(game.multiplayer_menu.rows[0].read())
+    assert names == ['CAMPAIGN CO-OP', 'CAMPAIGN RACE', 'SINGLE PLAYER']
+    game.multiplayer_menu.toggle_selected(); game.multiplayer_menu.toggle_selected()
+    assert game.mode == 'race' and UserSettings().multiplayer_mode == 'race'

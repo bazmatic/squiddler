@@ -18,15 +18,28 @@ def _fit(image: pygame.Surface, width: int) -> pygame.Surface:
 
 
 def draw_coop_hud(screen: pygame.Surface, players: Sequence, powers: Sequence[Tuple[float, float]],
-                  team_score: float, level: int, bottom: Optional[int] = None) -> None:
+                  team_score: float, level: int, bottom: Optional[int] = None,
+                  tally: Optional[Tuple[int, int]] = None) -> None:
     """Draw the strip from the top down to `bottom` (default: the screen's foot). `powers[i]` is (power, maximum) for
     players[i]. A half is dimmed while its player is out of play, and says why."""
     width = config.UI_ZONE_WIDTH
     bottom = screen.get_height() if bottom is None else min(bottom, screen.get_height())
     label_font = get_font(16)
-    screen.blit(label_font.render(f"LEVEL {level}   TEAM SCORE", True, (150, 160, 195)),
+    screen.blit(label_font.render(f"LEVEL {level}   " + ("POINTS" if tally else "TEAM SCORE"), True, (150, 160, 195)),
                 (12, 8))
-    screen.blit(get_font(34).render(f"{int(team_score):,}", True, (235, 242, 255)), (12, 26))
+    if tally is None:
+        screen.blit(get_font(34).render(f"{int(team_score):,}", True, (235, 242, 255)), (12, 26))
+    else:    # a race: each player's points in their colour, in place of a score
+        x = 12
+        for index, points in enumerate(tally):
+            colour = players[index].color or config.COLOR_SHIP
+            image = get_font(34).render(str(points), True, colour)
+            screen.blit(image, (x, 26))
+            x += image.get_width() + 10
+            if index == 0:
+                dash = get_font(34).render("–", True, (150, 160, 195))
+                screen.blit(dash, (x, 26))
+                x += dash.get_width() + 10
     half = max(60, (bottom - HEADER_HEIGHT) // max(1, len(players)))
     for index, (player, (power, maximum)) in enumerate(zip(players, powers)):
         top = HEADER_HEIGHT + index * half
