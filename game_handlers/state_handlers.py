@@ -64,10 +64,7 @@ class MenuStateHandler(StateHandler):
         elif event.key == pygame.K_SPACE or event.key == pygame.K_RETURN:
             selected_option = game.main_menu.get_selected_option()
             if selected_option == "START GAME":
-                game.new_race()
-                game.state = config.STATE_PLAYING
-                game.level = game.first_level()
-                game.start_level()
+                game.begin_play(game.first_level())
             elif selected_option == "LEVELS":
                 game.new_race()
                 game.level_select_menu.refresh()
@@ -99,10 +96,7 @@ class MenuStateHandler(StateHandler):
             if game.input_handler.is_controller_menu_confirm_pressed(event.button):
                 selected_option = game.main_menu.get_selected_option()
                 if selected_option == "START GAME":
-                    game.new_race()
-                    game.state = config.STATE_PLAYING
-                    game.level = game.first_level()
-                    game.start_level()
+                    game.begin_play(game.first_level())
                 elif selected_option == "LEVELS":
                     game.new_race()
                     game.level_select_menu.refresh()
@@ -304,9 +298,7 @@ class LevelSelectStateHandler(StateHandler):
     def _play(self, game):
         menu = game.level_select_menu
         if menu.can_play_selected:
-            game.level = menu.selected_level
-            game.state = config.STATE_PLAYING
-            game.start_level()
+            game.begin_play(menu.selected_level, from_levels=True)
         return True
 
     def handle_keyboard(self, event, game):
@@ -416,12 +408,35 @@ class MultiplayerStateHandler(SettingsStateHandler):
         return self._steer_controller(event, game, game.multiplayer_menu)
 
 
+class TurnStateHandler(StateHandler):
+    """The turn screen and the competition's results screen: any button goes on, ESC gives up."""
+
+    def _go_on(self, game: 'Game') -> None:
+        if game.state == config.STATE_TURN:
+            game.start_turn()
+        else:
+            game.leave_competition_result()
+
+    def handle_keyboard(self, event: 'pygame.event.Event', game: 'Game') -> bool:
+        if event.key == pygame.K_ESCAPE:
+            game.leave_competition()
+        else:
+            self._go_on(game)
+        return True
+
+    def handle_controller(self, event: 'pygame.event.Event', game: 'Game') -> bool:
+        if event.type != pygame.JOYBUTTONDOWN:
+            return False
+        self._go_on(game)
+        return True
+
+
 class PlayingStateHandler(StateHandler):
     """Handler for playing state events."""
     
     def handle_keyboard(self, event: 'pygame.event.Event', game: 'Game') -> bool:
         """Handle keyboard events in playing state."""
-        if event.key == pygame.K_r and not game.race:     # a race cannot be restarted
+        if event.key == pygame.K_r and not (game.race or game.competition is not None):     # single attempts
             game.restart_level()
             return True
         if game.game_over_active:
@@ -436,7 +451,7 @@ class PlayingStateHandler(StateHandler):
         """Handle controller events in playing state."""
         if event.type != pygame.JOYBUTTONDOWN:
             return False
-        if game.input_handler.is_controller_restart_pressed(event.button) and not game.race:
+        if game.input_handler.is_controller_restart_pressed(event.button) and not (game.race or game.competition is not None):
             game.restart_level()
             return True
         if game.game_over_active:
@@ -742,6 +757,8 @@ class StateHandlerRegistry:
             config.STATE_PROFILE_SELECTION: ProfileSelectionStateHandler(),
             config.STATE_SETTINGS: SettingsStateHandler(),
             config.STATE_MULTIPLAYER: MultiplayerStateHandler(),
+            config.STATE_TURN: TurnStateHandler(),
+            config.STATE_COMPETITION_RESULT: TurnStateHandler(),
             config.STATE_LEVEL_SELECT: LevelSelectStateHandler(),
             config.STATE_FUN: FunStateHandler(),
             config.STATE_EDITOR: EditorStateHandler(),
