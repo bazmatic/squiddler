@@ -36,7 +36,7 @@ Set these in the environment, for example `WINDOWED=1 START_LEVEL=13 ./run.sh`.
 | `ASTROVOID_OBSERVER=1` | The player becomes an invisible, invulnerable observer, for watching creatures and pilots |
 | `ASTROVOID_HUNTER_HOTKEY=1` | **H** summons the hunter ally beside you |
 | `AUTOPLAY=1` | Skip the menus and let the Campaign Hunter fly the ship through levels unattended (Demo; see [Hunter ally](hunter.md)) |
-| `JELLY_POLICY`, `FLOCKER_POLICY`, `WALLCRAWLER_POLICY`, `INCHWORM_POLICY` | Path to a different brain; set empty for the scripted behaviour |
+| `JELLY_POLICY`, `FLOCKER_POLICY`, `WALLCRAWLER_POLICY`, `INCHWORM_POLICY`, `SEA_SNAKE_POLICY` | Path to a different brain; set empty for the scripted behaviour |
 | `SCRIPTED_JELLIES=1` | Spawn the old scripted Jellies instead of neural ones |
 
 ## Level editor
@@ -65,7 +65,7 @@ creatures/              Enemies built from a Body plus Traits, and the Encounter
   traits/               Behaviours: brains, propulsion, combat, flocking, spawning, ...
 entities/               Bodies (how each creature looks), the ship, projectiles, exit
 learning/               Neural brains: observations, actions, NumPy inference, training scenarios, PPO
-  adapters/             One adapter per species (jelly, flocker, wallcrawler, inchworm) plus its scenario
+  adapters/             One adapter per species (jelly, flocker, wallcrawler, inchworm, sea snake) plus its scenario
 assets/neural/          The bundled trained brains (.npz)
 hunter/                 The hunter ally's pilots (neural and rules)
 maze/                   Cave generation, rock blocks and their destruction

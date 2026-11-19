@@ -4,6 +4,8 @@ from typing import Dict, Mapping, Type
 
 from creatures.traits.inchworm import Inchworms
 from entities.inchworm import InchwormBody
+from creatures.traits.sea_snake import SeaSnakes, StingsShip
+from entities.sea_snake import SeaSnakeBody
 from creatures.trait import Trait
 from creatures.traits import brains, burst_fire, combat, crowd, energy, flock, growth, lighthouse, neural_jelly, piloted, propulsion, rooted, spawning, wallcrawl
 from creatures.traits.flocker_flight import FlockerFlight
@@ -30,12 +32,13 @@ TRAITS: Dict[str, Type[Trait]] = {trait.NAME: trait for trait in (
     flock.Flocks, flock.Tweets, FlockerFlight,
     lighthouse.Scans, lighthouse.LaunchesFlock,
     piloted.Pilot, burst_fire.BurstFire, energy.Energy,
-    wallcrawl.WallCrawls, Inchworms,
+    wallcrawl.WallCrawls, Inchworms, SeaSnakes, StingsShip,
     neural_jelly.NeuralJelly,
 )}
 BODIES: Dict[str, type] = {'urchin': Urchin, 'crab': PatrolCrab, 'jelly': Jellyfish, 'belemnite': BelemniteBody, 'squid': Squid, 'egg': EggBody, 'anemone': AnemoneBody, 'flocker': FlockerBody, 'flighthouse': FlighthouseBody, 'hunterShip': HunterShipBody}
 BODIES['wallcrawler'] = WallcrawlerBody
 BODIES['inchworm'] = InchwormBody
+BODIES['sea_snake'] = SeaSnakeBody
 
 
 def validate(catalogue: Mapping) -> None:

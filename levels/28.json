@@ -373,6 +373,20 @@
           26,
           30
         ]
+      },
+      {
+        "type": "sea_snake",
+        "cell": [
+          17,
+          22
+        ]
+      },
+      {
+        "type": "sea_snake",
+        "cell": [
+          27,
+          5
+        ]
       }
     ],
     "beacon": null
@@ -383,6 +397,7 @@
     "aggressive": 0,
     "flighthouse": 2,
     "anemone": 2,
-    "belemnite": 8
+    "belemnite": 8,
+    "sea_snake": 2
   }
 }

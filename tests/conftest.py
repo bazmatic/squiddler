@@ -3,6 +3,7 @@ import os
 
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 os.environ.setdefault("INCHWORM_POLICY", "")      # tests that want the bundled brain unset it
+os.environ.setdefault("SEA_SNAKE_POLICY", "")
 
 # Under pytest-xdist each worker is its own process; one math thread each keeps torch and numpy from
 # oversubscribing the cores the other workers are using. Must be set before torch is first imported.

@@ -81,11 +81,20 @@ class Task:
 _INCHWORM = dict(horizon=120., workers=4, iterations=5000, episodes=24, bootstrap_episodes=80, bootstrap_epochs=4,
                  lr=1e-4, gamma=.997, gae_lambda=.97, budget_seconds=7200, start='', seed=0)
 
+# The sea snake's defaults, for a new run on the settings form and on the command line alike.
+_SEA_SNAKE = dict(horizon=20., workers=4, iterations=2000, episodes=24, bootstrap_episodes=48, bootstrap_epochs=4,
+                  lr=1e-4, gamma=.995, gae_lambda=.95, budget_seconds=7200, start='', seed=0)
+
 TASKS = {
     'inchworm': Task('inchworm', 'learning.adapters.inchworm_scenario', 'Inchworm', _INCHWORM,
         ('budget_seconds','bootstrap_episodes','bootstrap_epochs','seed'),
         'learning.replay', 'learning.adapters.inchworm_replay', 'learning.adapters.inchworm_dashboard',
         rewards='learning.inchworm_rewards', cli_defaults=_INCHWORM),
+    # Open arena, then a moving target, then walls in the way; it must reach the target and wriggle like a snake to ship.
+    'sea_snake': Task('sea_snake', 'learning.adapters.sea_snake_scenario', 'Sea snake', _SEA_SNAKE,
+        ('budget_seconds','bootstrap_episodes','bootstrap_epochs','seed'),
+        'learning.replay', 'learning.adapters.sea_snake_replay', 'learning.adapters.sea_snake_dashboard',
+        rewards='learning.sea_snake_rewards', cli_defaults=_SEA_SNAKE),
     # Flocker training starts without imitation.
     'flocker_team': Task('flocker_team', 'learning.adapters.flocker_scenario', 'Flocker team',
         dict(horizon=60., workers=4, iterations=10000, bootstrap_episodes=0),

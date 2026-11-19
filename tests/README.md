@@ -14,7 +14,7 @@ Run one area by name, for example `tests/test_inchworm*.py`, `tests/test_hunter_
 |---|---|
 | `test_ship*`, `test_projectile*`, `test_ccd*`, `test_cave*`, `test_wall*` | Flight, shots, swept collision and the destructible curved rock |
 | `test_encounter*`, `test_traits_*`, `test_*_creature*` | Creatures built from the catalogue, and each trait on its own |
-| `test_jelly*`, `test_flocker*`, `test_wallcrawler*`, `test_inchworm*`, `test_neural*` | Each creature's body and the neural brains that drive it |
+| `test_jelly*`, `test_flocker*`, `test_wallcrawler*`, `test_inchworm*`, `test_sea_snake*`, `test_neural*` | Each creature's body and the neural brains that drive it |
 | `test_hunter_*`, `test_rules_*`, `test_pilot*`, `test_duel*` | The hunter ship and its pilots |
 | `test_level_*`, `test_editor*` | Level files, the campaign arc and the level editor |
 | `test_scoring*`, `test_star*` | Score, stars and par |

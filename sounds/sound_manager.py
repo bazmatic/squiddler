@@ -689,21 +689,22 @@ class SoundManager:
         }
         return sound, layers
     
-    def play_enemy_destroy(self) -> None:
+    def play_enemy_destroy(self, pitch: Optional[float] = None) -> None:
         """Play enemy destruction explosion sound once with pitch variation.
         
         Generates the sound on-demand with random pitch variation (±15%) to prevent
         ear fatigue when destroying multiple enemies rapidly. Each destruction gets
         a fresh, slightly different sound.
         
-        Uses a separate channel so it doesn't interfere with other sounds.
+        Uses a separate channel so it doesn't interfere with other sounds. A `pitch` (a multiplier on the usual
+        pitch) replaces the random variation, for a run of bangs that rise.
         """
         if not _audible():
             return
         
         # Generate sound with random pitch variation (±15%)
         # Pitch multiplier range: 0.85 to 1.15
-        pitch_multiplier = random.uniform(0.85, 1.15)
+        pitch_multiplier = random.uniform(0.85, 1.15) if pitch is None else pitch
         sound = self._generate_enemy_destroy(pitch_multiplier)
         
         if not sound:

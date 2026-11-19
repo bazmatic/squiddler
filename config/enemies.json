@@ -1038,5 +1038,136 @@
       },
       "dropsPickup": {}
     }
+  },
+  "sea_snake": {
+    "name": [
+      "Sea Snake",
+      "Sea Snakes"
+    ],
+    "anchored": false,
+    "replaysPlayer": false,
+    "parWeight": "enemy",
+    "spawnRadius": 100,
+    "layer": 3,
+    "tuning": {
+      "size": 30,
+      "color": [
+        120,
+        70,
+        160
+      ]
+    },
+    "allegiance": "enemy",
+    "body": "sea_snake",
+    "traits": {
+      "sea_snakes": {
+        "shotKnock": 1.6
+      },
+      "stingsShip": {},
+      "takesHits": {
+        "hitPoints": 10
+      },
+      "dropsPickup": {},
+      "explodes": {
+        "reach": 5.0,
+        "damage": 2,
+        "push": 6.0,
+        "wallHits": 1,
+        "fuse": 78.0,
+        "color": [
+          160,
+          80,
+          255
+        ]
+      }
+    }
+  },
+  "mini_sea_snake": {
+    "name": [
+      "Mini Sea Snake",
+      "Mini Sea Snakes"
+    ],
+    "anchored": false,
+    "replaysPlayer": false,
+    "parWeight": "enemy",
+    "spawnRadius": 60,
+    "layer": 3,
+    "tuning": {
+      "size": 16,
+      "color": [
+        150,
+        100,
+        200
+      ]
+    },
+    "allegiance": "enemy",
+    "body": "sea_snake",
+    "traits": {
+      "sea_snakes": {
+        "shotKnock": 1.6,
+        "speed": 2.4
+      },
+      "stingsShip": {},
+      "takesHits": {
+        "hitPoints": 2
+      },
+      "dropsPickup": {},
+      "explodes": {
+        "reach": 4.0,
+        "damage": 1,
+        "push": 3.0,
+        "wallHits": 1,
+        "fuse": 78.0,
+        "color": [
+          160,
+          80,
+          255
+        ]
+      }
+    }
+  },
+  "teeny_sea_snake": {
+    "name": [
+      "Teeny Sea Snake",
+      "Teeny Sea Snakes"
+    ],
+    "anchored": false,
+    "replaysPlayer": false,
+    "parWeight": "enemy",
+    "spawnRadius": 40,
+    "layer": 3,
+    "tuning": {
+      "size": 10,
+      "color": [
+        185,
+        140,
+        225
+      ]
+    },
+    "allegiance": "enemy",
+    "body": "sea_snake",
+    "traits": {
+      "sea_snakes": {
+        "shotKnock": 1.6,
+        "speed": 3.5
+      },
+      "stingsShip": {},
+      "takesHits": {
+        "hitPoints": 1
+      },
+      "dropsPickup": {},
+      "explodes": {
+        "reach": 3.0,
+        "damage": 1,
+        "push": 2.0,
+        "wallHits": 1,
+        "fuse": 78.0,
+        "color": [
+          160,
+          80,
+          255
+        ]
+      }
+    }
   }
 }

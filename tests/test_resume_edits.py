@@ -14,7 +14,8 @@ from tools.trainer.processes import REPO
 # value for it.
 EDITS = {'hunter': ('compass_reward', 30.0), 'campaign_hunter': ('beacon', 50.0),
          'jelly_team': ('jelly_catch_reward', 12.0), 'flocker_team': ('flocker_hit_reward', 2.0),
-         'inchworm': ('inchworm_bite_reward', 3.0), 'wallcrawler_team': ('horizon', 45.0)}
+         'inchworm': ('inchworm_bite_reward', 3.0), 'sea_snake': ('sea_snake_sting_reward', 6.0),
+         'wallcrawler_team': ('horizon', 45.0)}
 
 
 class FakeLaunch:
@@ -119,6 +120,7 @@ def test_a_failed_launch_puts_the_run_back_as_it_was(tmp_path, task):
     ('flocker_team', 'flocker_hit_reward', -1.0, 'nonnegative'),
     ('flocker_team', 'flocker_volley_reward', 5.0, 'below one accepted hit'),
     ('inchworm', 'inchworm_bite_reward', -1.0, 'nonnegative'),
+    ('sea_snake', 'sea_snake_reset_penalty', -1.0, 'nonnegative'),
 ])
 def test_a_reward_the_task_refuses_is_refused_and_the_run_left_alone(tmp_path, task, setting, value, why):
     path = paused_run(tmp_path, task)

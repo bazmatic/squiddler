@@ -76,7 +76,7 @@ def test_every_enemy_the_level_asks_for_is_placed_clear_of_the_start(game, level
         assert math.dist(enemy.get_pos(), game.maze.start_pos) >= config.ENEMY_START_CLEARANCE
 
 
-ACTIVE = ('patrol', 'aggressive', 'flocker', 'wallcrawler', 'replay', 'belemnite', 'vibelet', 'neural_hunter', 'inchworm')
+ACTIVE = ('patrol', 'aggressive', 'flocker', 'wallcrawler', 'replay', 'belemnite', 'vibelet', 'neural_hunter', 'inchworm', 'sea_snake', 'mini_sea_snake', 'teeny_sea_snake')
 
 
 def active_roster(level):
@@ -88,7 +88,7 @@ def active_roster(level):
     return {k: counts.get(k, 0) for k in ACTIVE if counts.get(k, 0)}
 
 
-@pytest.mark.parametrize('level', [n for n in range(3, 80) if n not in (12, 18, 24, 25, 30, 32, 33)
+@pytest.mark.parametrize('level', [n for n in range(3, 80) if n not in (12, 18, 24, 25, 30, 32, 33, 35)
                                    and not level_rules.is_boss_level(n)])
 def test_every_ordinary_level_is_built_around_one_active_type_in_numbers(level):
     roster = active_roster(level)

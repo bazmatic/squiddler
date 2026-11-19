@@ -57,10 +57,10 @@ Each kind of creature is one entry in `config/enemies.json`. Here is the Belemni
 A brain is the trait that decides a creature's controls.
 
 - **Scripted brains** (`creatures/traits/brains.py`, `flock.py` and others) are plain code: chase, patrol, sit still, flock.
-- **Neural brains** drive the Jellies, Flockers, Wallcrawlers and Inchworms. At startup `Game` loads each trained network from `assets/neural/` (`utils/neural_policy.py` picks the file, and a `*_POLICY` variable can override it). The creature's adapter in `learning/adapters/` turns what the creature can sense into numbers, runs the network in NumPy (`learning/policy.py`), and turns the outputs back into controls. Each creature keeps its own memory, and creatures of a kind share the network.
+- **Neural brains** drive the Jellies, Flockers, Wallcrawlers, Inchworms and Sea Snakes. At startup `Game` loads each trained network from `assets/neural/` (`utils/neural_policy.py` picks the file, and a `*_POLICY` variable can override it). The creature's adapter in `learning/adapters/` turns what the creature can sense into numbers, runs the network in NumPy (`learning/policy.py`), and turns the outputs back into controls. Each creature keeps its own memory, and creatures of a kind share the network.
 - **Pilots** fly hunter ships: the ally, the Vibers and the Terminator. `hunter/` holds the neural pilot and the hand-written rules pilot, and the `pilot` trait plugs them into a creature. Your ally runs as a `HunterFlight` (`hunter/flight.py`) with an encounter of its own.
 
-The physics the brains have to work with is real: `physics/` holds ship thrust, Flocker aerodynamics, gun recoil, the swinging gates and the Inchworm's jointed body (Pymunk).
+The physics the brains have to work with is real: `physics/` holds ship thrust, Flocker aerodynamics, gun recoil, the swinging gates and the jointed bodies of the Inchworm and the Sea Snake (Pymunk). The snake has no thrust: it swims on direction-dependent water drag.
 
 ## Training
 
