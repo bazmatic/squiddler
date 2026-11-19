@@ -299,7 +299,7 @@ def test_hunter_and_wallcrawler_pages_draw_the_same_charts_and_strip_as_before(t
 def test_render_puts_undeclared_numeric_keys_in_other_and_never_strings_or_booleans():
     page = render('hunter', log_rows('hunter', brand_new_rate=.5, checkpoint_name='iter0001.npz', gate_open=False))
     assert page['sections'][-1] == 'Other'
-    assert page['charts'][-1] == ['brand_new_rate', '']
+    assert page['charts'][-1] == ['Brand new rate', '']
     assert 'checkpoint_name' not in page['text'] and 'gate_open' not in page['text']
 
 

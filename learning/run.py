@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import time
 import numpy as np
+from learning.episode_stats import recorded_means
 
 
 def _worker_init():
@@ -20,6 +21,7 @@ def rollout_job(job):
     from learning.tasks import task
     from learning.policy import RecurrentPolicy
     from learning.training import collect
+    from learning.episode_stats import collecting
     adapter = task(job['task']).adapter()
     config_path = Path(job['weights']).parent/'config.json'
     recorded = json.loads(config_path.read_text()) if config_path.exists() else {}
@@ -34,7 +36,10 @@ def rollout_job(job):
     labeller = (lambda env, i: getattr(env.adapter, 'label_action', env.adapter.teacher_action)(env, i, None)) if (
         job['mode'] == 'sample' and getattr(env, 'teacher_weight', 0)) else None
     try:
-        return collect(env, policy, seed, case, greedy=job['mode'] != 'sample', teacher=teacher, labeller=labeller)
+        with collecting() as stats:
+            episodes, events, actions = collect(env, policy, seed, case, greedy=job['mode'] != 'sample', teacher=teacher,
+                                                labeller=labeller)
+        return episodes, (dict(events, stats=dict(stats)) if stats else events), actions   # see learning.episode_stats
     finally:
         env.close()
 
@@ -270,7 +275,7 @@ def train(args):
             previous, current = current, f'iter{iteration:04d}.npz'
             policy.save(out/current)
             rows = [dict(result[1], **case) for result,case in zip(flown,cases)]
-            summary = adapter.metrics(rows)
+            summary = {**recorded_means(r.get('stats') for r in rows), **adapter.metrics(rows)}
             record = dict(iteration=iteration, policy=previous, task=args.task,
                           jobs=cases,
                           episodes=rows, actions=[result[2] for result in flown])

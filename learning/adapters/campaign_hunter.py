@@ -3,6 +3,8 @@
 Its episodes come from experiments.campaign_rollout (imported only when an episode is flown) and its policies use the
 campaign senses layout; the hunter's PPO loop in tools.ppo_neural trains it.
 """
+from learning.episode_stats import recorded_means
+
 DEFAULT_HORIZON = 180.0       # seconds: long enough to clear a level and reach its exit
 # Lifetime defaults preserve historical observations and rewards; new runs opt in below.
 RUN_RULES = {'ship_hit_feedback': False, 'graded_shooting': False, 'accuracy_power': 1, 'sticky_targets': False, 'target_recovery': False}
@@ -113,7 +115,7 @@ def summary(flown):
     lessons = [r for r in results if getattr(r, 'pursuit_lesson', False)]
     if lessons:
         metrics['lesson_contact'] = float(np.mean([r.end == 'contact' for r in lessons]))
-    return metrics
+    return {**recorded_means(e.get('stats') for e in flown), **metrics}   # recorded stats never displace the above
 
 
 def environment(**settings):
