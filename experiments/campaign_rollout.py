@@ -258,7 +258,7 @@ def _setup(game, level, seed, now):
     game.scoring.__dict__.pop('calculate_current_potential_score', None)
     game.clock = lambda: now[0]
     game.clock_ms = lambda: now[0] * 1000.0
-    game.__dict__.pop('last_shot_time', None)        # the last episode's shot, on its clock: the gun starts ready
+    game.last_shot_time = 0                          # the last episode's shot, on its clock: the gun starts ready
     # The level as it is played: the game's own rules, weapons, walls and weed.
     game.combat_ruleset, game.weapon_catalog = RULESET, None
     game.curved_walls, game.grows_flora = config.CAVE.enabled, config.FLORA.enabled
