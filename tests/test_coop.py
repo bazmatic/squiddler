@@ -400,3 +400,40 @@ def test_the_mode_cycles_through_every_mode_and_is_remembered(make_game):
     for _ in range(3):
         game.multiplayer_menu.toggle_selected()
     assert game.mode == 'race' and UserSettings().multiplayer_mode == 'race'
+
+
+# --- per-player recordings, and the Replay enemies that copy them -----------------------------------------------------
+
+def test_each_player_records_their_own_commands(coop, monkeypatch):
+    first, second = coop.players
+    assert first.recorder is not second.recorder
+    monkeypatch.setattr(first, 'controller', None)
+    step(coop, monkeypatch, pygame.K_UP, frames=3)          # the keyboard flies Player 1 only
+    assert first.recorder.get_command_count() == 3
+    assert second.recorder.get_command_count() == 3         # an idle ship records NO_ACTION each frame
+    from entities.command_recorder import CommandType
+    assert CommandType.APPLY_THRUST in first.recorder.get_replay_commands()
+    assert CommandType.APPLY_THRUST not in second.recorder.get_replay_commands()
+
+
+def test_replay_enemies_alternate_between_the_players_in_spawn_order(coop):
+    from game_handlers.spawn_manager import make_enemy
+    first, second = coop.players
+    replays = [make_enemy('replay', (600.0 + 30 * i, 400.0), coop.level, coop.command_recorder) for i in range(4)]
+    assert [r.recorder for r in replays] == [first.recorder, second.recorder, first.recorder, second.recorder]
+
+
+def test_single_players_replay_enemy_copies_the_one_recording(make_game):
+    from game_handlers.spawn_manager import make_enemy
+    game = make_game(autoplay=False)
+    game.state = config.STATE_PLAYING
+    game.start_level()
+    assert game.command_recorder is game.players[0].recorder
+    enemy = make_enemy('replay', (600.0, 400.0), game.level, game.command_recorder)
+    assert enemy.recorder is game.players[0].recorder
+
+
+def test_a_new_level_starts_every_recording_afresh(coop, monkeypatch):
+    step(coop, monkeypatch, pygame.K_UP, frames=3)
+    coop.start_level()
+    assert all(p.recorder.get_command_count() == 0 for p in coop.players)

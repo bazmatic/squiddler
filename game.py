@@ -27,7 +27,7 @@ import level_config
 from entities.projectile import Projectile
 from entities.powerup_crystal import PowerupCrystal
 from entities.jev_beacon import JevBeacon
-from entities.command_recorder import CommandRecorder, CommandType
+from entities.command_recorder import CommandRecorder, CommandType, RecorderRotation
 from input import InputHandler
 from scoring.system import ScoringSystem
 from policies.exit import DEFAULT_EXIT_POLICY, ExitPolicy, ExitState, OpenAfterTime
@@ -128,6 +128,21 @@ class Game:
     @players.setter
     def players(self, players: List[Player]) -> None:
         self._players = players
+
+    @property
+    def command_recorder(self):
+        """What Replay enemies copy: the one player's recording, or with two players a rotation of both."""
+        recorders = [p.recorder for p in self.players]
+        if len(recorders) == 1:
+            return recorders[0]
+        rotation = self.__dict__.get('_rotation')
+        if rotation is None or rotation.recorders != recorders:
+            rotation = self._rotation = RecorderRotation(recorders)    # kept, so spawns mid-level carry on the turn
+        return rotation
+
+    @command_recorder.setter
+    def command_recorder(self, recorder) -> None:
+        self.players[0].recorder = recorder
 
     @property
     def ships(self) -> list:
@@ -238,7 +253,6 @@ class Game:
         self.projectiles: List[Projectile] = []
         self.powerup_crystals: List[PowerupCrystal] = []
         self.sound_manager = SoundManager()  # Game-level sound manager for enemy destruction
-        self.command_recorder = CommandRecorder()  # Record player commands for replay enemy
         self.input_handler = InputHandler()  # Handle keyboard input and map to commands
         self.restart_hints = {
             connected: render_hint_row(get_font(24), [(key, "Restart")])
@@ -690,7 +704,9 @@ class Game:
         self.star_indicator.reset()
         
         # Start command recording
-        self.command_recorder.start_recording()
+        for player in self.players:
+            player.recorder.start_recording()
+        self.collision_handler.command_recorder = self.command_recorder     # its spawns copy the right players
         
         # Clear any pending input events FIRST to prevent keys from menu from affecting gameplay
         # This must happen BEFORE checking key state
@@ -1181,7 +1197,7 @@ class Game:
             if cmd == CommandType.ACTIVATE_SHIELD:
                 continue
             self._execute_ship_command(player.ship, cmd)
-            self.command_recorder.record_command(cmd)
+            player.recorder.record_command(cmd)
         
         if fire_pressed:
             current_time = self.clock_ms()
@@ -1195,13 +1211,13 @@ class Game:
                         shot.owner = player   # whose kill it counts as
                     self.projectiles.extend(projectiles)
                     player.scoring.record_shot()
-                    self.command_recorder.record_command(CommandType.FIRE)
+                    player.recorder.record_command(CommandType.FIRE)
                     player.last_shot_time = current_time
         
         # Record NO_ACTION once per loop when no input is detected
         # This allows the replay enemy to mirror periods of inactivity
         if not commands and not fire_pressed:
-            self.command_recorder.record_command(CommandType.NO_ACTION)
+            player.recorder.record_command(CommandType.NO_ACTION)
         
         # Update ship
         player.ship.update(dt)

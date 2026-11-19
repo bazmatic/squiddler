@@ -74,3 +74,22 @@ class CommandRecorder:
     def clear(self) -> None:
         """Clear all recorded commands."""
         self.commands.clear()
+
+
+class RecorderRotation:
+    """The recordings of several players, handed out one by one: each Replay enemy copies the next player's, so with two
+    players they alternate in spawn order. Whatever takes a recorder for an enemy asks `take()`."""
+
+    def __init__(self, recorders):
+        self.recorders = list(recorders)
+        self._next = 0
+
+    def take(self) -> CommandRecorder:
+        recorder = self.recorders[self._next % len(self.recorders)]
+        self._next += 1
+        return recorder
+
+
+def recorder_for_enemy(source):
+    """A recorder for one Replay enemy: `source` itself, or the next one in a rotation."""
+    return source.take() if isinstance(source, RecorderRotation) else source
