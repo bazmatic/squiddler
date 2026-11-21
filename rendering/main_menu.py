@@ -19,7 +19,7 @@ from utils.resource_path import resource_path
 TITLE_HEIGHT_FRACTION = 0.34
 TITLE_CENTER_Y_FRACTION = 0.19
 TITLE_FLOAT_SPEED = 0.9
-BUTTON_HEIGHT = 64
+BUTTON_HEIGHT = 50
 
 
 class MainMenu:
@@ -36,7 +36,7 @@ class MainMenu:
         self.menu_title: Optional[NeonText] = None
         self.menu_title_image: Optional[pygame.Surface] = None
         self.menu_title_rect: Optional[pygame.Rect] = None
-        self.menu_options = ["START GAME", "LEVELS", "FUN", "SELECT PROFILE", "MULTIPLAYER", "SETTINGS", "QUIT"]
+        self.menu_options = ["START GAME", "LEVELS", "HOW TO PLAY", "FUN", "SELECT PROFILE", "MULTIPLAYER", "SETTINGS", "QUIT"]
         if config.editor_enabled():
             self.menu_options.insert(self.menu_options.index("QUIT"), "EDITOR")
         self.menu_buttons: list[Button] = []
@@ -97,7 +97,7 @@ class MainMenu:
             self.menu_title_image = None
         
         # Create buttons for all menu options
-        button_font = get_font(self._scaled(40))
+        button_font = get_font(self._scaled(34))
         self.menu_buttons = []
         
         # Position buttons in a group beneath the title
@@ -121,7 +121,7 @@ class MainMenu:
     def _button_column(self, title_bottom: int) -> Tuple[int, float]:
         """Where the first button sits and how far apart they are: the usual place and spacing, moved up and then
         packed closer only as far as it takes for the last one to clear the profile badge."""
-        start_y, spacing = int(config.SCREEN_HEIGHT * 0.42), self._scaled(80)
+        start_y, spacing = int(config.SCREEN_HEIGHT * 0.42), self._scaled(66)
         half = self._scaled(BUTTON_HEIGHT) // 2
         gaps = len(self.menu_options) - 1
         last_centre = self._badge_top() - self._scaled(16) - half

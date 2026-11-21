@@ -48,6 +48,7 @@ from rendering.competition_screens import CompetitionScreens
 from game_handlers.competition import Competition
 from rendering.level_select_menu import LevelSelectMenu
 from rendering.fun_menu import FunMenu
+from rendering.how_to_play import HowToPlayMenu
 from rendering.level_editor import LevelEditor
 from rendering.duel_view import draw_duel
 from rendering.battle_view import draw_battle
@@ -315,6 +316,7 @@ class Game:
         self.competition_screens = CompetitionScreens(screen)
         self.level_select_menu = LevelSelectMenu(screen, self.profile_manager)
         self.fun_menu = FunMenu(screen)
+        self.how_to_play_menu = HowToPlayMenu(screen)
         self.level_editor = LevelEditor(self, screen)
         self.duel = None                 # the pilot fight or team battle in progress (STATE_DUEL)
         self.duel_worker = None
@@ -1087,7 +1089,7 @@ class Game:
                     handler.handle_controller(event, self)
             elif event.type == pygame.JOYHATMOTION or event.type == pygame.JOYAXISMOTION:
                 # Handle controller hat (d-pad) and axis (stick) events for menu navigation
-                if self.state in (config.STATE_MENU, config.STATE_PROFILE_SELECTION, config.STATE_LEVEL_SELECT, config.STATE_LEVEL_COMPLETE, config.STATE_SETTINGS, config.STATE_MULTIPLAYER, config.STATE_FUN, config.STATE_QUIT_CONFIRM, config.STATE_EDITOR):
+                if self.state in (config.STATE_MENU, config.STATE_PROFILE_SELECTION, config.STATE_LEVEL_SELECT, config.STATE_LEVEL_COMPLETE, config.STATE_SETTINGS, config.STATE_MULTIPLAYER, config.STATE_FUN, config.STATE_HOW_TO_PLAY, config.STATE_QUIT_CONFIRM, config.STATE_EDITOR):
                     handler = self.state_handler_registry.get_handler(self.state)
                     handler.handle_controller(event, self)
             elif event.type == pygame.KEYDOWN:
@@ -1240,6 +1242,9 @@ class Game:
             return
         if self.state == config.STATE_FUN:
             self.fun_menu.update(dt)
+            return
+        if self.state == config.STATE_HOW_TO_PLAY:
+            self.how_to_play_menu.update(dt)
             return
         if self.state == config.STATE_EDITOR:
             self.level_editor.update(dt)
@@ -1716,6 +1721,8 @@ class Game:
             self.competition_screens.draw_result(self.competition)
         elif self.state == config.STATE_FUN:
             self.fun_menu.draw()
+        elif self.state == config.STATE_HOW_TO_PLAY:
+            self.how_to_play_menu.draw()
         elif self.state == config.STATE_EDITOR:
             self.level_editor.draw()
         elif self.state == config.STATE_DUEL:

@@ -69,6 +69,9 @@ class MenuStateHandler(StateHandler):
                 game.new_race()
                 game.level_select_menu.refresh()
                 game.state = config.STATE_LEVEL_SELECT
+            elif selected_option == "HOW TO PLAY":
+                game.how_to_play_menu.refresh(False)
+                game.state = config.STATE_HOW_TO_PLAY
             elif selected_option == "FUN":
                 game.fun_menu.refresh()
                 game.state = config.STATE_FUN
@@ -101,6 +104,9 @@ class MenuStateHandler(StateHandler):
                     game.new_race()
                     game.level_select_menu.refresh()
                     game.state = config.STATE_LEVEL_SELECT
+                elif selected_option == "HOW TO PLAY":
+                    game.how_to_play_menu.refresh(True)
+                    game.state = config.STATE_HOW_TO_PLAY
                 elif selected_option == "FUN":
                     game.fun_menu.refresh()
                     game.state = config.STATE_FUN
@@ -721,6 +727,41 @@ class FunStateHandler(StateHandler):
         return False
 
 
+class HowToPlayStateHandler(StateHandler):
+    """The HOW TO PLAY pages: left and right turn them, cancel goes back to the main menu."""
+
+    def __init__(self):
+        self.last_navigation_time = 0.0
+
+    def handle_keyboard(self, event, game):
+        if event.key == pygame.K_LEFT:
+            game.how_to_play_menu.turn(-1)
+            return True
+        if event.key == pygame.K_RIGHT:
+            game.how_to_play_menu.turn(1)
+            return True
+        if event.key in (pygame.K_ESCAPE, pygame.K_q):
+            game.state = config.STATE_MENU
+            return True
+        return False
+
+    def handle_controller(self, event, game):
+        if event.type == pygame.JOYBUTTONDOWN:
+            if game.input_handler.is_controller_menu_cancel_pressed(event.button):
+                game.state = config.STATE_MENU
+                return True
+            return False
+        now = time.monotonic()
+        if now - self.last_navigation_time < 0.15:
+            return False
+        step = menu_direction(event)[0]
+        if step:
+            game.how_to_play_menu.turn(step)
+            self.last_navigation_time = now
+            return True
+        return False
+
+
 class DuelStateHandler(StateHandler):
     """During a duel the only input is cancel, which ends it."""
 
@@ -761,6 +802,7 @@ class StateHandlerRegistry:
             config.STATE_COMPETITION_RESULT: TurnStateHandler(),
             config.STATE_LEVEL_SELECT: LevelSelectStateHandler(),
             config.STATE_FUN: FunStateHandler(),
+            config.STATE_HOW_TO_PLAY: HowToPlayStateHandler(),
             config.STATE_EDITOR: EditorStateHandler(),
             config.STATE_DUEL: DuelStateHandler(),
             config.STATE_PLAYING: PlayingStateHandler(),
