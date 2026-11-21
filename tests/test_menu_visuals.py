@@ -380,7 +380,7 @@ def test_the_main_menu_buttons_fit_between_the_title_and_the_profile_badge(monke
     assert buttons[0].top > menu.menu_title_rect.bottom
 
 
-def test_seven_buttons_sit_a_little_higher_and_close_up_only_as_far_as_they_must(monkeypatch):
+def test_the_buttons_are_thin_sit_a_little_higher_and_close_up_only_as_far_as_they_must(monkeypatch):
     from rendering.main_menu import MainMenu
     pygame.init()
     pygame.display.set_mode((320, 240))
@@ -390,4 +390,17 @@ def test_seven_buttons_sit_a_little_higher_and_close_up_only_as_far_as_they_must
     menu = MainMenu(pygame.Surface(SIZE))
     ys = [button.position[1] for button in menu.menu_buttons]
     assert ys[0] <= int(SIZE[1] * 0.42)                                    # moved up to make room, never down
-    assert menu.menu_buttons[0].height < ys[1] - ys[0] <= menu._scaled(80)  # packed closer, not touching
+    assert menu.menu_buttons[0].height < menu._scaled(64)                  # thinner than they were, to leave room for more
+    assert menu.menu_buttons[0].height < ys[1] - ys[0] <= menu._scaled(66)  # packed closer, not touching
+
+
+@pytest.mark.parametrize('size', [(1352, 878), (1280, 720), (1920, 1080)])
+def test_button_text_fits_inside_its_button(monkeypatch, size):
+    from rendering.main_menu import MainMenu
+    pygame.init()
+    pygame.display.set_mode((320, 240))
+    monkeypatch.setattr(config, 'SCREEN_WIDTH', size[0])
+    monkeypatch.setattr(config, 'SCREEN_HEIGHT', size[1])
+    menu = MainMenu(pygame.Surface(size))
+    for button in menu.menu_buttons:
+        assert button.font.size(button.text)[1] <= button.height
