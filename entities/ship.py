@@ -62,7 +62,7 @@ class Ship(RotatingThrusterShip):
         self._hit = None  # strongest unshielded non-wall knock since the pilot last observed
         self.glow_phase = 0.0  # For pulsing glow when damaged
         self.prev_thrusting = False  # Track previous frame's thrusting state for sound management
-        self.low_power = False  # The game sets this each frame from the power gauge
+        self.low_power = 0.0  # The game sets this each frame: 0 with power to spare, up to 1 as it runs out
         self.sound_manager = SoundManager()  # Initialize sound manager
         self.shield_active = False
         self.observer = False  # observer mode: invulnerable (as if shielded), drawn faintly, unseen by enemies
@@ -93,7 +93,7 @@ class Ship(RotatingThrusterShip):
             self.fuel += config.FUEL_CONSUMPTION_PER_THRUST
             
             # Start thruster sound (will only start if not already playing)
-            self.sound_manager.start_thruster(sputtering=self.low_power)
+            self.sound_manager.start_thruster(sputter=self.low_power)
         
         return result
     

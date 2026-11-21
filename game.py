@@ -38,7 +38,7 @@ from user_settings import UserSettings
 from rendering import Renderer
 from rendering.ui_elements import AnimatedStarRating, StarIndicator, UIElementRenderer
 from rendering.menu_components import AnimatedBackground, NeonText, Button, ControllerIcon, render_hint_row
-from rendering.visual_effects import draw_button_glow
+from rendering.visual_effects import create_radial_gradient_surface, draw_button_glow
 from rendering.main_menu import MainMenu
 from rendering.level_complete_menu import LevelCompleteMenu
 from rendering.profile_selection_menu import ProfileSelectionMenu
@@ -297,6 +297,8 @@ class Game:
             on_star_gained=self.sound_manager.play_star_gained
         )
         self.critical_warning_active = False
+        self.warning_beat_time = 0.0   # When the last low-power tick sounded
+        self._edge_glow = None   # The low-power edge glow, built once per screen size
         self.game_over_active = False  # Track if game over sequence is active
         self.game_frozen = False  # Track if game action is frozen (score reached zero)
         self.game_over_start_time = 0.0  # Time when game over sequence started
@@ -1501,13 +1503,13 @@ class Game:
                 player.ship.fuel,
                 player.ship.ammo
             )
-            player.ship.low_power = potential['score_percentage'] <= LOW_POWER_THRESHOLD
+            player.ship.low_power = max(0.0, 1 - potential['score_percentage'] / LOW_POWER_THRESHOLD)
             if potential['potential_score'] <= 0 and len(self.players) > 1:
                 self._drop_out(player)
             else:
                 powers.append(potential['potential_score'])
         if powers:
-            self._update_critical_warning(min(powers))
+            self._update_critical_warning(min(powers), current_time)
         # When score reaches zero, freeze all action and start fade
         if not self.game_frozen and (powers == [] or (len(self.players) == 1 and powers[0] <= 0)):
             if len(self.players) == 1 or not any(p.through for p in self.players):
@@ -1564,23 +1566,32 @@ class Game:
                             player.scoring.record_wall_collision()
                     self.sound_manager.play_wall_hit(0.5)
 
-    def _update_critical_warning(self, potential_score: float) -> None:
-        """Start/stop critical warning sound based on remaining potential score."""
-        # Only warn while there are still points/energy remaining
+    def _update_critical_warning(self, potential_score: float, current_time: float) -> None:
+        """In the last few points, beat a quiet tick (and flash the screen edge with it), faster as power runs out."""
         if 0 < potential_score <= self.CRITICAL_WARNING_THRESHOLD:
-            if not self.critical_warning_active:
-                self.sound_manager.start_critical_warning()
+            urgency = 1 - potential_score / self.CRITICAL_WARNING_THRESHOLD
+            if not self.critical_warning_active or current_time >= self.warning_beat_time + 1.5 - 1.1 * urgency:
                 self.critical_warning_active = True
-            else:
-                # Periodic check: verify sound is still playing
-                channel_busy = self.sound_manager.critical_warning_channel.get_busy() if self.sound_manager.critical_warning_channel else False
-                if not channel_busy:
-                    # Sound stopped unexpectedly, restart it
-                    self.sound_manager.start_critical_warning()
+                self.warning_beat_time = current_time
+                self.sound_manager.play_warning_tick()
         elif self.critical_warning_active:
             self.sound_manager.stop_critical_warning()
             self.critical_warning_active = False
-    
+
+    def _draw_low_power_edge(self) -> None:
+        """A red glow round the screen edge that flares on each warning tick and fades before the next."""
+        if not self.critical_warning_active:
+            return
+        since = self.clock() - self.warning_beat_time
+        strength = max(0.0, 1 - since / 0.5)
+        if strength <= 0:
+            return
+        size = self.screen.get_size()
+        if self._edge_glow is None or self._edge_glow.get_size() != size:
+            self._edge_glow = create_radial_gradient_surface(size, (255, 40, 40), 0, 150, falloff=2.5)
+        self._edge_glow.set_alpha(round(255 * strength))
+        self.screen.blit(self._edge_glow, (0, 0))
+
     def _start_game_over_sequence(self, current_time: float) -> None:
         """Start the game over sequence: freeze action, fade to black, power down sound, then GAME OVER text."""
         self.game_over_active = True
@@ -1875,6 +1886,8 @@ class Game:
                 draw_star_row(self.screen, tuple(i < lit for i in range(5)), self.par_pulse(),
                               (config.UI_ZONE_WIDTH // 2, STAR_ROW_Y), STAR_ROW_SIZE)
         
+        self._draw_low_power_edge()
+
         # Draw game over sequence (fade to black and text)
         if self.game_over_active:
             self._draw_game_over_sequence()

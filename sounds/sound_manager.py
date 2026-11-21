@@ -313,35 +313,50 @@ class SoundManager:
             sound.set_volume(config.SHOOT_SOUND_VOLUME * 1.1)  # Slightly louder
         return sound
     
-    def _generate_sputter(self) -> pygame.mixer.Sound:
-        """The thruster running out of fuel: its noise cuts out and coughs back in at irregular moments."""
+    SPUTTER_LEVELS = 3
+
+    def _generate_sputter(self, level: int) -> pygame.mixer.Sound:
+        """The thruster running out of fuel: its noise cuts out and coughs back in at irregular moments.
+
+        Level 1 is a mild stutter; each level up cuts out more often, runs quieter and duller.
+        """
         rate, _, channels = pygame.mixer.get_init()
         rng = np.random.default_rng(451)  # Local, so gameplay randomness is untouched
         duration = 1.2
         noise = rng.uniform(-1, 1, round(rate*duration))
+        dullness = (1, 4, 12)[level-1]    # A wider average rolls off the highs: the engine sounds lower and weaker
+        if dullness > 1:
+            noise = np.convolve(noise, np.ones(dullness)/dullness, mode='same') * dullness**.5
+        cut_chance = (.3, .5, .7)[level-1]
+        loudness = (1.0, .85, .7)[level-1]
         gate = np.empty(len(noise))
         start = 0
         while start < len(gate):
             length = round(rate*rng.uniform(.02, .09))
             # The loop starts and ends running, so it repeats without a click
-            running = start == 0 or start+length >= len(gate) or rng.random() > .4
-            gate[start:start+length] = rng.uniform(.75, 1) if running else .04
+            running = start == 0 or start+length >= len(gate) or rng.random() > cut_chance
+            gate[start:start+length] = rng.uniform(.75, 1)*loudness if running else .04
             start += length
         # A few milliseconds of smoothing softens each cut into a cough rather than a click
         width = round(rate*.004)
         gate = np.convolve(np.concatenate((gate[-width:], gate)), np.ones(width)/width, mode='valid')[:len(noise)]
-        pcm = (noise*gate*32767).astype(np.int16)
+        pcm = (np.clip(noise*gate, -1, 1)*32767).astype(np.int16)
         if channels > 1:
             pcm = np.repeat(pcm[:, None], channels, axis=1)
         return pygame.sndarray.make_sound(pcm)
 
-    def start_thruster(self, sputtering: bool = False) -> None:
-        """Play the thruster loop, sputtering when power is low; switches loops if the state changed."""
+    def start_thruster(self, sputter: float = 0.0) -> None:
+        """Play the thruster loop; `sputter` (0 to 1) is how short of power the ship is, and the engine coughs more
+        the higher it is. Switches loops when the state changes."""
         if not _audible() or not self.thruster_sound or not self.thruster_channel:
             return
-        if sputtering and getattr(self, 'sputter_sound', None) is None:
-            self.sputter_sound = self._generate_sputter()
-        sound = self.sputter_sound if sputtering else self.thruster_sound
+        level = min(self.SPUTTER_LEVELS, math.ceil(sputter*self.SPUTTER_LEVELS)) if sputter > 0 else 0
+        if level:
+            if not hasattr(self, 'sputter_sounds'):
+                self.sputter_sounds = {}
+            if level not in self.sputter_sounds:
+                self.sputter_sounds[level] = self._generate_sputter(level)
+        sound = self.sputter_sounds[level] if level else self.thruster_sound
         if not self.thruster_channel.get_busy() or self.thruster_channel.get_sound() is not sound:
             self.thruster_channel.play(sound, loops=-1)  # -1 = infinite loop
     
@@ -942,77 +957,34 @@ class SoundManager:
             sound.set_volume(config.SHOOT_SOUND_VOLUME * 0.7)  # Moderate volume
         return sound
 
-    def _generate_critical_warning_sound(self) -> Optional[pygame.mixer.Sound]:
-        """Generate a slow, pleasant sine wave to loop while score nears zero.
-        
-        Creates a gentle, slow sine wave that's pleasant to listen to as a warning.
-        """
+    def _generate_warning_tick(self) -> Optional[pygame.mixer.Sound]:
+        """A short, quiet, soft-edged blip: the low-power beat, with silence around it so the engine stays audible."""
         if not config.SOUND_ENABLED:
             return None
-
-        sample_rate = config.SOUND_SAMPLE_RATE
-        # Create a slow, pleasant sine wave
-        cycle_duration = 2.0  # Slow 2-second cycle for pleasant sound
-        num_cycles = 1  # Single cycle for seamless loop
-        total_duration = cycle_duration * num_cycles
-        num_samples = int(sample_rate * total_duration)
-        t_array = np.arange(num_samples, dtype=np.float32) / sample_rate
-        
-        # Pleasant sine wave parameters
-        base_freq = 220.0  # A3 note - lower, more mellow
-        # Slow modulation with more variation
-        modulation_rate = 0.8  # Hz - slow but noticeable modulation
-        modulation_depth = 0.15  # More pitch variation for interest
-        
-        # Generate slow sine wave with gentle modulation
-        modulation = modulation_depth * np.sin(2 * math.pi * modulation_rate * t_array)
-        freq_curve = base_freq * (1.0 + modulation)
-        phase = np.cumsum(freq_curve / sample_rate) * 2 * math.pi
-        
-        # Pure sine wave (no harmonics for pleasant sound)
-        samples = np.sin(phase).astype(np.float32)
-        
-        # No fade - let pygame handle seamless looping
-        # Removing fade to ensure sound is audible and loops properly
-        
-        # Normalize and clip
-        max_amp = np.max(np.abs(samples))
-        if max_amp > 0:
-            samples = samples / max_amp * 1.0  # Full amplitude for maximum audibility
-        samples = np.clip(samples, -1.0, 1.0).astype(np.float32)
-        
-        # Convert to stereo
-        stereo = np.stack([samples, samples], axis=1)
-        stereo_int16 = (stereo * 16383).astype(np.int16)
-
-        sound = pygame.sndarray.make_sound(stereo_int16)
+        rate = config.SOUND_SAMPLE_RATE
+        t = np.arange(int(rate*.07), dtype=np.float32) / rate
+        # A high, pure blip clear of the engine's noise band; the quick attack and decay keep it from clicking
+        wave = np.sin(2*math.pi*1100*t) * np.minimum(t/.004, 1.0) * np.exp(-t*50)
+        pcm = (wave*16383).astype(np.int16)
+        sound = pygame.sndarray.make_sound(np.stack([pcm, pcm], axis=1))
         if sound:
-            volume = 1.0  # Full volume for maximum audibility
-            sound.set_volume(volume)
+            sound.set_volume(.3)
         return sound
 
-    def start_critical_warning(self) -> None:
-        """Start the looping critical warning tone."""
+    def play_warning_tick(self) -> None:
+        """One beat of the low-power warning; the game decides how often, faster as power runs out."""
         if not _audible():
             return
-
         if self.critical_warning_sound is None:
-            self.critical_warning_sound = self._generate_critical_warning_sound()
-
+            self.critical_warning_sound = self._generate_warning_tick()
         if not self.critical_warning_sound:
             return
-
         if self.critical_warning_channel is None:
             self.critical_warning_channel = pygame.mixer.Channel(5)
-            self.critical_warning_channel.set_volume(1.0)  # Ensure channel volume is at maximum
-
-        channel_busy = self.critical_warning_channel.get_busy()
-        if not channel_busy:
-            # Play the warning sound with infinite loops
-            self.critical_warning_channel.play(self.critical_warning_sound, loops=-1)
+        self.critical_warning_channel.play(self.critical_warning_sound)
 
     def stop_critical_warning(self) -> None:
-        """Stop the critical warning tone."""
+        """Cut off a warning tick still sounding."""
         if not config.SOUND_ENABLED or not self.critical_warning_channel:
             return
 
