@@ -38,8 +38,6 @@ def build_pages(controller: bool) -> List[Page]:
             f"Destroy an enemy: +{config.ENEMY_DESTRUCTION_BONUS}.",
             f"Collect a crystal: +{config.POWERUP_CRYSTAL_BONUS}.",
             "At zero the level is lost.",
-            f"In the last {config.SETTINGS.game.criticalWarningThreshold} points the screen edge pulses red "
-            "and a tick sounds, faster as power runs out.",
         ]),
         Page("CRYSTALS AND WEAPONS", [
             f"Enemies sometimes drop a crystal. Fly close to pull it in; it vanishes after {crystal_seconds:g} seconds.",

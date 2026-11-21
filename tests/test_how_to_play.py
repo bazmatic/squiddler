@@ -21,7 +21,7 @@ def test_power_page_quotes_the_settings(monkeypatch):
     monkeypatch.setattr(config, 'POWERUP_CRYSTAL_BONUS', 41)
     text = page_text(build_pages(False)[1])
     assert "+37" in text and "+41" in text
-    assert str(config.SETTINGS.game.criticalWarningThreshold) in text
+    assert "pulse" not in text and "tick" not in text      # the warning signals are left to be discovered
 
 
 def test_crystal_page_describes_the_weapon_crystals_players_meet():
