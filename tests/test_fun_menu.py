@@ -29,9 +29,9 @@ def policy_file(tmp_path, monkeypatch):
     return path
 
 
-def test_fun_sits_between_levels_and_select_profile(game):
+def test_fun_sits_between_how_to_play_and_select_profile(game):
     options = game.main_menu.menu_options
-    assert options.index('FUN') == options.index('LEVELS') + 1 == options.index('SELECT PROFILE') - 1
+    assert options.index('FUN') == options.index('HOW TO PLAY') + 1 == options.index('SELECT PROFILE') - 1
 
 
 def test_fun_opens_the_list_with_the_pilot_fight_and_cancel_goes_back(game):

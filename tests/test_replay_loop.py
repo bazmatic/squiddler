@@ -145,7 +145,7 @@ def test_the_main_menu_buttons_fit_above_badge(game):
     game.main_menu.set_profile_info('Player1', 5)
     game.main_menu.draw()
     buttons = game.main_menu.menu_buttons
-    assert len(buttons) == 7
+    assert len(buttons) == 8
     assert all(a.position[1] + a.height/2 < b.position[1] - b.height/2 for a,b in zip(buttons,buttons[1:]))
     last_bottom = buttons[-1].position[1] + buttons[-1].height / 2
     badge_top = game.screen.get_height() - game.main_menu._scaled(56) - game.main_menu.profile_badge.get_height()
