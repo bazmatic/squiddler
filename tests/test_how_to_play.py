@@ -13,7 +13,7 @@ def page_text(page):
 
 def test_there_are_four_pages_in_order():
     assert [page.title for page in build_pages(False)] == [
-        "GOAL AND CONTROLS", "POWER", "CRYSTALS AND WEAPONS", "STARS AND ENEMIES"]
+        "GOAL AND CONTROLS", "POWER", "CRYSTALS AND WEAPONS", "STARS"]
 
 
 def test_power_page_quotes_the_settings(monkeypatch):
@@ -36,9 +36,11 @@ def test_crystal_page_describes_the_weapon_crystals_players_meet():
     assert "firepower" not in text      # the old gun-upgrade rules are not what a crystal does in play
 
 
-def test_boss_arenas_come_from_the_settings(monkeypatch):
-    monkeypatch.setattr(config, 'BOSS_LEVEL_INTERVAL', 7)
-    assert "every 7 levels" in page_text(build_pages(False)[3])
+def test_the_last_page_is_about_stars_and_does_not_describe_enemies():
+    text = page_text(build_pages(False)[3]).lower()
+    assert "star" in text and "par" in text
+    for name in ("egg", "urchin", "crab", "jelly", "flocker", "wallcrawler", "boss"):
+        assert name not in text
 
 
 def test_controls_follow_the_device():

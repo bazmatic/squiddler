@@ -48,11 +48,8 @@ def build_pages(controller: bool) -> List[Page]:
             f"A new weapon is selected when you pick it up. {_next_weapon_label(device)} cycles through the ones you hold.",
             f"A shield crystal makes you invulnerable for {powerups.shieldDurationSeconds:g} seconds.",
         ]),
-        Page("STARS AND ENEMIES", [
+        Page("STARS", [
             "Reaching the exit earns a star for each goal met: no hits, half the enemies, every enemy, "
             "every crystal, and finishing within par time.",
-            "Eggs hatch Squidlets, Urchins and Crabs shoot, Jellies and Flockers hunt in groups, "
-            "and Wallcrawlers walk the walls.",
-            f"Boss arenas come every {config.BOSS_LEVEL_INTERVAL} levels.",
         ]),
     ]
