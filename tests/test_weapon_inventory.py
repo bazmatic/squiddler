@@ -135,3 +135,13 @@ def test_continuing_and_retry_start_with_only_basic(game,controller):
     game.ship.equip_weapon('scattergun')
     game.restart_level()
     assert ammo(game.ship.weapon)=={'basic':None}
+
+
+def test_k_changes_weapon_like_down(game,monkeypatch):
+    keys=play(game,monkeypatch)
+    ship=game.ship
+    ship.shield_initial_timer=0
+    ship.equip_weapon('railgun')
+    keys[pygame.K_k]=True
+    game.update(1)
+    assert ship.weapon.weapon_id=='basic'

@@ -42,9 +42,9 @@ class InputHandler:
         # Map key combinations to command types
         # Each entry maps a tuple of key codes to a CommandType
         self.key_mappings = {
-            (pygame.K_LEFT, pygame.K_a): CommandType.ROTATE_LEFT,
-            (pygame.K_RIGHT, pygame.K_d): CommandType.ROTATE_RIGHT,
-            (pygame.K_UP, pygame.K_w): CommandType.APPLY_THRUST,
+            (pygame.K_LEFT, pygame.K_a, pygame.K_j): CommandType.ROTATE_LEFT,
+            (pygame.K_RIGHT, pygame.K_d, pygame.K_l): CommandType.ROTATE_RIGHT,
+            (pygame.K_UP, pygame.K_w, pygame.K_i): CommandType.APPLY_THRUST,
             (pygame.K_DOWN, pygame.K_s): CommandType.ACTIVATE_SHIELD,
         }
         

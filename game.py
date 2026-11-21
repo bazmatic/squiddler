@@ -723,7 +723,7 @@ class Game:
         # Check AFTER clearing events to see if keys are still held
         keys_at_start = pygame.key.get_pressed()
         self.keys_pressed_at_start = set()
-        problematic_keys = [pygame.K_SPACE, pygame.K_UP, pygame.K_w]
+        problematic_keys = [pygame.K_SPACE, pygame.K_UP, pygame.K_w, pygame.K_i]
         for key in problematic_keys:
             try:
                 # Check if key is in range and pressed
@@ -1150,7 +1150,7 @@ class Game:
         
         # Down/S (or controller A) advances once per press in inventory games.
         cycle_pressed = bool(
-            (player.keyboard and (keys[pygame.K_DOWN] or keys[pygame.K_s]))
+            (player.keyboard and (keys[pygame.K_DOWN] or keys[pygame.K_s] or keys[pygame.K_k]))
             or any(self.input_handler.is_controller_shield_pressed(index) for index in controllers))
         from weapons import WeaponInventory
         inventory = isinstance(player.ship.weapon, WeaponInventory)
