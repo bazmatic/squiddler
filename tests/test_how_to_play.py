@@ -104,3 +104,69 @@ def test_refresh_returns_to_the_first_page(screen):
     menu.turn(1)
     menu.refresh(False)
     assert menu.page_index == 0
+
+
+class TestGettingIn:
+    def make_game(self):
+        from unittest.mock import Mock
+        from game_handlers.state_handlers import StateHandlerRegistry
+        from rendering.how_to_play import HowToPlayMenu
+        from rendering.main_menu import MainMenu
+        game = Mock()
+        game.state = config.STATE_MENU
+        game.main_menu = MainMenu(pygame.Surface(SIZE))
+        game.how_to_play_menu = HowToPlayMenu(pygame.Surface(SIZE))
+        game.input_handler.get_controllers.return_value = []
+        return game, StateHandlerRegistry()
+
+    def key(self, key):
+        return pygame.event.Event(pygame.KEYDOWN, key=key, unicode="")
+
+    def press(self, game, registry, key):
+        registry.get_handler(game.state).handle_keyboard(self.key(key), game)
+
+    def open(self, screen):
+        game, registry = self.make_game()
+        options = game.main_menu.menu_options
+        game.main_menu.menu_selected_index = options.index("HOW TO PLAY")
+        self.press(game, registry, pygame.K_RETURN)
+        return game, registry
+
+    def test_entry_sits_after_levels_and_opens_the_screen(self, screen):
+        game, registry = self.open(screen)
+        options = game.main_menu.menu_options
+        assert options[options.index("LEVELS") + 1] == "HOW TO PLAY"
+        assert game.state == config.STATE_HOW_TO_PLAY
+        assert game.how_to_play_menu.page_index == 0
+
+    def test_a_controller_confirm_opens_it_too(self, screen):
+        game, registry = self.make_game()
+        game.main_menu.menu_selected_index = game.main_menu.menu_options.index("HOW TO PLAY")
+        game.input_handler.is_controller_menu_confirm_pressed.return_value = True
+        registry.get_handler(game.state).handle_controller(pygame.event.Event(pygame.JOYBUTTONDOWN, button=0), game)
+        assert game.state == config.STATE_HOW_TO_PLAY
+
+    def test_arrows_turn_pages_and_escape_goes_back(self, screen):
+        game, registry = self.open(screen)
+        self.press(game, registry, pygame.K_RIGHT)
+        assert game.how_to_play_menu.page_index == 1
+        self.press(game, registry, pygame.K_LEFT)
+        self.press(game, registry, pygame.K_LEFT)
+        assert game.how_to_play_menu.page_index == 0
+        self.press(game, registry, pygame.K_ESCAPE)
+        assert game.state == config.STATE_MENU
+
+    def test_the_last_page_stops_turning(self, screen):
+        game, registry = self.open(screen)
+        for _ in range(game.how_to_play_menu.page_count + 2):
+            self.press(game, registry, pygame.K_RIGHT)
+        assert game.how_to_play_menu.page_index == game.how_to_play_menu.page_count - 1
+
+    def test_the_controller_turns_pages_and_cancel_goes_back(self, screen):
+        game, registry = self.open(screen)
+        handler = registry.get_handler(game.state)
+        handler.handle_controller(pygame.event.Event(pygame.JOYHATMOTION, hat=0, value=(1, 0)), game)
+        assert game.how_to_play_menu.page_index == 1
+        game.input_handler.is_controller_menu_cancel_pressed.return_value = True
+        handler.handle_controller(pygame.event.Event(pygame.JOYBUTTONDOWN, button=1), game)
+        assert game.state == config.STATE_MENU

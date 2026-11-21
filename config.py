@@ -641,6 +641,7 @@ STATES_DEFAULTS = {
     "competitionResult": "competition_result",
     "levelSelect": "level_select",
     "fun": "fun",
+    "howToPlay": "how_to_play",
     "editor": "editor",
     "duel": "duel",
     "playing": "playing",
@@ -850,6 +851,7 @@ STATE_TURN = STATES_DEFAULTS["turn"]
 STATE_COMPETITION_RESULT = STATES_DEFAULTS["competitionResult"]
 STATE_LEVEL_SELECT = STATES_DEFAULTS["levelSelect"]
 STATE_FUN = STATES_DEFAULTS["fun"]
+STATE_HOW_TO_PLAY = STATES_DEFAULTS["howToPlay"]
 STATE_EDITOR = STATES_DEFAULTS["editor"]
 STATE_DUEL = STATES_DEFAULTS["duel"]
 STATE_PLAYING = STATES_DEFAULTS["playing"]
