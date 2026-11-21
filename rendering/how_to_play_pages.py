@@ -4,6 +4,9 @@ from typing import List, NamedTuple
 import config
 from entities.powerup_crystal import PowerupCrystal
 from rendering.settings_menu import CONTROL_GROUPS
+from weapons.catalog import CATALOG
+
+_AMMO_WEAPONS = ('twin_blaster', 'scattergun', 'railgun', 'seeker', 'inflator', 'grenade_launcher')
 
 
 class Page(NamedTuple):
@@ -40,10 +43,9 @@ def build_pages(controller: bool) -> List[Page]:
         ]),
         Page("CRYSTALS AND WEAPONS", [
             f"Enemies sometimes drop a crystal. Fly close to pull it in; it vanishes after {crystal_seconds:g} seconds.",
-            f"A crystal adds a firepower level for {config.POWERUP_DURATION_SECONDS} seconds: faster fire, then a spread.",
-            f"It also gives {config.POWERUP_AMMO_REFILL} ammo, and each shot uses "
-            f"{config.POWERUP_AMMO_COST_MULTIPLIER:g}x the usual ammo while it lasts.",
-            f"Weapon crystals add and select a new weapon. {_next_weapon_label(device)} cycles through them.",
+            "Every crystal is a weapon (or a shield). Your basic gun never runs out; each weapon has its own ammo: "
+            + ", ".join(f"{CATALOG[w].name} {CATALOG[w].capacity}" for w in _AMMO_WEAPONS) + ".",
+            f"A new weapon is selected when you pick it up. {_next_weapon_label(device)} cycles through the ones you hold.",
             f"A shield crystal makes you invulnerable for {powerups.shieldDurationSeconds:g} seconds.",
         ]),
         Page("STARS AND ENEMIES", [
@@ -51,6 +53,6 @@ def build_pages(controller: bool) -> List[Page]:
             "every crystal, and finishing within par time.",
             "Eggs hatch Squidlets, Urchins and Crabs shoot, Jellies and Flockers hunt in groups, "
             "and Wallcrawlers walk the walls.",
-            "Every sixth level is a boss arena.",
+            f"Boss arenas come every {config.BOSS_LEVEL_INTERVAL} levels.",
         ]),
     ]

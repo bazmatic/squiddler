@@ -24,12 +24,21 @@ def test_power_page_quotes_the_settings(monkeypatch):
     assert str(config.SETTINGS.game.criticalWarningThreshold) in text
 
 
-def test_crystal_page_quotes_the_settings(monkeypatch):
-    monkeypatch.setattr(config, 'POWERUP_DURATION_SECONDS', 17)
-    monkeypatch.setattr(config, 'POWERUP_AMMO_REFILL', 23)
+def test_crystal_page_describes_the_weapon_crystals_players_meet():
+    from entities.powerup_crystal import PowerupCrystal
+    from weapons.catalog import CATALOG
     text = page_text(build_pages(False)[2])
-    assert "17" in text and "23" in text
-    assert f"{config.SETTINGS.powerups.shieldDurationSeconds:g}" in text
+    assert f"{PowerupCrystal.LIFETIME_FRAMES / config.FPS:g} seconds" in text
+    assert f"{config.SETTINGS.powerups.shieldDurationSeconds:g} seconds" in text
+    assert "basic gun never runs out" in text
+    for weapon_id in ('twin_blaster', 'scattergun', 'railgun', 'seeker', 'inflator', 'grenade_launcher'):
+        assert f"{CATALOG[weapon_id].name} {CATALOG[weapon_id].capacity}" in text
+    assert "firepower" not in text      # the old gun-upgrade rules are not what a crystal does in play
+
+
+def test_boss_arenas_come_from_the_settings(monkeypatch):
+    monkeypatch.setattr(config, 'BOSS_LEVEL_INTERVAL', 7)
+    assert "every 7 levels" in page_text(build_pages(False)[3])
 
 
 def test_controls_follow_the_device():
@@ -170,3 +179,18 @@ class TestGettingIn:
         game.input_handler.is_controller_menu_cancel_pressed.return_value = True
         handler.handle_controller(pygame.event.Event(pygame.JOYBUTTONDOWN, button=1), game)
         assert game.state == config.STATE_MENU
+
+
+    def test_a_keyboard_player_sees_keyboard_controls_even_with_a_pad_plugged_in(self, screen):
+        game, registry = self.make_game()
+        game.input_handler.get_controllers.return_value = [object()]
+        game.main_menu.menu_selected_index = game.main_menu.menu_options.index("HOW TO PLAY")
+        self.press(game, registry, pygame.K_RETURN)
+        assert game.how_to_play_menu.controller is False
+
+    def test_a_controller_player_sees_controller_controls(self, screen):
+        game, registry = self.make_game()
+        game.main_menu.menu_selected_index = game.main_menu.menu_options.index("HOW TO PLAY")
+        game.input_handler.is_controller_menu_confirm_pressed.return_value = True
+        registry.get_handler(game.state).handle_controller(pygame.event.Event(pygame.JOYBUTTONDOWN, button=0), game)
+        assert game.how_to_play_menu.controller is True

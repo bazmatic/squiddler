@@ -70,7 +70,7 @@ class MenuStateHandler(StateHandler):
                 game.level_select_menu.refresh()
                 game.state = config.STATE_LEVEL_SELECT
             elif selected_option == "HOW TO PLAY":
-                game.how_to_play_menu.refresh(bool(game.input_handler.get_controllers()))
+                game.how_to_play_menu.refresh(False)
                 game.state = config.STATE_HOW_TO_PLAY
             elif selected_option == "FUN":
                 game.fun_menu.refresh()
@@ -105,7 +105,7 @@ class MenuStateHandler(StateHandler):
                     game.level_select_menu.refresh()
                     game.state = config.STATE_LEVEL_SELECT
                 elif selected_option == "HOW TO PLAY":
-                    game.how_to_play_menu.refresh(bool(game.input_handler.get_controllers()))
+                    game.how_to_play_menu.refresh(True)
                     game.state = config.STATE_HOW_TO_PLAY
                 elif selected_option == "FUN":
                     game.fun_menu.refresh()
