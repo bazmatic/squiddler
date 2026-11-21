@@ -4,6 +4,8 @@ Fly from the start to the green exit portal before your power runs out. Thrust, 
 
 Most levels lock the exit until you complete their mission, which is announced as the level starts. On the early levels the mission is to destroy every Egg. Later missions ask for more: every Flighthouse, every Wallcrawler or every Flocker, and from level 9 most levels (and every boss level) stay locked until every enemy is destroyed, including whatever hatches or is left behind. A level that must be cleared of every enemy gives unlimited ammo. The portal dims and powers down while it is locked, and brightens with a power-up sound when it opens.
 
+The same basics are in the game itself: **HOW TO PLAY** on the main menu has four pages (goal and controls, power, crystals and weapons, stars and enemies). Their copy is `rendering/how_to_play_pages.py`, and every figure in it is read from the settings.
+
 The game opens with a five-second animated splash; any key skips it, and `ui.splashEnabled` in `config/settings.json` turns it off.
 
 ## Stars
