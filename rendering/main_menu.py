@@ -36,7 +36,7 @@ class MainMenu:
         self.menu_title: Optional[NeonText] = None
         self.menu_title_image: Optional[pygame.Surface] = None
         self.menu_title_rect: Optional[pygame.Rect] = None
-        self.menu_options = ["START GAME", "LEVELS", "HOW TO PLAY", "FUN", "SELECT PROFILE", "MULTIPLAYER", "SETTINGS", "QUIT"]
+        self.menu_options = ["SINGLE PLAYER", "MULTIPLAYER", "HOW TO PLAY", "FUN", "SELECT PROFILE", "SETTINGS", "QUIT"]
         if config.editor_enabled():
             self.menu_options.insert(self.menu_options.index("QUIT"), "EDITOR")
         self.menu_buttons: list[Button] = []

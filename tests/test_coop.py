@@ -195,9 +195,8 @@ def test_the_multiplayer_menu_switches_the_mode_and_remembers_it(make_game, tmp_
     from user_settings import UserSettings
     game = make_game(autoplay=False)
     game.user_settings = UserSettings(tmp_path / 'player_settings.json')   # never the player's real file
-    game.coop = False
-    assert game.multiplayer_menu.rows[0].read() == 'SINGLE PLAYER'
-    game.multiplayer_menu.toggle_selected()      # level competition comes first
+    game.set_mode('compete')
+    assert game.multiplayer_menu.rows[0].read() == 'LEVEL COMPETITION'
     game.multiplayer_menu.toggle_selected()
     assert game.coop and game.multiplayer_menu.rows[0].read() == 'CAMPAIGN CO-OP'
     assert UserSettings(tmp_path / 'player_settings.json').multiplayer_mode == 'coop'
@@ -391,13 +390,13 @@ def test_the_race_works_with_the_campaign_hunter_as_the_rival(make_game, monkeyp
 def test_the_mode_cycles_through_every_mode_and_is_remembered(make_game):
     from user_settings import UserSettings
     game = make_game(autoplay=False)
-    game.set_mode('single')
+    game.set_mode('compete')
     names = []
-    for _ in range(4):
+    for _ in range(3):
         game.multiplayer_menu.toggle_selected()
         names.append(game.multiplayer_menu.rows[0].read())
-    assert names == ['LEVEL COMPETITION', 'CAMPAIGN CO-OP', 'CAMPAIGN RACE', 'SINGLE PLAYER']
-    for _ in range(3):
+    assert names == ['CAMPAIGN CO-OP', 'CAMPAIGN RACE', 'LEVEL COMPETITION']
+    for _ in range(2):
         game.multiplayer_menu.toggle_selected()
     assert game.mode == 'race' and UserSettings().multiplayer_mode == 'race'
 
@@ -437,3 +436,45 @@ def test_a_new_level_starts_every_recording_afresh(coop, monkeypatch):
     step(coop, monkeypatch, pygame.K_UP, frames=3)
     coop.start_level()
     assert all(p.recorder.get_command_count() == 0 for p in coop.players)
+
+
+def _press(game, code):
+    pygame.event.clear()
+    pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=code, unicode=''))
+    game.handle_events()
+
+
+def _open_from_main_menu(game, option):
+    game.state = config.STATE_MENU
+    game.main_menu.menu_selected_index = game.main_menu.menu_options.index(option)
+    _press(game, pygame.K_RETURN)
+
+
+def test_single_player_offers_start_game_and_levels_in_one_ship_mode(make_game):
+    game = make_game()
+    assert "START GAME" not in game.main_menu.menu_options and "LEVELS" not in game.main_menu.menu_options
+    game.set_mode('coop')                                       # whatever multiplayer was left as
+    _open_from_main_menu(game, "SINGLE PLAYER")
+    assert game.state == config.STATE_SINGLE_PLAYER and game.mode == 'single'
+    assert [row.read_label() for row in game.single_player_menu.rows] == ["START GAME", "LEVELS"]
+    _press(game, pygame.K_RETURN)                               # START GAME is ready
+    assert game.state == config.STATE_PLAYING and len(game.players) == 1
+    _open_from_main_menu(game, "SINGLE PLAYER")
+    _press(game, pygame.K_DOWN)
+    _press(game, pygame.K_RETURN)
+    assert game.state == config.STATE_LEVEL_SELECT
+    _press(game, pygame.K_ESCAPE)
+    assert game.state == config.STATE_SINGLE_PLAYER             # back to where LEVELS lives
+    _press(game, pygame.K_ESCAPE)
+    assert game.state == config.STATE_MENU
+
+
+def test_multiplayer_opens_in_the_remembered_mode_and_stepping_never_starts_play(make_game):
+    game = make_game()
+    _open_from_main_menu(game, "MULTIPLAYER")
+    assert game.state == config.STATE_MULTIPLAYER and game.mode == game.user_settings.multiplayer_mode != 'single'
+    assert game.mode == 'compete' and len(game.multiplayer_menu.rows) == 4     # the length and Player 2 are asked
+    _press(game, pygame.K_RIGHT)                                # the start row is selected: stepping does nothing
+    assert game.state == config.STATE_MULTIPLAYER
+    _press(game, pygame.K_RETURN)
+    assert game.state == config.STATE_TURN

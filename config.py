@@ -637,6 +637,7 @@ STATES_DEFAULTS = {
     "profileSelection": "profile_selection",
     "settings": "settings",
     "multiplayer": "multiplayer",
+    "singlePlayer": "single_player",
     "turn": "turn",
     "competitionResult": "competition_result",
     "levelSelect": "level_select",
@@ -847,6 +848,7 @@ STATE_MENU = STATES_DEFAULTS["menu"]
 STATE_PROFILE_SELECTION = STATES_DEFAULTS["profileSelection"]
 STATE_SETTINGS = STATES_DEFAULTS["settings"]
 STATE_MULTIPLAYER = STATES_DEFAULTS["multiplayer"]
+STATE_SINGLE_PLAYER = STATES_DEFAULTS["singlePlayer"]
 STATE_TURN = STATES_DEFAULTS["turn"]
 STATE_COMPETITION_RESULT = STATES_DEFAULTS["competitionResult"]
 STATE_LEVEL_SELECT = STATES_DEFAULTS["levelSelect"]

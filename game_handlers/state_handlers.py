@@ -63,12 +63,10 @@ class MenuStateHandler(StateHandler):
             return True
         elif event.key == pygame.K_SPACE or event.key == pygame.K_RETURN:
             selected_option = game.main_menu.get_selected_option()
-            if selected_option == "START GAME":
-                game.begin_play(game.first_level())
-            elif selected_option == "LEVELS":
-                game.new_race()
-                game.level_select_menu.refresh()
-                game.state = config.STATE_LEVEL_SELECT
+            if selected_option == "SINGLE PLAYER":
+                game.open_single_player()
+            elif selected_option == "MULTIPLAYER":
+                game.open_multiplayer()
             elif selected_option == "HOW TO PLAY":
                 game.how_to_play_menu.refresh(False)
                 game.state = config.STATE_HOW_TO_PLAY
@@ -81,8 +79,6 @@ class MenuStateHandler(StateHandler):
             elif selected_option == "SELECT PROFILE":
                 game.profile_selection_menu.refresh_profiles()
                 game.state = config.STATE_PROFILE_SELECTION
-            elif selected_option == "MULTIPLAYER":
-                game.state = config.STATE_MULTIPLAYER
             elif selected_option == "SETTINGS":
                 game.state = config.STATE_SETTINGS
             elif selected_option == "QUIT":
@@ -98,12 +94,10 @@ class MenuStateHandler(StateHandler):
         if event.type == pygame.JOYBUTTONDOWN:
             if game.input_handler.is_controller_menu_confirm_pressed(event.button):
                 selected_option = game.main_menu.get_selected_option()
-                if selected_option == "START GAME":
-                    game.begin_play(game.first_level())
-                elif selected_option == "LEVELS":
-                    game.new_race()
-                    game.level_select_menu.refresh()
-                    game.state = config.STATE_LEVEL_SELECT
+                if selected_option == "SINGLE PLAYER":
+                    game.open_single_player()
+                elif selected_option == "MULTIPLAYER":
+                    game.open_multiplayer()
                 elif selected_option == "HOW TO PLAY":
                     game.how_to_play_menu.refresh(True)
                     game.state = config.STATE_HOW_TO_PLAY
@@ -116,8 +110,6 @@ class MenuStateHandler(StateHandler):
                 elif selected_option == "SELECT PROFILE":
                     game.profile_selection_menu.refresh_profiles()
                     game.state = config.STATE_PROFILE_SELECTION
-                elif selected_option == "MULTIPLAYER":
-                    game.state = config.STATE_MULTIPLAYER
                 elif selected_option == "SETTINGS":
                     game.state = config.STATE_SETTINGS
                 elif selected_option == "QUIT":
@@ -316,7 +308,7 @@ class LevelSelectStateHandler(StateHandler):
         if event.key in (pygame.K_RETURN, pygame.K_SPACE):
             return self._play(game)
         if event.key in (pygame.K_ESCAPE, pygame.K_q):
-            game.state = config.STATE_MENU
+            game.state = config.STATE_SINGLE_PLAYER
             return True
         return False
 
@@ -325,7 +317,7 @@ class LevelSelectStateHandler(StateHandler):
             if game.input_handler.is_controller_menu_confirm_pressed(event.button):
                 return self._play(game)
             if game.input_handler.is_controller_menu_cancel_pressed(event.button):
-                game.state = config.STATE_MENU
+                game.state = config.STATE_SINGLE_PLAYER
                 return True
         now = time.monotonic()
         if now - self.last_navigation_time < 0.15:
@@ -364,7 +356,9 @@ class SettingsStateHandler(StateHandler):
             menu.navigate(-1)
         elif event.key in (pygame.K_DOWN, pygame.K_s):
             menu.navigate(1)
-        elif event.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_LEFT, pygame.K_RIGHT, pygame.K_a, pygame.K_d):
+        elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
+            getattr(menu, 'activate_selected', menu.toggle_selected)()
+        elif event.key in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_a, pygame.K_d):
             menu.toggle_selected()
         else:
             return False
@@ -379,7 +373,7 @@ class SettingsStateHandler(StateHandler):
                 game.state = config.STATE_MENU
                 return True
             if game.input_handler.is_controller_menu_confirm_pressed(event.button):
-                menu.toggle_selected()
+                getattr(menu, 'activate_selected', menu.toggle_selected)()
                 return True
         elif event.type == pygame.JOYHATMOTION:
             dx, dy = event.value
@@ -402,6 +396,16 @@ class SettingsStateHandler(StateHandler):
                 return False
             return True
         return False
+
+
+class SinglePlayerStateHandler(SettingsStateHandler):
+    """The single player screen steers exactly like the settings screen, over its own rows."""
+
+    def handle_keyboard(self, event: 'pygame.event.Event', game: 'Game') -> bool:
+        return self._steer_keyboard(event, game, game.single_player_menu)
+
+    def handle_controller(self, event: 'pygame.event.Event', game: 'Game') -> bool:
+        return self._steer_controller(event, game, game.single_player_menu)
 
 
 class MultiplayerStateHandler(SettingsStateHandler):
@@ -797,6 +801,7 @@ class StateHandlerRegistry:
             config.STATE_MENU: MenuStateHandler(),
             config.STATE_PROFILE_SELECTION: ProfileSelectionStateHandler(),
             config.STATE_SETTINGS: SettingsStateHandler(),
+            config.STATE_SINGLE_PLAYER: SinglePlayerStateHandler(),
             config.STATE_MULTIPLAYER: MultiplayerStateHandler(),
             config.STATE_TURN: TurnStateHandler(),
             config.STATE_COMPETITION_RESULT: TurnStateHandler(),

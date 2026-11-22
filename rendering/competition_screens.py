@@ -91,7 +91,11 @@ class CompetitionScreens:
     def draw_result(self, competition) -> None:
         """Both scores, who won the level, and the points so far in a campaign."""
         winner = competition.winner
-        if winner is not None:
+        if competition.over:
+            champion = competition.champion
+            title, colour = ((f"{player_name(champion)} WINS THE COMPETITION", PLAYER_COLOURS[champion])
+                             if champion is not None else ("THE COMPETITION IS A DRAW", config.COLOR_TEXT))
+        elif winner is not None:
             title, colour = f"{player_name(winner)} WINS", PLAYER_COLOURS[winner]
         else:
             title, colour = ("BOTH OUT" if competition.both_out else "A TIE"), config.COLOR_TEXT
@@ -121,7 +125,9 @@ class CompetitionScreens:
         if competition.both_out and not competition.from_levels:
             y = self._centred(self.row_font, "NOBODY SCORES - THE LEVEL IS REPLAYED", TEXT_DIM, y)
         if not competition.from_levels:
-            self._centred(self.row_font, points_line(competition.points), TEXT_DIM, y)
+            y = self._centred(self.row_font, points_line(competition.points), TEXT_DIM, y)
+            if competition.total_levels is not None and not competition.over:
+                self._centred(self.row_font, f"LEVEL {competition.levels_done} OF {competition.total_levels}", TEXT_DIM, y)
         self._finish()
 
 

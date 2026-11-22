@@ -1,10 +1,11 @@
-"""Multiplayer screen: how the game is played (alone or as a co-op pair) and who flies which ship."""
+"""The MULTIPLAYER screen, and the SINGLE PLAYER screen beside it."""
 
 from typing import Callable, Dict, List, Optional, Tuple
 
 import pygame
 
 import config
+from user_settings import COMPETITION_LENGTHS
 from rendering.fonts import get_font
 from rendering.menu_components import (
     AnimatedBackground, TEXT_DIM, TEXT_LABEL, build_menu_backdrop, build_panel, build_panel_glow, menu_scale,
@@ -12,8 +13,8 @@ from rendering.menu_components import (
 )
 
 WARNING_TEXT = (255, 190, 120)
-MODE_NAMES = {"single": "SINGLE PLAYER", "compete": "LEVEL COMPETITION", "coop": "CAMPAIGN CO-OP", "race": "CAMPAIGN RACE"}
-NEXT_MODE = {"single": "compete", "compete": "coop", "coop": "race", "race": "single"}
+MODE_NAMES = {"compete": "LEVEL COMPETITION", "coop": "CAMPAIGN CO-OP", "race": "CAMPAIGN RACE"}
+NEXT_MODE = {"compete": "coop", "coop": "race", "race": "compete"}
 PLAYER_2_NAMES = {"human": "HUMAN", "hunter": "CAMPAIGN HUNTER"}
 
 
@@ -26,34 +27,73 @@ class ChoiceRow:
         self.toggle = step
 
 
+class ActionRow(ChoiceRow):
+    """The row that begins play: a label and no value. Stepping left or right does nothing; confirming starts."""
+
+    def __init__(self, label: Callable[[], str], start: Callable[[], None]):
+        super().__init__("", lambda: "", lambda: None)
+        self.read_label = label
+        self.start = start
+
+
 class MultiplayerMenu:
-    """The choices for playing with two, over a panel saying who flies which ship with the devices at hand."""
+    """How two play: the mode, who flies Player 2, and the way on to play. A panel says who flies which ship
+    with the devices at hand."""
+
+    TITLE = "MULTIPLAYER"
+    shows_panel = True
 
     def __init__(self, screen: pygame.Surface, game):
         self.screen = screen
         self.game = game
-        self.rows: List[ChoiceRow] = [
-            ChoiceRow("MODE", lambda: MODE_NAMES[game.mode], lambda: game.set_mode(NEXT_MODE[game.mode])),
-            ChoiceRow("PLAYER 2", lambda: PLAYER_2_NAMES[game.user_settings.player2],
-                      lambda: game.set_player2('hunter' if game.user_settings.player2 == 'human' else 'human')),
-        ]
+        self.mode_row = ChoiceRow("MODE", lambda: MODE_NAMES[game.mode], lambda: game.set_mode(NEXT_MODE[game.mode]))
+        self.player_two_row = ChoiceRow(
+            "PLAYER 2", lambda: PLAYER_2_NAMES[game.user_settings.player2],
+            lambda: game.set_player2('hunter' if game.user_settings.player2 == 'human' else 'human'))
+        self.levels_row = ChoiceRow("LEVELS", lambda: str(game.user_settings.competition_levels), self._next_length)
+        self.start_row = ActionRow(lambda: "START GAME", game.start_multiplayer)
         self.selected_index = 0
         self.scale = menu_scale()
         self.menu_background = AnimatedBackground(config.SCREEN_WIDTH, config.SCREEN_HEIGHT)
         self.backdrop = build_menu_backdrop(config.SCREEN_WIDTH, config.SCREEN_HEIGHT)
-        self.title = render_title(get_font(self._scaled(96)), "MULTIPLAYER")
+        self.title = render_title(get_font(self._scaled(96)), self.TITLE)
         self.group_font = get_font(self._scaled(30), bold=True)
         self.row_font = get_font(self._scaled(32), bold=False)
-        self.hints = render_hint_row(get_font(self._scaled(28)), [("ENTER / A", "Change"), ("ESC / B", "Back")])
+        self.hints = render_hint_row(get_font(self._scaled(28)), [("ENTER / A", "Select"), ("ESC / B", "Back")])
 
     def _scaled(self, value: float) -> int:
         return max(1, int(round(value * self.scale)))
+
+    def _next_length(self) -> None:
+        settings = self.game.user_settings
+        lengths = COMPETITION_LENGTHS
+        settings.set_competition_levels(lengths[(lengths.index(settings.competition_levels) + 1) % len(lengths)])
+
+    @property
+    def rows(self) -> List[ChoiceRow]:
+        """The length is only asked about for a competition."""
+        length = [self.levels_row] if self.game.mode == 'compete' else []
+        return [self.mode_row, *length, self.player_two_row, self.start_row]
+
+    def open(self) -> None:
+        """Show the screen with the start row ready, so playing the same way again is one confirm."""
+        self.selected_index = len(self.rows) - 1
 
     def navigate(self, step: int) -> None:
         self.selected_index = (self.selected_index + step) % len(self.rows)
 
     def toggle_selected(self) -> None:
-        self.rows[self.selected_index].toggle()
+        """Step the selected choice to its next value."""
+        self.rows[self._selected()].toggle()
+
+    def activate_selected(self) -> None:
+        """Confirm: begin play on the start row, otherwise step the choice."""
+        row = self.rows[self._selected()]
+        row.start() if isinstance(row, ActionRow) else row.toggle()
+
+    def _selected(self) -> int:
+        self.selected_index = min(self.selected_index, len(self.rows) - 1)   # the player 2 row may have gone
+        return self.selected_index
 
     def devices(self) -> Tuple[List[Tuple[str, str]], Optional[str]]:
         """Who flies which ship in the chosen mode, as (player, device) lines, and a warning when it cannot be played."""
@@ -86,12 +126,18 @@ class MultiplayerMenu:
         panel_top = rows[-1].bottom + self._scaled(48)
         panel = pygame.Rect(left, panel_top, width,
                             self._scaled(96) + len(lines) * self._scaled(62) + (self._scaled(60) if warning else 0))
+        if not self.shows_panel:
+            panel = None
         hints = self.hints.get_rect(midbottom=(center_x, config.SCREEN_HEIGHT - self._scaled(56)))
         return {'title': title, 'rows': rows, 'panel': panel, 'hints': hints}
 
     def _render_row(self, size: Tuple[int, int], row: ChoiceRow) -> pygame.Surface:
         panel = build_panel(size, radius=self._scaled(22)).copy()
         pad = self._scaled(36)
+        if isinstance(row, ActionRow):
+            label = self.row_font.render(row.read_label(), True, config.COLOR_TEXT)
+            panel.blit(label, label.get_rect(center=(size[0] // 2, size[1] // 2)))
+            return panel
         label = self.row_font.render(row.label, True, TEXT_DIM)
         panel.blit(label, label.get_rect(midleft=(pad, size[1] // 2)))
         value = render_pill(self.row_font, row.read(), padding=(self._scaled(18), self._scaled(6)),
@@ -133,5 +179,25 @@ class MultiplayerMenu:
                 self.screen.blit(glow, (rect.x - spread, rect.y - spread))
             self.screen.blit(self._render_row(rect.size, row), rect)
         panel = layout['panel']
-        self.screen.blit(self._render_panel(panel.size), panel)
+        if panel is not None:
+            self.screen.blit(self._render_panel(panel.size), panel)
         self.screen.blit(self.hints, layout['hints'])
+
+
+class SinglePlayerMenu(MultiplayerMenu):
+    """The SINGLE PLAYER screen: start where the profile left off, or choose a level."""
+
+    TITLE = "SINGLE PLAYER"
+    shows_panel = False
+
+    def __init__(self, screen: pygame.Surface, game):
+        super().__init__(screen, game)
+        self._rows: List[ChoiceRow] = [ActionRow(lambda: "START GAME", game.start_single_player),
+                                       ActionRow(lambda: "LEVELS", game.open_levels)]
+
+    @property
+    def rows(self) -> List[ChoiceRow]:
+        return self._rows
+
+    def open(self) -> None:
+        self.selected_index = 0

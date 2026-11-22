@@ -43,7 +43,7 @@ from rendering.main_menu import MainMenu
 from rendering.level_complete_menu import LevelCompleteMenu
 from rendering.profile_selection_menu import ProfileSelectionMenu
 from rendering.settings_menu import SettingsMenu
-from rendering.multiplayer_menu import MultiplayerMenu
+from rendering.multiplayer_menu import MultiplayerMenu, SinglePlayerMenu
 from rendering.competition_screens import CompetitionScreens
 from game_handlers.competition import Competition
 from rendering.level_select_menu import LevelSelectMenu
@@ -205,9 +205,9 @@ class Game:
         self.profile_manager = ProfileManager()
         self.user_settings = UserSettings()
         self.players: List[Player] = [Player()]   # always at least one; players[0] is `ship`, `scoring`, `ship_pilot`
-        self.coop = self.user_settings.multiplayer_mode in ('coop', 'race')   # two ships fly each level together
-        self.race = self.user_settings.multiplayer_mode == 'race'   # ... racing to the portal rather than as a team
-        self.compete = self.user_settings.multiplayer_mode == 'compete'   # one ship at a time, the players in turn
+        self.coop = False       # two ships fly each level together (MULTIPLAYER)
+        self.race = False       # ... racing to the portal rather than as a team
+        self.compete = False    # one ship at a time, the players in turn
         self.race_points = [0, 0]      # levels won so far by Player 1 and Player 2
         self.race_summary: Optional[list] = None   # the level-complete figures in a race: (label, value) rows
         self.maze: Optional[Maze] = None
@@ -313,6 +313,7 @@ class Game:
         self.main_menu = MainMenu(screen)
         self.settings_menu = SettingsMenu(screen, self.user_settings)
         self.multiplayer_menu = MultiplayerMenu(screen, self)
+        self.single_player_menu = SinglePlayerMenu(screen, self)
         self.competition_screens = CompetitionScreens(screen)
         self.level_select_menu = LevelSelectMenu(screen, self.profile_manager)
         self.fun_menu = FunMenu(screen)
@@ -438,6 +439,34 @@ class Game:
     def set_coop(self, coop: bool) -> None:
         self.set_mode('coop' if coop else 'single')
 
+    def open_single_player(self) -> None:
+        """SINGLE PLAYER: one ship, whatever MULTIPLAYER was last set to."""
+        self.set_mode('single')
+        self.single_player_menu.open()
+        self.state = config.STATE_SINGLE_PLAYER
+
+    def start_single_player(self) -> None:
+        """START GAME on the single player screen: the profile's level."""
+        self.begin_play(self.first_level())
+
+    def open_levels(self) -> None:
+        """LEVELS on the single player screen: the level list."""
+        self.new_race()
+        self.level_select_menu.refresh()
+        self.state = config.STATE_LEVEL_SELECT
+
+    def open_multiplayer(self) -> None:
+        """MULTIPLAYER: the mode it was last left in."""
+        self.set_mode(self.user_settings.multiplayer_mode)
+        self.multiplayer_menu.open()
+        self.state = config.STATE_MULTIPLAYER
+
+    def start_multiplayer(self) -> None:
+        """START GAME on the multiplayer screen: level one in the chosen mode, unless a second ship has nobody to fly it."""
+        if self.coop and not self._player_two_can_fly():
+            return                  # the screen says a controller is needed
+        self.begin_play(self.first_level())
+
     def begin_play(self, level: int, from_levels: bool = False) -> None:
         """START GAME (level 1 in a multiplayer mode) or a level picked from LEVELS: play it in the chosen mode."""
         if self.coop and not self._player_two_can_fly():
@@ -446,7 +475,7 @@ class Game:
         self.new_race()
         self.competition = None
         if self.compete:
-            self.competition = Competition(level, from_levels)
+            self.competition = Competition(level, from_levels, total_levels=self.user_settings.competition_levels)
             self._show_turn()
             return
         self.level = level
@@ -490,7 +519,13 @@ class Game:
         """From the results: back to the level list, or on to the next round of a campaign."""
         following = self.competition.next_round()
         if following is None:
+            campaign_over = self.competition.over
             self.competition = None
+            if campaign_over:           # the competition is decided: back to the main menu
+                self.players[0].driver = None
+                self.state = config.STATE_MENU
+                self.reset_scoring_to_profile_state()
+                return
             self.level_select_menu.refresh()
             self.state = config.STATE_LEVEL_SELECT
             return
@@ -1089,7 +1124,7 @@ class Game:
                     handler.handle_controller(event, self)
             elif event.type == pygame.JOYHATMOTION or event.type == pygame.JOYAXISMOTION:
                 # Handle controller hat (d-pad) and axis (stick) events for menu navigation
-                if self.state in (config.STATE_MENU, config.STATE_PROFILE_SELECTION, config.STATE_LEVEL_SELECT, config.STATE_LEVEL_COMPLETE, config.STATE_SETTINGS, config.STATE_MULTIPLAYER, config.STATE_FUN, config.STATE_HOW_TO_PLAY, config.STATE_QUIT_CONFIRM, config.STATE_EDITOR):
+                if self.state in (config.STATE_MENU, config.STATE_PROFILE_SELECTION, config.STATE_LEVEL_SELECT, config.STATE_LEVEL_COMPLETE, config.STATE_SETTINGS, config.STATE_MULTIPLAYER, config.STATE_SINGLE_PLAYER, config.STATE_FUN, config.STATE_HOW_TO_PLAY, config.STATE_QUIT_CONFIRM, config.STATE_EDITOR):
                     handler = self.state_handler_registry.get_handler(self.state)
                     handler.handle_controller(event, self)
             elif event.type == pygame.KEYDOWN:
@@ -1280,6 +1315,8 @@ class Game:
             self.settings_menu.update(dt)
         elif self.state == config.STATE_MULTIPLAYER:
             self.multiplayer_menu.update(dt)
+        elif self.state == config.STATE_SINGLE_PLAYER:
+            self.single_player_menu.update(dt)
         elif self.state in (config.STATE_TURN, config.STATE_COMPETITION_RESULT):
             self.competition_screens.update(dt)
             return
@@ -1715,6 +1752,8 @@ class Game:
             self.settings_menu.draw()
         elif self.state == config.STATE_MULTIPLAYER:
             self.multiplayer_menu.draw()
+        elif self.state == config.STATE_SINGLE_PLAYER:
+            self.single_player_menu.draw()
         elif self.state == config.STATE_TURN:
             self.competition_screens.draw_turn(self.competition)
         elif self.state == config.STATE_COMPETITION_RESULT:

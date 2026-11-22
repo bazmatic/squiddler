@@ -118,6 +118,7 @@ def test_replay_records_bests_without_changing_progress_then_continues(game):
 @pytest.mark.parametrize('start_level,replaying', [(2, True), (5, False), (7, False)])
 def test_start_level_override_records_every_clear(game, start_level, replaying):
     game.initial_start_level = start_level
+    key(game, pygame.K_RETURN)      # SINGLE PLAYER opens its screen first
     key(game, pygame.K_RETURN)
     assert game.level == start_level and game.replaying == replaying
     game.complete_level()
@@ -125,13 +126,15 @@ def test_start_level_override_records_every_clear(game, start_level, replaying):
 
 
 def test_levels_menu_opens_returns_and_starts_selected_level(game):
-    game.main_menu.menu_selected_index = game.main_menu.menu_options.index('LEVELS')
+    game.main_menu.menu_selected_index = game.main_menu.menu_options.index('SINGLE PLAYER')
+    key(game, pygame.K_RETURN)
+    key(game, pygame.K_DOWN)        # LEVELS sits under START GAME
     key(game, pygame.K_RETURN)
     assert game.state == config.STATE_LEVEL_SELECT
     assert game.level_select_menu.selected_level == 5
     key(game, pygame.K_ESCAPE)
-    assert game.state == config.STATE_MENU
-    key(game, pygame.K_RETURN)
+    assert game.state == config.STATE_SINGLE_PLAYER
+    key(game, pygame.K_RETURN)      # the selection stays on LEVELS
     key(game, pygame.K_LEFT)
     assert game.level_select_menu.selected_level == 4
     key(game, pygame.K_RETURN)
@@ -145,7 +148,7 @@ def test_the_main_menu_buttons_fit_above_badge(game):
     game.main_menu.set_profile_info('Player1', 5)
     game.main_menu.draw()
     buttons = game.main_menu.menu_buttons
-    assert len(buttons) == 8
+    assert len(buttons) == 7
     assert all(a.position[1] + a.height/2 < b.position[1] - b.height/2 for a,b in zip(buttons,buttons[1:]))
     last_bottom = buttons[-1].position[1] + buttons[-1].height / 2
     badge_top = game.screen.get_height() - game.main_menu._scaled(56) - game.main_menu.profile_badge.get_height()
@@ -162,7 +165,7 @@ def test_controller_grid_navigation_and_locked_tile(game):
     handler.handle_controller(pygame.event.Event(pygame.JOYBUTTONDOWN, button=0), game)
     assert game.state == config.STATE_LEVEL_SELECT
     handler.handle_controller(pygame.event.Event(pygame.JOYBUTTONDOWN, button=1), game)
-    assert game.state == config.STATE_MENU
+    assert game.state == config.STATE_SINGLE_PLAYER
 
 
 def test_retry_of_ordinary_clear_keeps_original_total_and_play_mode(game):

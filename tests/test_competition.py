@@ -208,7 +208,7 @@ def test_the_turn_and_result_screens_draw(compete):
 
 
 def test_the_mode_menu_offers_level_competition(compete):
-    compete.set_mode('single')
+    compete.set_mode('race')
     compete.multiplayer_menu.toggle_selected()
     assert compete.multiplayer_menu.rows[0].read() == 'LEVEL COMPETITION' and compete.mode == 'compete'
 
@@ -256,3 +256,30 @@ def test_the_profile_file_is_never_written_in_a_multiplayer_mode(make_game, monk
         game.complete_level(success=True)
         assert game.state == config.STATE_LEVEL_COMPLETE
     assert profile_bytes(make_game) == before
+
+
+def test_a_campaign_competition_ends_after_the_chosen_number_of_levels(compete, monkeypatch):
+    compete.user_settings.set_competition_levels(3)
+    compete.begin_play(1)
+    for level in range(3):
+        compete.start_turn()
+        run_out_of_power(compete, monkeypatch)          # Player 1 scores nothing
+        compete.start_turn()
+        fly_to_the_exit(compete, monkeypatch)           # Player 2 wins the level
+        assert compete.state == config.STATE_COMPETITION_RESULT
+        compete.draw()
+        compete.leave_competition_result()
+        if level < 2:
+            assert compete.state == config.STATE_TURN
+    assert compete.state == config.STATE_MENU and compete.competition is None
+
+
+def test_the_length_is_chosen_on_the_multiplayer_screen_for_a_competition_only(compete):
+    menu = compete.multiplayer_menu
+    menu.open()
+    assert menu.levels_row in menu.rows
+    first = compete.user_settings.competition_levels
+    menu.levels_row.toggle()
+    assert compete.user_settings.competition_levels != first
+    compete.set_mode('coop')
+    assert menu.levels_row not in menu.rows

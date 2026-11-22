@@ -143,10 +143,10 @@ class TestGettingIn:
         self.press(game, registry, pygame.K_RETURN)
         return game, registry
 
-    def test_entry_sits_after_levels_and_opens_the_screen(self, screen):
+    def test_entry_sits_after_multiplayer_and_opens_the_screen(self, screen):
         game, registry = self.open(screen)
         options = game.main_menu.menu_options
-        assert options[options.index("LEVELS") + 1] == "HOW TO PLAY"
+        assert options[options.index("MULTIPLAYER") + 1] == "HOW TO PLAY"
         assert game.state == config.STATE_HOW_TO_PLAY
         assert game.how_to_play_menu.page_index == 0
 
