@@ -27,6 +27,8 @@ The worm learned in a series of lessons. Each one was a little exam, set with ta
 | Reach | Hold your mouth on prey above you |
 | Feed | Land two real bites |
 | Recover | Get shoved off, find your footing, and bite again |
+| Pursue | Chase a moving target through a real cave |
+| Leap | Hurl yourself across open space to hit a floating marker |
 
 At first a scripted "teacher" worm showed it roughly how to move. Later the teacher was switched off and the worm improved by trial and error, rewarded for progress and penalised for dawdling, falling off or flailing.
 
@@ -49,8 +51,12 @@ START_LEVEL=33 ./run.sh
 
 Get near a head to make it rear and feed. Shoot or shove a worm to break its grip.
 
+## Two brains and a rule
+
+One network learning every lesson kept forgetting some of them: teaching it to leap cost it Crawl. So the game ships two brains and a plain rule that picks between them. The *walker* (`assets/neural/inchworm_walker.npz`) drives by default and is the one that crawls, turns and crosses gaps. The *leaper* (`assets/neural/inchworm_leaper.npz`) takes over when a worm has been stuck on a wall for a couple of seconds with a target in view, then hands back once it has leapt and landed. The rule lives in `learning/router.py`; on arenas neither brain trained on it keeps Crawl at 0.98 and Gap at 0.90 and catches 47% of leaps (the walker alone: 35%).
+
+`INCHWORM_POLICY=<file>` forces one brain, `INCHWORM_ROUTER=<walker>,<leaper>` picks the pair, and `INCHWORM_POLICY=` (set empty) swaps in the old scripted walk.
+
 ## Under the hood
 
-The brain is a small recurrent neural network with a short-term memory, about 23,000 numbers in `assets/neural/inchworm.npz`. It makes 10 decisions a second, from its own joint angles, grips, wall feelers and whatever it can see. `INCHWORM_POLICY=` (set empty) swaps in the old scripted walk.
-
-For the engineering detail, see [how the body works](notes/inchworm-body.md). The lessons and rewards are defined in `learning/adapters/inchworm_scenario.py` and `learning/inchworm_rewards.py`.
+Each brain is a small recurrent neural network with a short-term memory, about 85,000 numbers (the old single brain in `assets/neural/inchworm.npz` had 23,000). It makes 10 decisions a second, from its own joint angles, grips, wall feelers and whatever it can see. For the engineering detail, see [how the body works](notes/inchworm-body.md). The lessons and rewards are defined in `learning/adapters/inchworm_scenario.py` and `learning/inchworm_rewards.py`.
