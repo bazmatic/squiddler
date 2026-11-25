@@ -60,7 +60,7 @@ class RoutedPolicy:
             s.airborne = 0 if planted else s.airborne+1
             s.flew = s.flew or s.airborne >= self.min_flight
             if s.held > self.hold_decisions or (s.flew and planted):
-                s.driver, s.cooldown = 'walker', self.cooldown_decisions
+                s.driver, s.cooldown, s.distances = 'walker', self.cooldown_decisions, []      # not bored any more
                 return 'walker'
             return 'leaper'
         def stalled(decisions):

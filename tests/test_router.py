@@ -73,6 +73,13 @@ def test_it_hands_back_after_the_hold_even_if_the_worm_never_lands():
     assert out[:30] == ['leaper']*30 and out[30:] == ['walker']*4
 
 
+def test_after_a_leap_the_worm_starts_boredom_afresh():
+    still, air = senses(1.,1.,120.), senses(0.,0.,120.)
+    router = RoutedPolicy(Stub('walker'),Stub('leaper'),bored_decisions=5,reach_stall=100,min_flight=1,cooldown_decisions=0)
+    out,_ = run(router,[still]*5+[air,air,still]+[still]*5)
+    assert out == ['walker']*4+['leaper']+['leaper','leaper']+['walker']+['walker']*4+['leaper']
+
+
 def test_it_does_not_hand_over_again_during_the_cooldown():
     steps = [senses(0.,1.,120.)]*2+[senses(1.,1.,120.)]*5
     out,_ = run(RoutedPolicy(Stub('walker'),Stub('leaper'),hold_decisions=2,cooldown_decisions=4,reach_stall=1),steps)
