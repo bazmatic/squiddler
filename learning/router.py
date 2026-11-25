@@ -20,20 +20,22 @@ class RouterState:
     handovers: int = 0
     held: int = 0                 # decisions the leaper has had this hand-over
     flew: bool = False            # the worm has been in the air since this hand-over
+    airborne: int = 0             # consecutive decisions with both feet off the wall
     cooldown: int = 0
     distances: list = field(default_factory=list)      # the goal's distance over the last decisions with it in sight, gripping or not
 
 
 class RoutedPolicy:
     def __init__(self, walker, leaper, reach_min=80., reach_max=200., bored_decisions=50, bored_progress=20.,
-                 hold_decisions=30, cooldown_decisions=20, reach_stall=20):
-        if walker.spec.features != leaper.spec.features or walker.spec.heads != leaper.spec.heads:
+                 hold_decisions=30, cooldown_decisions=20, reach_stall=20, min_flight=5):
+        if walker.spec != leaper.spec:
             raise ValueError('router specialists must share one observation and action layout')
         self.walker, self.leaper = walker, leaper
         self.spec, self.mean, self.scale = walker.spec, walker.mean, walker.scale
         self.reach_min, self.reach_max = reach_min, reach_max
         self.bored_decisions, self.bored_progress = bored_decisions, bored_progress
         self.hold_decisions, self.cooldown_decisions, self.reach_stall = hold_decisions, cooldown_decisions, reach_stall
+        self.min_flight = min_flight       # decisions off the wall that make a flight rather than a hop
 
     def initial_state(self):
         return RouterState(self.walker.initial_state(),self.leaper.initial_state())
@@ -48,15 +50,15 @@ class RoutedPolicy:
     def _driver(self, senses, s):
         """Update the rule's counters for this decision and settle who drives it."""
         planted = any(senses[i] > .5 for i in GRIPS)
-        seen = senses[GOAL_PRESENT] > .5
-        distance = SIGHT*math.hypot(senses[GOAL_FORWARD],senses[GOAL_SIDE]) if seen else None
+        distance = SIGHT*math.hypot(senses[GOAL_FORWARD],senses[GOAL_SIDE])
+        seen = senses[GOAL_PRESENT] > .5 and distance <= SIGHT       # what the game senses: a goal the worm can see
         s.distances = (s.distances+[distance])[-self.bored_decisions:] if seen else []
-        blocked = s.cooldown > 0
         s.cooldown = max(0,s.cooldown-1)
-        blocked = blocked and s.cooldown > 0
+        blocked = s.cooldown > 0
         if s.driver == 'leaper':
             s.held += 1
-            s.flew = s.flew or not planted
+            s.airborne = 0 if planted else s.airborne+1
+            s.flew = s.flew or s.airborne >= self.min_flight
             if s.held > self.hold_decisions or (s.flew and planted):
                 s.driver, s.cooldown = 'walker', self.cooldown_decisions
                 return 'walker'
@@ -66,7 +68,7 @@ class RoutedPolicy:
             return len(recent) >= decisions and recent[0]-min(recent) < self.bored_progress
         in_reach = self.reach_min <= distance <= self.reach_max if seen else False
         if planted and seen and not blocked and ((in_reach and stalled(self.reach_stall)) or stalled(self.bored_decisions)):
-            s.driver, s.handovers, s.held, s.flew = 'leaper', s.handovers+1, 1, False
+            s.driver, s.handovers, s.held, s.flew, s.airborne = 'leaper', s.handovers+1, 1, False, 0
             s.distances = []
             return 'leaper'
         return 'walker'

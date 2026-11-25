@@ -56,8 +56,16 @@ def test_it_hands_to_the_leaper_when_planted_and_the_goal_is_in_leaping_reach():
 
 def test_it_stays_with_the_leaper_until_the_worm_has_flown_and_landed():
     air,planted = senses(0.,0.,120.),senses(1.,1.,120.)
-    out,_ = run(RoutedPolicy(Stub('walker'),Stub('leaper'),cooldown_decisions=100,reach_stall=1),[planted,air,air,planted,planted])
+    out,_ = run(RoutedPolicy(Stub('walker'),Stub('leaper'),cooldown_decisions=100,reach_stall=1,min_flight=1),[planted,air,air,planted,planted])
     assert out == ['leaper','leaper','leaper','walker','walker']
+
+
+def test_a_brief_hop_is_not_a_flight_so_the_leaper_keeps_the_worm_until_it_really_lands():
+    air,planted = senses(0.,0.,120.),senses(1.,1.,120.)
+    router = lambda: RoutedPolicy(Stub('walker'),Stub('leaper'),cooldown_decisions=100,reach_stall=1,min_flight=3)
+    hop,_ = run(router(),[planted,air,planted,planted])                       # one decision off the wall: still the leaper's
+    flight,_ = run(router(),[planted,air,air,air,planted,planted])           # three decisions off the wall, then down
+    assert hop == ['leaper']*4 and flight == ['leaper']*4+['walker']*2
 
 
 def test_it_hands_back_after_the_hold_even_if_the_worm_never_lands():
@@ -107,6 +115,11 @@ def test_both_grips_free_never_starts_a_handover():
     assert set(out) == {'walker'}
 
 
+def test_a_goal_beyond_sight_is_not_seen():
+    out,_ = run(RoutedPolicy(Stub('walker'),Stub('leaper'),reach_min=1.,reach_max=900.,reach_stall=1,bored_decisions=5),[senses(1.,1.,400.)]*30)
+    assert set(out) == {'walker'}
+
+
 def test_no_goal_never_hands_over_or_gets_bored():
     out,_ = run(RoutedPolicy(Stub('walker'),Stub('leaper')),[senses(1.,1.,None)]*80)
     assert set(out) == {'walker'}
@@ -127,8 +140,9 @@ def test_mismatched_specialists_are_rejected():
 def test_a_new_initial_state_forgets_the_counters():
     router = RoutedPolicy(Stub('walker'),Stub('leaper'),bored_decisions=5)
     _,state = run(router,[senses(1.,1.,250.)]*8)
-    assert state.handovers == 1
-    assert router.initial_state().handovers == 0 and router.initial_state().driver == 'walker'
+    assert state.handovers == 1 and state.walker == 8 and state.leaper == 8
+    fresh = router.initial_state()
+    assert fresh.handovers == 0 and fresh.driver == 'walker' and fresh.walker == fresh.leaper == 0
 
 
 def test_the_router_is_deterministic_for_a_seed():

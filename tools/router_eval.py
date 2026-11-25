@@ -10,6 +10,13 @@ LESSONS = {'crawl':1,'about_face':8,'gap':9,'leap':11}
 SEED_BASES = {'train':6000,'heldout':90000}      # tune on 'train'; look at 'heldout' once, at the end
 
 
+def trial_level(kind, k):
+    """The arena of trial k: the heldout trials use arenas neither specialist trained on."""
+    from learning.adapters import inchworm_scenario as scenario
+    levels = scenario.HOLDOUT_LEVELS if kind == 'heldout' else scenario.TRAIN_LEVELS
+    return levels[k%len(levels)]
+
+
 def trial_seeds(lesson, count, kind):
     return [SEED_BASES[kind]+LESSONS[lesson]*1000+k for k in range(count)]
 
@@ -19,7 +26,7 @@ def _run(policy, lesson, count, kind):
     from learning.training import collect
     env = scenario.environment(horizon=40.)
     try:
-        return [collect(env,policy,seed,dict(level=k%4,stage=LESSONS[lesson]))[1]['success']
+        return [collect(env,policy,seed,dict(level=trial_level(kind,k),stage=LESSONS[lesson]))[1]['success']
                 for k,seed in enumerate(trial_seeds(lesson,count,kind))]
     finally:
         env.close()
