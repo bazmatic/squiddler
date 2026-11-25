@@ -87,12 +87,12 @@ _SEA_SNAKE = dict(horizon=20., workers=4, iterations=2000, episodes=24, bootstra
 
 TASKS = {
     'inchworm': Task('inchworm', 'learning.adapters.inchworm_scenario', 'Inchworm', _INCHWORM,
-        ('budget_seconds','bootstrap_episodes','bootstrap_epochs','seed'),
+        ('budget_seconds','bootstrap_episodes','bootstrap_epochs','seed','expert_share','expert_anneal'),
         'learning.replay', 'learning.adapters.inchworm_replay', 'learning.adapters.inchworm_dashboard',
         rewards='learning.inchworm_rewards', cli_defaults=_INCHWORM),
     # Open arena, then a moving target, then walls in the way; it must reach the target and wriggle like a snake to ship.
     'sea_snake': Task('sea_snake', 'learning.adapters.sea_snake_scenario', 'Sea snake', _SEA_SNAKE,
-        ('budget_seconds','bootstrap_episodes','bootstrap_epochs','seed'),
+        ('budget_seconds','bootstrap_episodes','bootstrap_epochs','seed','expert_share','expert_anneal'),
         'learning.replay', 'learning.adapters.sea_snake_replay', 'learning.adapters.sea_snake_dashboard',
         rewards='learning.sea_snake_rewards', cli_defaults=_SEA_SNAKE),
     # Flocker training starts without imitation.
@@ -116,7 +116,7 @@ TASKS = {
     'jelly_team': Task('jelly_team', 'learning.adapters.jelly_scenario', 'Jelly team',
         dict(horizon=60.0, workers=4, iterations=10000, bootstrap_episodes=0,
              jelly_boredom_penalty=.02, jelly_no_catch_timeout=25.),
-        ('budget_seconds','bootstrap_episodes','bootstrap_epochs','seed'), 'learning.replay',
+        ('budget_seconds','bootstrap_episodes','bootstrap_epochs','seed','expert_share','expert_anneal'), 'learning.replay',
         'learning.adapters.jelly_replay', 'learning.adapters.jelly_dashboard',
         Capabilities(fresh_weights=True, actor_damping=False, replay_mode='hooks', settings_scope='listed'),
         rewards='learning.jelly_rewards', cli_defaults=dict(horizon=60.)),

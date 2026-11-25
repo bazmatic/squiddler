@@ -52,7 +52,7 @@ def test_a_tasks_own_options_live_with_it():
     for module, dests in ((hunter, {'fixed_start', 'health', 'decoy_player', 'after_clear', 'panic_score',
                                     'panic_temperature'}),
                           (scenario_trainer, {'opponent', 'budget_seconds', 'bootstrap_episodes', 'bootstrap_epochs',
-                                              'seed'})):
+                                              'seed', 'expert_share', 'expert_anneal'})):
         parser = ArgumentParser()
         module.add_arguments(parser)
         assert {a.dest for a in parser._actions} - {'help'} == dests

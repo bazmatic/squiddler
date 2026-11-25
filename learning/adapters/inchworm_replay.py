@@ -14,7 +14,7 @@ def episode(job):
     return dict(level=job['level'],seed=job['seed'],lesson=STAGES[job['stage']-1].capitalize())
 
 
-LESSONS = ('Crawl','Rear','Curl','Turn','About-face','Gap','Reach','Feed','Recover')           # demo-video order (the curriculum's)
+LESSONS = ('Crawl','Rear','Curl','Turn','About-face','Gap','Reach','Feed','Recover','Leap','Pursue')           # demo-video order (the curriculum's)
 CLIP_SECONDS = {'Crawl':(8.,25.),'Recover':(6.,40.),'Rear':(1.5,20.)}      # readable clip lengths; others use the default
 
 
@@ -27,6 +27,8 @@ def focus(env):
     start, goal = env.worm.get_pos(), env.world.worm_goal
     if goal is None and env.prey is not None:
         goal = env.prey.get_pos()
+    if goal is None and env.pursuit_target is not None:
+        goal = env.pursuit_target.get_pos()
     if goal is None:
         return start[0],start[1],420.
     return (start[0]+goal[0])/2,(start[1]+goal[1])/2,max(300.,math.dist(start,goal)*1.35+120)
@@ -49,6 +51,8 @@ def draw(env,screen):
         pygame.draw.circle(screen,(100,200,240),goal,12 if env.stage in (6,7) else 14 if env.stage == 8 else 10,2)
     if env.stage == 7 and env.curl_anchor is not None:
         pygame.draw.circle(screen,(230,180,80),env.curl_anchor.foot,4,2)
+    if env.pursuit_target is not None:
+        env.pursuit_target.draw(screen)
     env.world.roster.draw(screen)
 
 

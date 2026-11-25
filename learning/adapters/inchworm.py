@@ -25,6 +25,7 @@ FEATURES += tuple(f'{end}_ray{i}' for end in ('rear','front') for i in range(8))
 FEATURES += tuple(f'{end}_{name}' for end in ('rear','front') for name in ('surface_distance','normal_forward','normal_side'))
 FEATURES += ('target_present','target_forward','target_side','target_vforward','target_vside','target_radius',
              'goal_present','goal_forward','goal_side')
+FEATURES += ('aim_cos','aim_sin','aim_speed')    # where the body's motion points relative to the goal, and how fast it moves
 SPEC = PolicySpec('inchworm', FEATURES, HEADS, version=1, continuous=MOTOR_NAMES)
 CRITIC_SIZE = len(FEATURES)  # No hidden world state is needed for these single-agent drills.
 
@@ -96,6 +97,13 @@ def observe(c, enc):
     if goal is None and target is not None:
         goal = target.get_pos()
     x += [1., *local(goal[0]-c.x,goal[1]-c.y,SIGHT)] if goal is not None else [0.]*3
+    vx, vy = p.velocity
+    speed = math.hypot(vx,vy)
+    if goal is None or speed < 1e-6:
+        x += [0.]*3
+    else:        # the angle between the centre's velocity and the goal: a whip lets go when it is near zero
+        off = math.atan2(goal[1]-p.centre[1],goal[0]-p.centre[0])-math.atan2(vy,vx)
+        x += [math.cos(off), side*math.sin(off), speed]
     masks = {name:np.ones(size,bool) for name,size in HEADS}
     if target is None:
         masks['bite'][1] = False
@@ -124,14 +132,32 @@ def enabled(x, action, masks):
     return [bool(masks[n].any()) if n in MOTOR_NAMES else bool(masks[n].sum()>1) for n,_ in HEADS]
 
 
-def load_policy(path):
+def load_transfer_policy(path):
+    """A checkpoint of an older observation layout, carried over: the features it already had keep their weights and
+    normalisation, and each new feature starts with zero weights, so the migrated worm acts exactly as the old one did
+    until training finds a use for the new inputs."""
     try:
-        policy = RecurrentPolicy.load(path, SPEC)
-        if not np.isfinite(policy.mean).all() or not np.isfinite(policy.scale).all():
-            raise ValueError('nonfinite inchworm normalization')
-        return policy
+        old = RecurrentPolicy.load(path)
     except zipfile.BadZipFile as exc:
         raise ValueError(f'damaged inchworm checkpoint: {exc}') from exc
+    if old.spec == SPEC:
+        return old
+    if old.spec.task != SPEC.task or old.spec.heads != SPEC.heads or old.spec.continuous != SPEC.continuous:
+        raise ValueError('checkpoint task or observation/action schema does not match')
+    where = {name: i for i, name in enumerate(old.spec.features)}
+    embed = np.zeros((old.params['embed_w'].shape[0], len(FEATURES)), np.float32)
+    mean, scale = np.zeros(len(FEATURES), np.float32), np.ones(len(FEATURES), np.float32)
+    for i, name in enumerate(FEATURES):
+        if name in where:
+            embed[:, i], mean[i], scale[i] = old.params['embed_w'][:, where[name]], old.mean[where[name]], old.scale[where[name]]
+    return RecurrentPolicy(dict(old.params, embed_w=embed), mean, scale, SPEC)
+
+
+def load_policy(path):
+    policy = load_transfer_policy(path)
+    if not np.isfinite(policy.mean).all() or not np.isfinite(policy.scale).all():
+        raise ValueError('nonfinite inchworm normalization')
+    return policy
 
 
 class InchwormDriver:

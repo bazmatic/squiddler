@@ -161,6 +161,7 @@ def update_team(net, optimiser, episodes, rng, epochs=3, gamma=0.99, lam=0.95, c
     actions = torch.zeros(b, length, h, dtype=torch.float32)
     valid = torch.zeros(b, length, dtype=torch.bool)
     alive, done = valid.clone(), valid.clone()
+    driven = valid.clone()       # scheduled sampling: steps the expert took; imitated and valued, not policy-gradient
     rewards = torch.zeros(b, length)
     enabled = torch.zeros(b, length, h)
     legal = {k: torch.ones(b, length, head.out_features, dtype=torch.bool) for k, head in net.heads.items()}
@@ -183,6 +184,8 @@ def update_team(net, optimiser, episodes, rng, epochs=3, gamma=0.99, lam=0.95, c
         critic[i, :n] = torch.as_tensor(np.asarray(e['critic']))
         actions[i, :n] = torch.as_tensor(np.asarray(e['actions']))
         alive[i, :n] = torch.as_tensor(e['alive'])
+        if e.get('driven'):
+            driven[i, :n] = torch.as_tensor(e['driven'])
         rewards[i, :n] = torch.as_tensor(e['rewards'])
         enabled[i, :n] = torch.as_tensor(np.asarray(e['enabled']))
         done[i, n-1] = e['terminated']
@@ -195,10 +198,14 @@ def update_team(net, optimiser, episodes, rng, epochs=3, gamma=0.99, lam=0.95, c
         logits, values = net(x, critic)
         old_logp, _ = masked_statistics(logits, actions, legal, enabled, getattr(net,'continuous',()))
         advantages, returns = bootstrapped_gae(rewards, values, valid, done, bootstrap, gamma, lam)
-        chosen = advantages[alive]
-        if not chosen.numel():
+        acting = alive & ~driven
+        chosen = advantages[acting]
+        if not alive.any():
             return {'policy_loss': 0., 'value_loss': 0., 'entropy': 0.}
-        advantages = (advantages-chosen.mean())/chosen.std(unbiased=False).clamp_min(1e-6)
+        if chosen.numel():
+            advantages = (advantages-chosen.mean())/chosen.std(unbiased=False).clamp_min(1e-6)
+        else:                                  # an all-expert batch: nothing for the policy gradient, still imitation and value
+            advantages = torch.zeros_like(advantages)
     stats = {}
     for _ in range(epochs):
         for chunk in np.array_split(rng.permutation(b), min(4, b)):
@@ -207,12 +214,16 @@ def update_team(net, optimiser, episodes, rng, epochs=3, gamma=0.99, lam=0.95, c
             logp, entropy = masked_statistics(logits, actions[i], {k:v[i] for k,v in legal.items()}, enabled[i], getattr(net,'continuous',()))
             ratio = (logp-old_logp[i]).clamp(-20, 20).exp()
             surrogate = torch.minimum(ratio*advantages[i], ratio.clamp(1-clip, 1+clip)*advantages[i])
-            mask = alive[i]
+            mask = alive[i]                     # every step the creature lived: imitation applies to all of them
             if not mask.any():
                 continue
-            policy_loss = -surrogate[mask].mean()
+            acting = mask & ~driven[i]         # the steps the policy itself chose: the only ones PPO may score
+            if acting.any():
+                policy_loss = -surrogate[acting].mean()
+                ent = entropy[acting].mean()
+            else:
+                policy_loss, ent = surrogate.sum()*0, entropy.sum()*0
             value_loss = (values-returns[i]).square()[valid[i]].mean()
-            ent = entropy[mask].mean()
             imitation = imitation_loss(net,rng) if imitation_loss is not None else policy_loss*0
             teacher_loss = policy_loss*0
             if teacher_weight and (labelled[i] & mask[..., None]).any():

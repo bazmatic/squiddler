@@ -37,8 +37,14 @@ def rollout_job(job):
         job['mode'] == 'sample' and getattr(env, 'teacher_weight', 0)) else None
     try:
         with collecting() as stats:
+            mix = job.get('mix', 0.) if job['mode'] == 'sample' else 0.
             episodes, events, actions = collect(env, policy, seed, case, greedy=job['mode'] != 'sample', teacher=teacher,
-                                                labeller=labeller)
+                                                labeller=labeller, mix=mix,
+                                                expert=getattr(env.adapter, 'expert_action', env.adapter.teacher_action),
+                                                handover=getattr(env.adapter, 'handover', None),
+                                                leads=getattr(env.adapter, 'expert_leads', None),
+                                                assist=getattr(env.adapter, 'expert_assist', None))
+            events = dict(events, expert_led=float(any(any(e.get('driven', ())) for e in episodes)))
         return episodes, (dict(events, stats=dict(stats)) if stats else events), actions   # see learning.episode_stats
     finally:
         env.close()
@@ -66,9 +72,17 @@ class Rollouts:
             self.pool.terminate(); self.pool.join()
 
 
-def make_jobs(args, weights, cases, mode='sample', muted=False):
+def expert_share(args, iteration):
+    """The share of this iteration's training episodes the expert leads: `--expert-share`, falling linearly to zero
+    over `--expert-anneal` iterations (0: constant)."""
+    share = max(0., min(1., getattr(args, 'expert_share', 0.)))
+    anneal = getattr(args, 'expert_anneal', 0)
+    return share*max(0., 1-iteration/anneal) if anneal > 0 else share
+
+
+def make_jobs(args, weights, cases, mode='sample', muted=False, mix=0.):
     return [dict(task=args.task,weights=str(weights),opponent=args.opponent,horizon=args.horizon,
-                 case=case,mode=mode,muted=muted) for case in cases]
+                 case=case,mode=mode,muted=muted,mix=mix) for case in cases]
 
 
 def evaluate(pool, args, weights, cases, mode=None, muted=False):
@@ -90,6 +104,11 @@ def add_arguments(parser):
     parser.add_argument('--bootstrap-epochs', type=int, default=0,
                         help='passes over teacher demonstrations; 0 uses the task default')
     parser.add_argument('--seed', type=int, default=0, help='team model and training seed')
+    parser.add_argument('--expert-share', type=float, default=0.,
+                        help='scheduled sampling: the share of training episodes the scripted expert leads (to its '
+                             'handover, if the task has one), so the policy meets states it would not reach itself; 0: none')
+    parser.add_argument('--expert-anneal', type=int, default=0,
+                        help='iterations over which the expert share falls linearly to zero; 0 keeps it constant')
 
 
 def train_task(args):
@@ -150,6 +169,8 @@ def train(args):
                       else RecurrentPolicy.load(args.start, adapter.SPEC))
         else:
             policy = random_policy(adapter.SPEC, args.seed)
+        if hasattr(adapter,'widen_policy'):
+            policy = adapter.widen_policy(policy,args)
         actor_scale=getattr(args,'actor_scale',1.)
         if actor_scale!=1.:
             from learning.initialization import dampen_actor
@@ -263,7 +284,7 @@ def train(args):
                 break
             weights = out/current
             cases = adapter.training_cases(iteration,args.episodes,team_size,**case_options())
-            jobs = make_jobs(args,weights,cases)
+            jobs = make_jobs(args,weights,cases,mix=expert_share(args,iteration))
             rollout_at = time.monotonic()
             flown = pool(jobs)
             rollout_seconds = time.monotonic()-rollout_at
@@ -276,6 +297,10 @@ def train(args):
             policy.save(out/current)
             rows = [dict(result[1], **case) for result,case in zip(flown,cases)]
             summary = {**recorded_means(r.get('stats') for r in rows), **adapter.metrics(rows)}
+            for lesson in sorted({r['stage'] for r in rows if 'stage' in r}):      # success of each lesson alone, on the policy's own episodes
+                own = [r['success'] for r in rows if r.get('stage') == lesson and 'success' in r and not r.get('expert_led')]
+                if own:
+                    summary[f'stage_{lesson}_success'] = float(np.mean(own))
             record = dict(iteration=iteration, policy=previous, task=args.task,
                           jobs=cases,
                           episodes=rows, actions=[result[2] for result in flown])
