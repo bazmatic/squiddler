@@ -40,10 +40,10 @@ class _Watched:
         return router
 
 
-def handover_rate(router, count, kind):
-    """The fraction of Leap trials in which the router handed over to the leaper at least once."""
+def handover_rate(router, count, kind, lesson='leap'):
+    """The fraction of trials of a lesson (Leap by default) in which the router handed over to the leaper at least once."""
     _Watched(router)
-    _run(router,'leap',count,kind)
+    _run(router,lesson,count,kind)
     return sum(s.handovers > 0 for s in router.states)/max(1,len(router.states))
 
 

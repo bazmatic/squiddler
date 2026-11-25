@@ -4,7 +4,7 @@
 `InchwormDriver`). Both specialists see every observation and keep their own memory in step with the world; the rule
 only chooses whose action is used. It reads nothing but the observation vector, so it behaves the same in the game."""
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from learning.adapters.inchworm import FEATURES, SIGHT
 
@@ -21,21 +21,19 @@ class RouterState:
     held: int = 0                 # decisions the leaper has had this hand-over
     flew: bool = False            # the worm has been in the air since this hand-over
     cooldown: int = 0
-    planted_run: int = 0          # consecutive decisions gripping with a goal in sight
-    run_start: float = 0.         # the goal's distance when that run began
-    run_best: float = 0.          # and the nearest it has been since
+    distances: list = field(default_factory=list)      # the goal's distance over the last decisions with it in sight, gripping or not
 
 
 class RoutedPolicy:
     def __init__(self, walker, leaper, reach_min=80., reach_max=200., bored_decisions=50, bored_progress=20.,
-                 hold_decisions=30, cooldown_decisions=20):
+                 hold_decisions=30, cooldown_decisions=20, reach_stall=20):
         if walker.spec.features != leaper.spec.features or walker.spec.heads != leaper.spec.heads:
             raise ValueError('router specialists must share one observation and action layout')
         self.walker, self.leaper = walker, leaper
         self.spec, self.mean, self.scale = walker.spec, walker.mean, walker.scale
         self.reach_min, self.reach_max = reach_min, reach_max
         self.bored_decisions, self.bored_progress = bored_decisions, bored_progress
-        self.hold_decisions, self.cooldown_decisions = hold_decisions, cooldown_decisions
+        self.hold_decisions, self.cooldown_decisions, self.reach_stall = hold_decisions, cooldown_decisions, reach_stall
 
     def initial_state(self):
         return RouterState(self.walker.initial_state(),self.leaper.initial_state())
@@ -52,13 +50,7 @@ class RoutedPolicy:
         planted = any(senses[i] > .5 for i in GRIPS)
         seen = senses[GOAL_PRESENT] > .5
         distance = SIGHT*math.hypot(senses[GOAL_FORWARD],senses[GOAL_SIDE]) if seen else None
-        if planted and seen:
-            if s.planted_run == 0:
-                s.run_start = s.run_best = distance
-            s.planted_run += 1
-            s.run_best = min(s.run_best,distance)
-        else:
-            s.planted_run = 0
+        s.distances = (s.distances+[distance])[-self.bored_decisions:] if seen else []
         blocked = s.cooldown > 0
         s.cooldown = max(0,s.cooldown-1)
         blocked = blocked and s.cooldown > 0
@@ -69,9 +61,12 @@ class RoutedPolicy:
                 s.driver, s.cooldown = 'walker', self.cooldown_decisions
                 return 'walker'
             return 'leaper'
-        bored = s.planted_run >= self.bored_decisions and s.run_start-s.run_best < self.bored_progress
-        if planted and seen and not blocked and (self.reach_min <= distance <= self.reach_max or bored):
+        def stalled(decisions):
+            recent = s.distances[-decisions:]
+            return len(recent) >= decisions and recent[0]-min(recent) < self.bored_progress
+        in_reach = self.reach_min <= distance <= self.reach_max if seen else False
+        if planted and seen and not blocked and ((in_reach and stalled(self.reach_stall)) or stalled(self.bored_decisions)):
             s.driver, s.handovers, s.held, s.flew = 'leaper', s.handovers+1, 1, False
-            s.planted_run = 0
+            s.distances = []
             return 'leaper'
         return 'walker'

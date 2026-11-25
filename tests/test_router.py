@@ -50,25 +50,32 @@ def test_the_walker_drives_by_default():
 
 
 def test_it_hands_to_the_leaper_when_planted_and_the_goal_is_in_leaping_reach():
-    out,state = run(RoutedPolicy(Stub('walker'),Stub('leaper')),[senses(0.,1.,120.)]*3)
+    out,state = run(RoutedPolicy(Stub('walker'),Stub('leaper'),reach_stall=1),[senses(0.,1.,120.)]*3)
     assert out == ['leaper']*3 and state.handovers == 1
 
 
 def test_it_stays_with_the_leaper_until_the_worm_has_flown_and_landed():
     air,planted = senses(0.,0.,120.),senses(1.,1.,120.)
-    out,_ = run(RoutedPolicy(Stub('walker'),Stub('leaper'),cooldown_decisions=100),[planted,air,air,planted,planted])
+    out,_ = run(RoutedPolicy(Stub('walker'),Stub('leaper'),cooldown_decisions=100,reach_stall=1),[planted,air,air,planted,planted])
     assert out == ['leaper','leaper','leaper','walker','walker']
 
 
 def test_it_hands_back_after_the_hold_even_if_the_worm_never_lands():
-    out,_ = run(RoutedPolicy(Stub('walker'),Stub('leaper'),hold_decisions=30,cooldown_decisions=100),[senses(0.,1.,120.)]*34)
+    out,_ = run(RoutedPolicy(Stub('walker'),Stub('leaper'),hold_decisions=30,cooldown_decisions=100,reach_stall=1),[senses(0.,1.,120.)]*34)
     assert out[:30] == ['leaper']*30 and out[30:] == ['walker']*4
 
 
 def test_it_does_not_hand_over_again_during_the_cooldown():
     steps = [senses(0.,1.,120.)]*2+[senses(1.,1.,120.)]*5
-    out,_ = run(RoutedPolicy(Stub('walker'),Stub('leaper'),hold_decisions=2,cooldown_decisions=4),steps)
+    out,_ = run(RoutedPolicy(Stub('walker'),Stub('leaper'),hold_decisions=2,cooldown_decisions=4,reach_stall=1),steps)
     assert out == ['leaper']*2+['walker']*4+['leaper']
+
+
+def test_in_reach_the_leaper_waits_for_the_worm_to_stall_while_a_worm_that_is_closing_in_keeps_walking():
+    router = lambda: RoutedPolicy(Stub('walker'),Stub('leaper'),reach_stall=20,bored_decisions=50,bored_progress=20.)
+    closing,_ = run(router(),[senses(1.,1.,200.-2.*k) for k in range(40)])           # 2 px closer a decision: 40 px in 20
+    stalled,_ = run(router(),[senses(1.,1.,150.)]*30)
+    assert set(closing) == {'walker'} and stalled[:19] == ['walker']*19 and stalled[-1] == 'leaper'
 
 
 def test_a_worm_gripping_without_getting_closer_is_bored_and_leaps_from_any_visible_distance():
@@ -81,6 +88,18 @@ def test_a_worm_that_is_closing_in_is_not_bored():
     steps = [senses(1.,1.,290.-3.*k) for k in range(60)]        # 3 px closer every decision
     out,_ = run(RoutedPolicy(Stub('walker'),Stub('leaper'),reach_min=1.,reach_max=2.),steps)
     assert set(out) == {'walker'}
+
+
+def test_a_worm_that_closed_in_and_then_stalled_is_bored():
+    steps = [senses(1.,1.,300.-4.*k) for k in range(50)]+[senses(1.,1.,104.)]*60       # 200 px of progress, then nothing
+    out,_ = run(RoutedPolicy(Stub('walker'),Stub('leaper'),reach_max=0.,bored_decisions=50,bored_progress=20.),steps)
+    assert set(out[:50]) == {'walker'} and 'leaper' in out[50:]
+
+
+def test_a_worm_whose_grips_keep_flickering_is_still_bored_when_it_gets_nowhere():
+    steps = [senses(float(k%2),float(k%3 == 0),250.) for k in range(80)]       # in and out of contact, never closer
+    out,_ = run(RoutedPolicy(Stub('walker'),Stub('leaper'),reach_max=0.,bored_decisions=50,bored_progress=20.),steps)
+    assert set(out[:49]) == {'walker'} and 'leaper' in out[49:]
 
 
 def test_both_grips_free_never_starts_a_handover():
