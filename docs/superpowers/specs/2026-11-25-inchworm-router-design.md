@@ -51,3 +51,23 @@ Leaps that reach reliably out to about 250 px need a new leaper trained on farth
 ## Success
 Held-out numbers: Crawl, Gap and About-face within noise of the walker; Leap within noise of the leaper or better. If the
 rule cannot beat the plain walker on Leap without costing Crawl, we say so and stop there rather than keep tuning.
+
+## Measured result (2026-11-25)
+Defaults after tuning on training seeds: leaping range 80-200 px, a stall of 20 decisions (2 s, under 20 px of progress)
+before an in-range leap, 50 decisions (5 s) of the same before a bored leap from any distance, 30 decisions hold,
+20 decisions cooldown. Two things the first version got wrong, found on training seeds: an in-range leap with no stall
+handed over in 82-100% of every lesson (the router became the leaper), and boredom measured over the whole grip run
+never fired because early progress counted for ever and a flailing worm's grips flicker.
+
+Held-out seeds, looked at once (150 trials per lesson, 240 for Leap), success rate:
+
+| | Crawl | Gap | About-face | Leap |
+|---|---|---|---|---|
+| walker (run336 iter 999) | 0.98 | 0.87 | 0.99 | 0.37 |
+| leaper (run342 iter 150) | 0.94 | 0.85 | 0.97 | 0.54 |
+| router | 0.97 | 0.91 | 0.97 | 0.42 |
+
+The router keeps Crawl, Gap and About-face at the walker's level, and hands over in 95% of Leap trials. Its Leap success
+is 0.42: above the walker (0.37) by about one standard error, below the leaper (0.54). The goal of Leap near the leaper's
+was not met. The leaper alone is also as good as the walker on the other lessons (Crawl 0.94, Gap 0.85, About-face 0.97)
+on these seeds. No further tuning was done on the held-out seeds, and the game step was not built.
