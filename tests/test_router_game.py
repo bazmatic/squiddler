@@ -36,3 +36,15 @@ def test_a_bad_router_path_falls_back_to_the_single_policy_with_a_warning(tmp_pa
     with caplog.at_level(logging.WARNING):
         driver = driver_for(enc())
     assert driver is not None and not isinstance(driver.policy,RoutedPolicy) and 'router' in caplog.text.lower()
+
+
+def test_the_shipped_walker_and_leaper_make_the_default_router(monkeypatch):
+    monkeypatch.delenv('INCHWORM_ROUTER',raising=False)
+    monkeypatch.delenv('INCHWORM_POLICY',raising=False)
+    assert isinstance(driver_for(enc()).policy,RoutedPolicy)
+
+
+def test_an_empty_policy_variable_still_selects_the_scripted_walk(monkeypatch):
+    monkeypatch.delenv('INCHWORM_ROUTER',raising=False)
+    monkeypatch.setenv('INCHWORM_POLICY','')
+    assert driver_for(enc()) is None

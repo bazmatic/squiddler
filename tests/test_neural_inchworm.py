@@ -847,5 +847,6 @@ def test_the_bundled_inchworm_brain_loads_and_drives_a_game_worm(monkeypatch):
         gripping += bool(c.worm_front_grip or c.worm_rear_grip)
     # The brain samples its actions, so any single frame may catch both ends lifted mid-stride (this used to flake
     # about 1 run in 3). A worm the brain is really driving holds the wall for most of the run (~95 of 120 frames).
-    assert c.active and c.worm_driver.state.any() and gripping > 60
+    memory = getattr(c.worm_driver.state,'walker',c.worm_driver.state)      # the bundled brain is the router: its walker's memory
+    assert c.active and memory.any() and gripping > 60
     enc.close()
