@@ -188,11 +188,11 @@ def test_the_inchworm_is_declared_in_a_table_with_its_flags_manifest_and_checks_
     # The order a run's manifest records them in, as before.
     assert tuple(inchworm_rewards.DEFAULTS) == (
         'progress_reward', 'bite_reward', 'success_reward', 'death_penalty', 'effort_cost', 'airborne_cost',
-        'time_cost', 'action_change_cost', 'backward_cost', 'turn_reward', 'dagger_weight', 'speed_bonus',
-        'crawl_time_cost', 'about_face_time_cost', 'end_pitch_cost')
+        'time_cost', 'action_change_cost', 'backward_cost', 'turn_reward', 'dagger_weight', 'about_face_dagger', 'speed_bonus',
+        'crawl_time_cost', 'about_face_time_cost', 'end_pitch_cost', 'miss_penalty', 'aim_reward', 'release_reward', 'start_stage', 'hidden_units')
     kinds = {t.key: t.kind for t in table.terms}
     assert {k for k, kind in kinds.items() if kind is RewardKind.REWARD} == {
-        'progress_reward', 'bite_reward', 'success_reward', 'turn_reward', 'speed_bonus'}
+        'progress_reward', 'bite_reward', 'success_reward', 'turn_reward', 'speed_bonus', 'aim_reward', 'release_reward'}
     assert kinds['dagger_weight'] is RewardKind.SHAPING          # a teacher weight, not a reward
     args = ppo_neural.build_parser().parse_args(['--task', 'inchworm', '--inchworm-death-penalty', '7'])
     assert inchworm_rewards.from_args(args)['death_penalty'] == 7.

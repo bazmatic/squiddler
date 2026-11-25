@@ -1,5 +1,5 @@
 """Single-worm physical drills and a gated recurrent PPO curriculum."""
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import hashlib
 import math
 from pathlib import Path
@@ -9,7 +9,8 @@ from types import SimpleNamespace
 import numpy as np
 
 from learning.environment import Snapshot, Transition
-from learning.adapters.inchworm import (SPEC, CRITIC_SIZE, DECISION_FRAMES, INFERENCE_ACTION_MODE, observe, intention, bend_signs,
+from learning.adapters.crawler_scenario import SilentSound
+from learning.adapters.inchworm import (load_transfer_policy, SPEC, CRITIC_SIZE, DECISION_FRAMES, INFERENCE_ACTION_MODE, observe, intention, bend_signs,
                                         action_for, enabled, load_policy)
 from learning import inchworm_rewards
 from learning.inchworm_rewards import TABLE
@@ -25,15 +26,15 @@ IMITATION_EPOCHS = 4
 # of iterations after the cloning, and a policy that has forgotten how to release a grip freezes there.
 IMITATION_REHEARSAL_WEIGHT = .2
 IMITATION_CLONE_OVER_START = False
-STAGES = ('crawl','turn','reach','feed','recover','rear','curl','about-face','gap')
+STAGES = ('crawl','turn','reach','feed','recover','rear','curl','about-face','gap','pursue','leap')
 # Preserve existing stage identities in saved episode records.
-CURRICULUM = (1,6,7,2,8,9,3,4,5)
-DEMONSTRATED = tuple(s for s in CURRICULUM if s != 9)   # the scripted stride cannot cross a gap, so it demonstrates none
+CURRICULUM = (1,6,7,2,8,9,3,4,5,11,10)       # Leap (11) comes before Pursue (10)
+DEMONSTRATED = tuple(s for s in CURRICULUM if s not in (9,10))+(11,11)   # the scripted stride cannot cross a gap or chase across a cave; the whiplash leaps, and its short demonstrations come up three times as often
 # Pixels from the first joint, which the head sweeps about 49 px around: far targets are
 # the longest a pure turn reaches (a flat target past about 58 px is out of reach).
 TURN_REACH = (12., 58.)
 TURN_MAX_ANGLE = 80.
-SUCCESS_GATES = {1:.95,6:.8,7:.8,2:.8,8:.8,9:.7,3:.8,4:.75,5:.65}
+SUCCESS_GATES = {1:.95,6:.8,7:.8,2:.8,8:.8,9:.7,3:.8,4:.75,5:.65,10:.6,11:.7}
 PASSES_REQUIRED = {1:5}      # Crawl is practised longer: every later lesson builds on its gait
 CRAWL_MAX_SECONDS = 80.      # mean time to the goal; the scripted crawl now averages about 10 s over the held-out goals
 CRAWL_MAX_AIRBORNE = .5      # leaping is allowed; a crawl that is mostly airborne is not
@@ -50,6 +51,25 @@ ROUGH_NODE = 35.          # spacing of the height points the floor is drawn betw
 ROUGH_STEP = 5.           # typical height change per point
 ROUGH_RELIEF = 16.        # the floor stays within this of level
 ROUGH_SLOPE = math.tan(math.radians(28.))   # and no segment is steeper than this
+# Pursue: the worm chases a drifting target through the real cave mazes of the levels it hunts on.
+PURSUE_TRAIN_LEVELS = (13,19)       # level 16 is left out: its sealed-off areas can be neither entered nor escaped
+PURSUE_VALIDATION_LEVELS = (22,26)
+PURSUE_HOLDOUT_LEVELS = (29,)
+PURSUE_LEVELS = PURSUE_TRAIN_LEVELS+PURSUE_VALIDATION_LEVELS+PURSUE_HOLDOUT_LEVELS
+LEAP_ALONG = (15.,70.)           # Leap: the target floats this far ahead along the surface of the worm...
+LEAP_OUTWARD = (80.,140.)        # ...and this far off it: a worm that only reaches catches nothing past about 60 px, so only a leap succeeds
+LEAP_PROTECTED = (8,9)            # while Leap trains, an eighth of every batch goes to About-face and Gap, which slip the most
+LEAP_REHEARSAL = (7,9,3,8)        # while Leap trains, the rotation through earlier lessons repeats the ones it was forgetting: Curl, Gap, Reach and About-face
+LEAP_AIM_TOLERANCE = math.radians(30.)   # the aim reward falls to nothing this far off the marker (about the catch radius at the far end)
+LEAP_BODY_SLACK = 13.            # a body part must be this much nearer than the mouth to count: the marker's own size
+LEAP_CATCH = 25.                 # the mouth is this close to the marker; generous while the lesson is young, so catches are common
+LEAP_SECONDS = 20.               # the time allowed to launch at all
+LEAP_MIN_TRAVEL = 40.            # a flight that carries the body this far from where it let go is a leap; touching the wall again before that is a step, not a landing
+LEAP_RECEDE = 40.                # flying this far beyond the closest approach so far is a miss too
+PURSUE_DROPS = (5,)              # once Pursue starts, practice stops rehearsing Recover
+PURSUE_DISTANCE = (90.,240.)     # the target starts this far from the worm, in plain sight
+PURSUE_SPEED = (.15,.45)         # px per frame; slower than a walking worm, so a chase can be won
+PURSUE_CATCH = 10.               # the mouth is this close to the target's edge
 TRAIN_LEVELS = (0,1,2,3)
 VALIDATION_LEVELS = (4,5,6,7)
 HOLDOUT_LEVELS = (8,9,10,11)
@@ -69,6 +89,7 @@ class InchwormEnvironment:
         self.rewards = inchworm_rewards.validate(rewards or {})
         self.world = None
         self.render_frames = None
+        self.enc = self.pursuit_target = self.obstacles = self._screen_settings = None
 
     @staticmethod
     def terrain(seed,stage,half):
@@ -120,9 +141,11 @@ class InchwormEnvironment:
         from maze.wall_segment import WallSegment
         self.close()
         if stage not in CURRICULUM:
-            raise ValueError('inchworm stage must be 1..7')
+            raise ValueError('inchworm stage must be one of the curriculum lessons')
         self.seed, self.level, self.stage = seed,level,stage
         self.rng = rng = random.Random(seed)
+        if stage == 10:
+            return self.reset_pursue(seed,level)
         angle = math.radians(self.arenas[str(level)]['angle'])
         self.forward, self.normal = (math.cos(angle),math.sin(angle)),(math.sin(angle),-math.cos(angle))
         self.origin = (650.,430.)
@@ -199,6 +222,13 @@ class InchwormEnvironment:
             self.world.worm_goal = tuple(pivot[i]-self.forward[i]*radius*math.cos(angle)
                                          +self.normal[i]*radius*math.sin(angle) for i in range(2))
         self.prey = None
+        self.pursuit_target = None
+        if stage == 11:
+            # Out of reach from the wall: the only way to the marker is to let go and leap.
+            along = rng.uniform(*LEAP_ALONG)
+            outward = rng.uniform(*LEAP_OUTWARD)
+            self.world.worm_goal = (c.x+self.forward[0]*along+self.normal[0]*outward,
+                                    c.y+self.forward[1]*along+self.normal[1]*outward)
         if stage in (6,7):
             along = rng.uniform(22.,28.) if stage == 6 else rng.uniform(-10.,-4.)
             outward = rng.uniform(28.,36.) if stage == 6 else rng.uniform(20.,28.)
@@ -217,6 +247,17 @@ class InchwormEnvironment:
             self.enc.ready()
             self.world.worm_goal = None
             self.prey_anchor = pos
+        return self.finish_reset()
+
+    def finish_reset(self):
+        self.limit_frames = math.ceil((min(self.horizon,LEAP_SECONDS) if self.stage == 11 else self.horizon)*60)
+        self.start_distance = self.distance()                   # reported with every episode, so results can be read by how far the target was
+        self.closest = self.distance() if self.stage == 11 else 0.     # Leap pays only for a new closest approach
+        self.takeoff,self.leaping,self.missed,self.settled = None,False,False,False     # settled: it has first planted a foot
+        self.aim_paid = False
+        self.whip_sign,self.whipping,self.front_held = None,False,False       # Leap's expert: which way it whips, and whether the whip has begun
+        from creatures.inchworm_control import InchwormController
+        c,rng,stage = self.worm,self.rng,self.stage
         self.teacher = InchwormController()
         self.label_crawler = None
         self.rear_landed = self.rear_freed = self.flipped = False
@@ -236,6 +277,97 @@ class InchwormEnvironment:
         self.action_trace = []
         return self.snapshot()
 
+    def reset_pursue(self,seed,level):
+        """The Pursue lesson: a real level's cave maze, a worm planted on one wall and a target drifting in view."""
+        import pygame
+        import config
+        import creatures
+        import level_config
+        from creatures.encounter import Encounter
+        from creatures.traits.rooted import wall_between
+        from creatures.traits.wallcrawl import contact, clear, nearby
+        from entities.command_recorder import CommandRecorder
+        from game_handlers.enemy_roster import EnemyRoster
+        from level_layout import parse_layout
+        from maze.config import MazeComplexity
+        from maze.generator import Maze
+        from physics.obstacle_world import ObstacleWorld
+        from hunter.maze_route import MazeRoutes
+        from learning.adapters.practice_targets import PracticeTarget, TARGET_RADIUS, spacious_start
+        if level not in PURSUE_LEVELS:
+            raise ValueError(f'the pursue lesson runs on levels {PURSUE_LEVELS}, not {level}')
+        self.seed, self.level, self.stage = seed,level,10
+        self.rng = rng = random.Random(seed)
+        pygame.init()
+        if pygame.display.get_surface() is None:
+            pygame.display.set_mode((1352,878))
+        self._screen_settings = config.SCREEN_WIDTH,config.SCREEN_HEIGHT
+        config.SCREEN_WIDTH,config.SCREEN_HEIGHT = 1352,878
+        arena = level_config.load_level_config(level)
+        grid_size = arena['maze']['grid_size']
+        layout = parse_layout(arena['layout'],grid_size)
+        layout = replace(layout,enemies=(),beacon=None)
+        maze = Maze(level,MazeComplexity[arena['maze']['complexity'].upper()],grid_size,layout=layout,seed=seed,curved=True)
+        self.obstacles = ObstacleWorld(maze,layout.gates) if layout.gates else None
+        maze.gate_segments = self.obstacles.segments() if self.obstacles else []
+        self.forward, self.normal = (1.,0.),(0.,-1.)       # only the Crawl-style teacher and rewards read these
+        self.origin = maze.start_pos if getattr(maze,'start_pos',None) else (650.,430.)
+        self.islands_built = self.heights = []
+        self.world = SimpleNamespace(ship=None,hunter=None,maze=maze,roster=EnemyRoster(),
+            inchworm_policy=None,inchworm_posture=(0.,)*5,additional_targets=[],projectiles=[],worm_goal=None,
+            sound_manager=SilentSound(),command_recorder=CommandRecorder(),combat_ruleset='legacy',
+            collision_handler=SimpleNamespace(drop_pickup=lambda *a,**k:None),powerup_crystals=[],
+            jev_beacon_allowed=lambda:False,_hunter_sees_player=lambda:False,enemy_policy=None)
+        cells = [maze.position_calculator.grid_center_to_screen(c,r)
+                 for r in range(1,maze.grid_height-1) for c in range(1,maze.grid_width-1) if not maze.grid[r][c]]
+        rng.shuffle(cells)
+        worm = creatures.build('inchworm',cells[0],angle=0.)
+        reach = max(maze.cell_size_x,maze.cell_size_y)*2
+        routes = MazeRoutes()
+        def find_start(open_floor):
+            """A planted start: the clear spot beside a wall, with room for a target in sight of it. Open floor
+            matters: a worm cornered in a narrow dead end jams its arch and breaks the physics solver."""
+            for cell in cells:
+                surfaces = sorted((s for s in (contact(maze,cell,[w]) for w in nearby(maze,cell,reach)) if s is not None),
+                                  key=lambda s:s[3])
+                if not surfaces or surfaces[0][3] > reach:
+                    continue
+                _,foot,(nx,ny),_ = surfaces[0]
+                start = (foot[0]+nx*(worm.radius+2.),foot[1]+ny*(worm.radius+2.))
+                if (not clear(maze,start,worm.radius) or wall_between(cell,start,maze)
+                        or open_floor and not spacious_start(maze,start,(nx,ny))):
+                    continue
+                # The target must be somewhere the worm can walk to: never in a sealed-off pocket.
+                linked = set(routes.reachable_targets(maze,start,cells))
+                seen = [p for i,p in enumerate(cells) if i in linked
+                        and PURSUE_DISTANCE[0] <= math.dist(p,start) <= PURSUE_DISTANCE[1]
+                        and maze.is_open(p,TARGET_RADIUS+2) and not wall_between(start,p,maze)]
+                if seen:
+                    return start,(nx,ny),seen
+            return None
+        found = find_start(True) or find_start(False)
+        if found is None:
+            raise ValueError(f'level {level} has no worm start with a target in view')
+        start,(nx,ny),seen = found
+        worm.x,worm.y = start
+        worm.angle = math.degrees(math.atan2(ny,nx))-90.
+        worm.agent_id = 0
+        self.worm = c = worm
+        self.world.roster.add(c)
+        target = PracticeTarget(rng.choice(seen),0.,0.,firing_enabled=False)
+        heading,speed = rng.uniform(0,2*math.pi),rng.uniform(*PURSUE_SPEED)
+        target.vx,target.vy = math.cos(heading)*speed,math.sin(heading)*speed
+        self.pursuit_target = target
+        self.world.additional_targets.append(target)
+        self.enc = Encounter(self.world.roster,self.world)
+        self.enc.ready()
+        self.curl_anchor = None
+        self.curl_anchor_lost = False
+        self.start = c.get_pos()
+        self.goal_direction = 1
+        self.prey = None
+        return self.finish_reset()
+
     def snapshot(self):
         x,masks,_ = observe(self.worm,self.enc)
         live = self.worm.active
@@ -247,7 +379,25 @@ class InchwormEnvironment:
         reaches, and the policy is pulled toward those answers with this weight (0: no teacher)."""
         return self.rewards['dagger_weight']
 
+    def leap_distance(self):
+        """How near the leap is to the marker: the mouth, or any part of the body (a leaping worm spins, and a body that
+        strikes the marker has caught it as surely as the mouth), counted as LEAP_BODY_SLACK further off than the mouth."""
+        goal = self.world.worm_goal
+        best = math.dist(self.worm.worm_front,goal)
+        half = self.worm.worm_physics.length/2
+        for link in self.worm.worm_physics.links:
+            a,b = link.local_to_world((-half,0.)),link.local_to_world((half,0.))
+            ax,ay,dx,dy = a[0],a[1],b[0]-a[0],b[1]-a[1]
+            t = max(0.,min(1.,((goal[0]-ax)*dx+(goal[1]-ay)*dy)/max(1e-9,dx*dx+dy*dy)))
+            best = min(best,math.hypot(goal[0]-ax-t*dx,goal[1]-ay-t*dy)+LEAP_BODY_SLACK)
+        return best
+
     def distance(self):
+        if self.pursuit_target is not None:
+            return max(0.,math.dist(self.worm.worm_front,self.pursuit_target.get_pos())
+                       -self.pursuit_target.radius-self.worm.worm_skin)
+        if self.stage == 11:
+            return self.leap_distance()
         if self.stage in (6,7,8):
             return math.dist(self.worm.worm_front,self.world.worm_goal)
         if self.prey is not None:
@@ -270,7 +420,8 @@ class InchwormEnvironment:
 
     def goal_facing(self):
         """Cosine between the head direction and the goal: 1 faces it, -1 faces away. Unlike alignment it is signed."""
-        origin,goal = self.worm.get_pos(),self.world.worm_goal
+        origin = self.worm.get_pos()
+        goal = self.pursuit_target.get_pos() if self.pursuit_target is not None else self.world.worm_goal
         dx,dy = goal[0]-origin[0],goal[1]-origin[1]
         distance = math.hypot(dx,dy)
         if distance < 1e-9:
@@ -285,8 +436,10 @@ class InchwormEnvironment:
 
     def target_alignment(self):
         """Positive alignment means the head end leads toward the target."""
-        target = self.prey.get_pos() if self.prey is not None else self.world.worm_goal
-        origin = self.worm.worm_front if self.prey is not None or self.stage == 8 else self.worm.get_pos()
+        target = self.pursuit_target.get_pos() if self.pursuit_target is not None else (
+            self.prey.get_pos() if self.prey is not None else self.world.worm_goal)
+        origin = (self.worm.worm_front if self.prey is not None or self.pursuit_target is not None or self.stage == 8
+                  else self.worm.get_pos())
         dx, dy = target[0]-origin[0], target[1]-origin[1]
         distance = math.hypot(dx,dy)
         if distance < 1e-9:
@@ -312,14 +465,16 @@ class InchwormEnvironment:
         events = TABLE.row()
         events['action_change'] = float(np.mean((applied-self.previous)**2))
         self.previous = applied
-        count = min(DECISION_FRAMES, max(0,math.ceil(self.horizon*60)-self.frames))
+        count = min(DECISION_FRAMES, max(0,self.limit_frames-self.frames))
         backward_net = 0.
         for _ in range(count):
             start_distance, alignment = self.distance(), self.target_alignment()
-            start_turn = self.turn_potential() if self.stage == 8 else 0.
+            start_turn = self.turn_potential() if self.stage in (8,10) else 0.
             p = self.worm.worm_physics
             rear_grip, centre_before = p.grips[0], tuple(p.centre)
-            facing = math.cos(p.heading)*self.forward[0]+math.sin(p.heading)*self.forward[1]
+            # Pursue has no fixed 'forward' along a cave, so backward travel is judged against the heading itself.
+            forward = (math.cos(p.heading),math.sin(p.heading)) if self.pursuit_target is not None else self.forward
+            facing = math.cos(p.heading)*forward[0]+math.sin(p.heading)*forward[1]
             was_stunned = self.worm.worm_stun > 0
             if self.stage == 5 and self.frames == self.shove_at:
                 self.worm.apply_momentum(self.normal[0]*.15+self.forward[0]*.25,
@@ -327,14 +482,23 @@ class InchwormEnvironment:
                 self.shoved, self.bites_at_shove = True,self.bites
             before = self.prey.hit_points if self.prey is not None else 0
             self.enc.step(1.)
+            if self.pursuit_target is not None:
+                # Reward the worm's own movement only: measured against where the target is now, before it drifts
+                # on. Otherwise a target walking away charges a worm that stands still, and one walking in pays it.
+                own_progress,own_turn = start_distance-self.distance(),self.turn_potential()-start_turn
+                self.pursuit_target.step(self.world.maze)
+                if self.obstacles is not None:
+                    self.world.maze.gate_segments = self.obstacles.segments()
             p = self.worm.worm_physics
             if self.stage == 7 and p.grips[0] is not self.curl_anchor:
                 self.curl_anchor_lost = True
             # A retained foot anchor is articulation, not backward walking.
             # Ignore forced stun motion and near-vertical, ambiguous facing.
+            flying = not (self.worm.worm_front_grip or self.worm.worm_rear_grip) and self.worm.worm_stun == 0
             if (not (rear_grip is not None and p.grips[0] is rear_grip)
+                    and not (flying and (self.pursuit_target is not None or self.stage == 11))
                     and not was_stunned and self.worm.worm_stun == 0 and abs(facing) > .2):
-                travel = sum((p.centre[i]-centre_before[i])*self.forward[i] for i in range(2))
+                travel = sum((p.centre[i]-centre_before[i])*forward[i] for i in range(2))
                 backward_net -= travel*math.copysign(1.,facing)
             self.bites += int(before-(self.prey.hit_points if self.prey else 0))
             if self.prey is not None and self.prey.active:
@@ -351,19 +515,29 @@ class InchwormEnvironment:
                 self.prey.y += self.prey.vy
                 from physics.thrust import sweep_walls
                 sweep_walls(self.prey,self.world.maze.walls)
-            progress = start_distance-self.distance()
+            progress = own_progress if self.pursuit_target is not None else start_distance-self.distance()
             # Supported reaching teaches articulation before locomotion. Its
             # mouth can approach an overhead target while the body faces across
             # it; head-first gating would suppress that useful early movement.
             scale = 1. if self.stage in (6,7) else alignment
+            if (self.pursuit_target is not None or self.stage == 11) and flying:
+                scale = 1.      # a leap or drift through open space pays for closing on the target however the body faces
             if self.curl_anchor_lost:
                 scale = 0.
-            events['progress_pixels'] += progress*scale if progress > 0 else progress
+            if self.stage == 11:
+                # A leap that misses flies off in the wrong direction; charging that retreat at full rate made every
+                # attempt cost more than lying still, and the worm stopped trying. Pay each new closest approach once.
+                events['progress_pixels'] += max(0.,self.closest-self.distance())
+                self.closest = min(self.closest,self.distance())
+            else:
+                events['progress_pixels'] += progress*scale if progress > 0 else progress
             # About-face starts facing away, where head-first progress pays nothing and crawling pays a penalty, so
             # turning needs its own reward: it is potential-based, so swinging back and forth earns nothing, and it needs the
             # body stretched out as well, since a body folded double over the goal is only half way through the turn.
             if self.stage == 8:
                 events['turn_progress'] += self.turn_potential()-start_turn
+            elif self.stage == 10:
+                events['turn_progress'] += own_turn      # a target that slipped behind: turn round and face it again
             touching = p.mouth_contact and self.worm.worm_rear_grip
             if self.stage == 6:
                 touching = self.distance() <= 12.
@@ -379,7 +553,7 @@ class InchwormEnvironment:
                 events['end_pitch_seconds'] += self.end_pitch_excess()/60.
             events['effort_seconds'] += p.effort/60.
             events['seconds'] += 1/60.
-            events['crawl_seconds'] += (self.stage in (1,9))/60.
+            events['crawl_seconds'] += (self.stage in (1,9,10,11))/60.
             events['about_face_seconds'] += (self.stage == 8)/60.
             events['airborne_seconds'] += float(not grounded and self.worm.worm_stun == 0)/60.
             self.frames += 1
@@ -391,13 +565,53 @@ class InchwormEnvironment:
                 self.success = touching
             elif self.stage == 3:
                 self.success = self.contact_frames >= 12
+            elif self.stage == 10:
+                self.success = self.distance() <= PURSUE_CATCH
+            elif self.stage == 11:
+                self.success = self.distance() <= LEAP_CATCH
             elif self.stage == 4:
                 self.success = self.bites >= 2
             else:
                 self.success = self.shoved and self.recovered_frames >= 30 and self.bites-self.bites_at_shove >= 2
             if self.render_frames is not None:
                 self.render_frames(self)
-            if self.success or not self.worm.active or self.curl_anchor_lost:
+            if self.stage == 11:
+                # The release itself, the decision that aims the leap: paid at the frame the front foot lets go while it
+                # is the only foot down, by how squarely the body is then moving at the marker (and only if it is moving).
+                held = p.grips[1] is not None
+                if self.front_held and not held and p.grips[0] is None:
+                    vx,vy = p.velocity; goal = self.world.worm_goal
+                    off = abs((math.atan2(vy,vx)-math.atan2(goal[1]-p.centre[1],goal[0]-p.centre[0])+math.pi)%(2*math.pi)-math.pi)
+                    events['release_aim'] += release_score(off,math.hypot(vx,vy))
+                self.front_held = held
+            if self.stage == 11 and not self.success:
+                # Leap trains accuracy, not recovery: a leap that lands without a catch, or flies off, ends the trial.
+                if not flying:
+                    self.missed = self.leaping
+                    self.settled,self.takeoff,self.leaping,self.aim_paid = True,None,False,False
+                elif self.settled:
+                    if self.takeoff is None:
+                        self.takeoff = tuple(p.centre)
+                    self.leaping = self.leaping or math.dist(self.takeoff,p.centre) >= LEAP_MIN_TRAVEL
+                    if self.leaping and not self.aim_paid:
+                        # Paid as the leap leaves: how squarely its direction points at the marker.
+                        goal = self.world.worm_goal
+                        gx,gy,fx,fy = goal[0]-self.takeoff[0],goal[1]-self.takeoff[1],p.centre[0]-self.takeoff[0],p.centre[1]-self.takeoff[1]
+                        cosine = (gx*fx+gy*fy)/max(1e-9,math.hypot(gx,gy)*math.hypot(fx,fy))
+                        events['leap_aim'] += max(0.,1.-math.acos(max(-1.,min(1.,cosine)))/LEAP_AIM_TOLERANCE)
+                        self.aim_paid = True
+                    self.missed = self.leaping and self.distance() > self.closest+LEAP_RECEDE
+            if self.stage == 1 and not self.success:
+                # A crawl may hop towards its marker, but with no gravity a hop that carries it away from the marker never
+                # comes back: it ends the trial, so the worm learns to walk rather than throw itself about.
+                if not flying:
+                    self.takeoff,self.leaping = None,False
+                else:
+                    if self.takeoff is None:
+                        self.takeoff,self.takeoff_distance = tuple(p.centre),self.distance()
+                    self.leaping = self.leaping or math.dist(self.takeoff,p.centre) >= LEAP_MIN_TRAVEL
+                    self.missed = self.leaping and self.distance() > self.takeoff_distance+LEAP_RECEDE
+            if self.success or not self.worm.active or self.curl_anchor_lost or self.missed:
                 break
         # Backward walking is the body's net travel over the decision. Summing only the frames it moved
         # backward charged every stride of a normal gait, whose tail swings back each step, for walking forwards.
@@ -412,16 +626,18 @@ class InchwormEnvironment:
         # Retreat always pays the full penalty, so a closed path cannot earn
         # positive progress reward by changing orientation on the return trip.
         events['bites'] = self.bites-old_bites
+        if self.missed:
+            events['leap_misses'] = 1
         if self.success:
             events['successes'] = 1
-            if self.stage in (1,9):
-                events['time_left_on_arrival'] = max(0.,1.-self.frames/math.ceil(self.horizon*60))
+            if self.stage in (1,9,10,11):
+                events['time_left_on_arrival'] = max(0.,1.-self.frames/self.limit_frames)
         if not self.worm.active:
             events['deaths'] = 1
         reward = float(TABLE.pay([events],self.rewards)[0])
         self.return_total += reward
-        terminated = self.success or not self.worm.active or self.curl_anchor_lost
-        truncated = not terminated and self.frames >= math.ceil(self.horizon*60)
+        terminated = self.success or not self.worm.active or self.curl_anchor_lost or self.missed
+        truncated = not terminated and self.frames >= self.limit_frames
         self.finished = terminated or truncated
         return Transition(self.snapshot(),reward,terminated,truncated,self.events(),{0:reward})
 
@@ -431,12 +647,17 @@ class InchwormEnvironment:
                     airborne_fraction=self.airborne_frames/max(1,self.frames),
                     survived=float(self.worm.active),recovered=float(self.recovered_frames>=30),
                     return_total=self.return_total,stage=self.stage,curl_anchor_lost=self.curl_anchor_lost,
-                    backward_distance=self.backward_distance)
+                    backward_distance=self.backward_distance,start_distance=self.start_distance)
 
     def close(self):
         if self.world is not None:
-            self.enc.close()
-            self.world = None
+            if self.enc is not None:
+                self.enc.close()
+            self.enc = self.world = None
+        if self._screen_settings is not None:
+            import config
+            config.SCREEN_WIDTH,config.SCREEN_HEIGHT = self._screen_settings
+            self._screen_settings = None
 
 
 def teacher_weight(args):
@@ -447,7 +668,7 @@ BACKWARD_SLACK = 30.   # pixels of forward travel that can offset later retreat
 TURN_LOOP = tuple(v/MAX_BEND for v in (-1.4, -1.4, -1.4, -.34, 1.3984))
 
 
-PHASES = ('plant','curl','land','release','crawl')
+PHASES = ('plant','curl','land','release','crawl','cock','whip','let-go')
 
 
 def posture_expert(env):
@@ -486,10 +707,59 @@ def posture_phase(env):
     return 'plant',InchwormCommand(tuple(p.activation),True,True)  # plant the rear first
 
 
+WHIP_TOLERANCE = math.radians(10.)   # the front foot lets go once the body's motion points this near the marker
+RELEASE_MISS = .5                    # what a let-go far off the marker costs, against the 1 a good one earns
+WHIP_SPEED = .3                      # ...and is moving at least this fast
+
+
+def release_score(off, speed):
+    """What letting go of the wall is worth: +1 when the body is moving within WHIP_TOLERANCE of the marker, falling
+    straight to -RELEASE_MISS at LEAP_AIM_TOLERANCE off (and staying there), and the same for a let-go with no speed.
+    Waiting for the swing to come round has to beat letting go early."""
+    if speed <= WHIP_SPEED:
+        return -RELEASE_MISS
+    fall = min(1.,max(0.,(off-WHIP_TOLERANCE)/(LEAP_AIM_TOLERANCE-WHIP_TOLERANCE)))
+    return 1.-(1.+RELEASE_MISS)*fall
+
+
+def whip_phase(env):
+    """(phase, command): what a worm does to leap with a whiplash, decided from its posture, grips and motion alone.
+
+    Cock: plant the front foot, free the rear, and hold the body relaxed and straight (the successful leaps of a
+    trained worm cock no deeper than that, and a deeper arch is one it never reaches). Whip: snap the body into a curl
+    around the planted front foot, so it swings. Let go: release the front foot when the swinging body is moving
+    towards the marker, which is what aims the leap. The phase is None once the worm is in the air; nothing is taught
+    there."""
+    from physics.inchworm import InchwormCommand
+    p = env.worm.worm_physics
+    centre,goal = p.centre,env.world.worm_goal
+    bearing = math.atan2(goal[1]-centre[1],goal[0]-centre[0])
+    if env.whip_sign is None:         # the whip curls towards the marker's side of the body
+        axis = math.atan2(p.head[1]-p.tail[1],p.head[0]-p.tail[0])
+        env.whip_sign = 1. if (bearing-axis+math.pi)%(2*math.pi)-math.pi > 0 else -1.
+    cock,whip = (0.,)*5,tuple(v*env.whip_sign for v in TURN_LOOP)
+    if p.grips[1] is None:
+        return (None,InchwormCommand(whip,False,False)) if env.whipping else ('cock',InchwormCommand(cock,False,True))
+    if not env.whipping:
+        env.whipping = p.grips[0] is None            # cocked: held by the front foot alone
+        if not env.whipping:
+            return 'cock',InchwormCommand(cock,False,True)
+    vx,vy = p.velocity
+    off = abs((math.atan2(vy,vx)-bearing+math.pi)%(2*math.pi)-math.pi)
+    if math.hypot(vx,vy) > WHIP_SPEED and off < WHIP_TOLERANCE:
+        return 'let-go',InchwormCommand(whip,False,False)
+    return 'whip',InchwormCommand(whip,False,True)
+
+
 def label_action(env, agent, action):
-    """What the expert would do in the states a policy visits; only About-face, and only up to the flip: once the worm
-    faces the goal stretched out, the expert stops teaching."""
-    if env.stage != 8:
+    """What the expert would do in the states a policy visits. About-face: up to the flip, once the worm faces the
+    goal stretched out the expert stops teaching. Leap: the whiplash, until the worm is in the air."""
+    if env.stage == 11:
+        phase,command = whip_phase(env)
+        if phase is None:
+            return None
+        return (*action_for(command,bend_signs(env.worm.worm_physics)),float(PHASES.index(phase)))
+    if env.stage != 8 or env.rewards['about_face_dagger'] <= 0:
         return None
     phase,command = posture_phase(env)
     if phase in ('release','crawl') and env.worm.worm_physics.grips[0] is None:
@@ -510,7 +780,30 @@ def label_action(env, agent, action):
     return (*action_for(command,bend_signs(env.worm.worm_physics)),float(PHASES.index(phase)))
 
 
+def expert_leads(env):
+    """Scheduled sampling: only Leap has an expert to lead its episodes (the others rely on their DAgger labels)."""
+    return env.stage == 11
+
+
+def handover(env, agent):
+    """...and it leads only up to the cock: the worm then whips and lets go itself, so PPO scores the part that decides the aim."""
+    return env.whipping
+
+
+def expert_assist(env, agent, action):
+    """After the handover the expert still swings the body (the bends and the rear grip) until the worm is in the air;
+    the policy chooses only the front grip, the release that aims the leap, and PPO scores just that."""
+    phase,command = whip_phase(env)
+    if phase is None:
+        return None
+    driven = action_for(command,bend_signs(env.worm.worm_physics))
+    front = list(dict(SPEC.heads)).index('front_grip')
+    return tuple(action[j] if j == front else v for j,v in enumerate(driven)),{front}
+
+
 def teacher_action(env, agent, action):
+    if env.stage == 11:
+        return action_for(whip_phase(env)[1],bend_signs(env.worm.worm_physics))
     if env.stage in (6,7):
         from creatures.inchworm_control import reach_angles
         from physics.inchworm import InchwormCommand
@@ -534,7 +827,8 @@ def metadata(args):
     root = Path(__file__).resolve().parents[2]
     files = ('physics/inchworm.py','creatures/inchworm_control.py','creatures/traits/inchworm.py',
              'learning/adapters/inchworm.py','learning/adapters/inchworm_scenario.py')
-    return dict(task=SPEC.task,scenario_version=45,spec=SPEC.metadata(),horizon=args.horizon,
+    levels = {str(n):hashlib.sha256((root/f'levels/{n}.json').read_bytes()).hexdigest() for n in PURSUE_LEVELS}
+    return dict(task=SPEC.task,scenario_version=74,spec=SPEC.metadata(),horizon=args.horizon,
                 about_face_success=dict(distance_origin='head',distance_less_than=14.,
                                         planted_grip_required=True,hold_frames=1),
                 front_grip=dict(attachment='automatic_on_reentry_into_reach',
@@ -549,7 +843,8 @@ def metadata(args):
                                       validation_rng='SeedSequence([episode_seed, agent_id])'),
                 rear_success=dict(mouth_distance=12.,hold_frames=1,rear_grip_required=False),
                 progress_rule='head_first_locomotion_signed_mouth_progress_for_rear_and_curl',
-                curriculum_order=CURRICULUM,success_gates=SUCCESS_GATES,
+                curriculum_order=CURRICULUM,leap=dict(along=LEAP_ALONG,outward=LEAP_OUTWARD,catch=LEAP_CATCH,seconds=LEAP_SECONDS,
+                                                  progress='new_closest_approach_only',aim='angle_falloff_to_30_degrees_once_per_leap_far_markers_only',miss='lands_after_a_leap_or_recedes',min_travel=LEAP_MIN_TRAVEL,recede=LEAP_RECEDE),pursue=dict(levels=levels,distance=PURSUE_DISTANCE,speed=PURSUE_SPEED,catch=PURSUE_CATCH),success_gates=SUCCESS_GATES,
                 crawl_distance=dict(short=[60.,90.],long=[180.,300.],short_training_fraction=.25,
                                     validation='long_only'),
                 decision_frames=DECISION_FRAMES,opponent_sha256=None,arenas=ARENAS,
@@ -561,25 +856,51 @@ def metadata(args):
 def training_cases(iteration,count,stage,bootstrap=False,curriculum=None):
     current = curriculum['stage'] if curriculum else stage
     earlier = CURRICULUM[:CURRICULUM.index(current)]
+    if current == 10:
+        earlier = tuple(s for s in earlier if s not in PURSUE_DROPS)
+    if current == 11:
+        earlier = earlier+LEAP_REHEARSAL*2
 
     def practice_stage(j):
-        """A quarter of every batch is Crawl (every later lesson builds on its gait); another quarter rotates through
-        the earlier lessons, Crawl included; the rest is the current lesson."""
+        """While Leap trains, Crawl is what production needs most, so it gets a quarter of every batch ; another quarter rotates through the earlier lessons; Leap, the lesson being learned, has the rest.
+        Otherwise a quarter is Crawl (every later lesson builds on its gait), a quarter rotates and the rest is the current lesson."""
+        if current == 11:
+            slot = j%8
+            if slot in (2,6):
+                return 1
+            if slot == 5:
+                return LEAP_PROTECTED[(iteration+j//8)%len(LEAP_PROTECTED)]
+            return earlier[(iteration+j//4)%len(earlier)] if slot in (0,4) else current
         if j%4 == 2 and 1 in earlier:
             return 1
         return earlier[(iteration+j//4)%len(earlier)] if earlier and j%4 == 0 else current
-    return [dict(level=TRAIN_LEVELS[j%4],seed=10000+iteration*count+j+(500000000 if bootstrap else 0),
-                 stage=DEMONSTRATED[j%len(DEMONSTRATED)] if bootstrap else practice_stage(j)) for j in range(count)]
+    # A run that starts at a later lesson has already learned the earlier ones; scripted demonstrations of those would
+    # only pull it toward the scripted gait, so it is shown its own lesson alone.
+    shown = (current,) if bootstrap and current in DEMONSTRATED and current != CURRICULUM[0] else DEMONSTRATED
+    cases = [dict(level=TRAIN_LEVELS[j%4],seed=10000+iteration*count+j+(500000000 if bootstrap else 0),
+                  stage=shown[j%len(shown)] if bootstrap else practice_stage(j)) for j in range(count)]
+    for case in cases:
+        if case['stage'] == 10:
+            case['level'] = PURSUE_TRAIN_LEVELS[case['seed']%len(PURSUE_TRAIN_LEVELS)]
+    return cases
+
+
+def cases_for(stage,levels,seed_base):
+    """Twelve held-out cases per lesson; Pursue's come from real levels, the others from the angled arenas."""
+    if stage == 10:
+        return [dict(level=levels[1][k%len(levels[1])],seed=seed_base+stage*100+k,stage=stage) for k in range(12)]
+    return [dict(level=level,seed=seed_base+stage*100+j*4+k,stage=stage)
+            for j,level in enumerate(levels[0]) for k in range(3)]
 
 
 def validation_cases():
-    return [dict(level=level,seed=2000000000+stage*100+j*4+k,stage=stage)
-            for stage in CURRICULUM for j,level in enumerate(VALIDATION_LEVELS) for k in range(3)]
+    return [c for stage in CURRICULUM
+            for c in cases_for(stage,(VALIDATION_LEVELS,PURSUE_VALIDATION_LEVELS),2000000000)]
 
 
 def evaluation_cases():
-    return [dict(level=level,seed=3000000000+stage*100+j*4+k,stage=stage)
-            for stage in CURRICULUM for j,level in enumerate(HOLDOUT_LEVELS) for k in range(3)]
+    return [c for stage in CURRICULUM
+            for c in cases_for(stage,(HOLDOUT_LEVELS,PURSUE_HOLDOUT_LEVELS),3000000000)]
 
 
 def metrics(rows):
@@ -610,8 +931,20 @@ def promote(stage,summary):
     return stage
 
 
+def widen_policy(policy,args):
+    """A new run's starting policy, given more memory when the run asks for it (embedding half as wide as the memory)."""
+    hidden = int(getattr(args,'inchworm_hidden_units',0))
+    if hidden <= policy.hidden:
+        return policy
+    from learning.widen import widen
+    return widen(policy,hidden,max(policy.params['embed_w'].shape[0],hidden//2))
+
+
 def initial_curriculum(args):
-    return dict(stage=1,passing_blocks=0)
+    stage = int(getattr(args,'inchworm_start_stage',0)) or CURRICULUM[0]
+    if stage not in CURRICULUM:
+        raise ValueError(f'inchworm start lesson must be one of {CURRICULUM}, not {stage}')
+    return dict(stage=stage,passing_blocks=0)
 
 
 def validation_evidence(summary,state,args,deadline=math.inf):

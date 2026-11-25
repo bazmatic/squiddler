@@ -10,7 +10,7 @@ import pytest
 from learning.adapters import inchworm as adapter
 from learning.adapters import inchworm_scenario as scenario
 from learning.inchworm_rewards import DEFAULTS
-from learning.policy import random_policy
+from learning.policy import RecurrentPolicy, random_policy
 from physics.inchworm import InchwormCommand
 
 
@@ -19,7 +19,7 @@ def test_observation_is_finite_body_relative_and_has_versioned_shape():
     try:
         a = env.reset(12,level=0,stage=3).observations[0]
         b = env.reset(12,level=1,stage=3).observations[0]
-        assert a.shape == (len(adapter.FEATURES),) == (83,)
+        assert a.shape == (len(adapter.FEATURES),) == (86,)
         assert np.isfinite(a).all()
         assert b == pytest.approx(a,abs=1e-5)
         target = env.prey
@@ -100,7 +100,7 @@ def test_each_lesson_collects_finite_trajectories_without_learning(stage):
     env = scenario.environment(horizon=.2)
     policy = random_policy(adapter.SPEC,2,hidden=8,embed=4)
     try:
-        trajectories,events,trace = collect(env,policy,12,dict(level=0,stage=stage))
+        trajectories,events,trace = collect(env,policy,12,dict(level=13 if stage == 10 else 0,stage=stage))
         assert len(trajectories)==1
         assert 1 <= len(trace) <= 2 if stage == 7 else len(trace)==2
         assert len(trajectories[0]['actions'][0])==8
@@ -127,8 +127,10 @@ def test_curriculum_requires_two_held_out_passes_and_keeps_prior_lessons():
     assert not hopping['inchworm_validation_passed']      # a crawl that is mostly airborne does not pass
     slow = scenario.validation_evidence(dict(success=1.,survived=1.,seconds=scenario.CRAWL_MAX_SECONDS+10),scenario.initial_curriculum(None),None)
     assert not slow['inchworm_validation_passed']         # nor does a slow one
-    cases = [c for i in range(4) for c in scenario.training_cases(i,24,5,curriculum=dict(stage=5))]
-    assert {c['stage'] for c in cases} == set(scenario.CURRICULUM)   # practice rotates through every earlier lesson
+    cases = [c for i in range(4) for c in scenario.training_cases(i,24,10,curriculum=dict(stage=10))]
+    assert {c['stage'] for c in cases} == set(scenario.CURRICULUM)-set(scenario.PURSUE_DROPS)   # Pursue's practice rotates through the earlier lessons, minus Recover
+    earlier = [c for i in range(4) for c in scenario.training_cases(i,24,5,curriculum=dict(stage=5))]
+    assert {c['stage'] for c in earlier} == set(scenario.CURRICULUM[:scenario.CURRICULUM.index(5)+1])      # until Pursue, Recover is practised too
     assert {c['level'] for c in cases}.isdisjoint(c['level'] for c in scenario.validation_cases())
     assert {c['seed'] for c in scenario.evaluation_cases()}.isdisjoint(c['seed'] for c in scenario.validation_cases())
     assert {c["stage"] for c in scenario.training_cases(0,40,1,bootstrap=True)} == set(scenario.DEMONSTRATED)   # Gap has no scripted demonstration
@@ -572,7 +574,7 @@ def test_a_rolled_worm_sees_and_commands_its_bends_mirrored():
 def test_only_about_face_asks_the_scripted_controller_what_it_would_do_in_visited_states(stage,labelled):
     from learning.policy import random_policy
     from learning.training import collect
-    env=scenario.environment(horizon=3.)
+    env=scenario.environment(horizon=3.,rewards=dict(DEFAULTS,about_face_dagger=1.))
     try:
         assert env.teacher_weight > 0
         episodes,_,_=collect(env,random_policy(scenario.SPEC,0),12,dict(stage=stage),
@@ -644,7 +646,7 @@ def test_initial_backward_allowance_is_bounded_in_both_directions(monkeypatch, h
     from learning.inchworm_rewards import DEFAULTS
     env = scenario.environment(horizon=.4, rewards={**dict.fromkeys(DEFAULTS, 0.), 'backward_cost': 1.})
     try:
-        env.reset(12, stage=1)
+        env.reset(12, stage=9)      # a lesson that does not end a trial on a worm flung away
         monkeypatch.setattr(InchwormPhysics, 'heading', property(lambda self: heading))
         def move(dt):
             env.worm.worm_physics.translate((-2.*math.cos(heading), 0.))
@@ -751,7 +753,7 @@ def test_crawl_goals_sit_on_uneven_ground_that_can_still_be_crawled():
 
 
 def test_scripted_about_face_walks_on_soon_after_the_turn():
-    env = scenario.environment(horizon=60.,scripted=True,rewards=dict(DEFAULTS))
+    env = scenario.environment(horizon=60.,scripted=True,rewards=dict(DEFAULTS,about_face_dagger=1.))
     env.reset(500,stage=8,level=4)
     p = env.worm.worm_physics
     turned = start = None
@@ -769,7 +771,7 @@ def test_scripted_about_face_walks_on_soon_after_the_turn():
 
 
 def test_the_expert_teaches_the_turn_and_the_rear_foot_down_but_not_the_walk():
-    env = scenario.environment(horizon=60.,scripted=True,rewards=dict(DEFAULTS))
+    env = scenario.environment(horizon=60.,scripted=True,rewards=dict(DEFAULTS,about_face_dagger=1.))
     env.reset(500,stage=8,level=4)
     labels = []
     while not env.finished:
@@ -850,3 +852,312 @@ def test_the_bundled_inchworm_brain_loads_and_drives_a_game_worm(monkeypatch):
     memory = getattr(c.worm_driver.state,'walker',c.worm_driver.state)      # the bundled brain is the router: its walker's memory
     assert c.active and memory.any() and gripping > 60
     enc.close()
+
+
+@pytest.mark.parametrize('level',scenario.PURSUE_LEVELS)
+def test_pursue_drops_the_worm_into_a_real_cave_with_a_target_in_view(level):
+    env = scenario.environment(horizon=5.)
+    try:
+        env.reset(7,level=level,stage=10)
+        target = env.pursuit_target
+        assert target in env.world.additional_targets and env.worm.active
+        assert env.enc.target_entity_for(env.worm) is target
+        assert env.distance() > scenario.PURSUE_CATCH
+        assert len(env.world.maze.walls) > 20            # a real maze, not a flat floor
+    finally:
+        env.close()
+
+
+def test_pursue_pays_for_the_worms_own_movement_not_the_targets_drift():
+    def total(speed):
+        env = scenario.environment(horizon=10.)
+        try:
+            env.reset(7,level=13,stage=10)
+            env.pursuit_target.vx,env.pursuit_target.vy = speed,0.
+            # The worm does nothing at all; only the target moves.
+            return sum(env.step({0:(0.,)*8}).reward for _ in range(40))
+        finally:
+            env.close()
+    assert abs(total(2.)-total(0.)) < .05
+
+
+
+def test_leap_floats_the_target_beyond_reach_and_runs_out_the_clock():
+    env = scenario.environment(horizon=120.)
+    try:
+        env.reset(3,level=0,stage=11)
+        outward = sum((env.world.worm_goal[i]-env.worm.get_pos()[i])*env.normal[i] for i in range(2))
+        assert outward > scenario.LEAP_OUTWARD[0]-20 and env.distance() > scenario.LEAP_CATCH*1.5
+        assert env.events()['start_distance'] == env.start_distance
+        steps = 0
+        while not env.finished:
+            env.step({0:(0.,)*8})        # a worm that never moves can only run out the clock
+            steps += 1
+        assert not env.success and env.frames <= scenario.LEAP_SECONDS*60+6
+    finally:
+        env.close()
+
+
+def test_a_new_run_can_start_in_a_later_lesson_and_still_rehearses_the_ones_before_it():
+    from types import SimpleNamespace
+    assert scenario.initial_curriculum(None) == dict(stage=1,passing_blocks=0)
+    state = scenario.initial_curriculum(SimpleNamespace(inchworm_start_stage=11))
+    assert state == dict(stage=11,passing_blocks=0)
+    cases = [c for i in range(4) for c in scenario.training_cases(i,24,11,curriculum=state)]
+    assert {c['stage'] for c in cases} >= {1,11}
+    with pytest.raises(ValueError):
+        scenario.initial_curriculum(SimpleNamespace(inchworm_start_stage=99))
+
+
+def test_a_leap_that_lands_without_a_catch_ends_the_trial():
+    grip = (0.,0.,0.,0.,0.,1.,1.,0.)
+    env = scenario.environment(horizon=120.)
+    try:
+        env.reset(3,level=0,stage=11)
+        for _ in range(10):
+            if env.settled:
+                break
+            env.step({0:grip})                     # the worm drops onto the wall and plants a foot
+        assert env.settled and not env.finished     # settling in is not a leap
+        env.leaping = True                          # then it has leapt, and now is standing again
+        transition = env.step({0:grip})
+        assert transition.terminated and not env.success and env.frames < scenario.LEAP_SECONDS*60
+        assert transition.reward < -.8       # and the miss costs what the lesson charges for one
+    finally:
+        env.close()
+
+
+def test_a_wider_brain_chooses_exactly_what_the_narrow_one_did():
+    narrow = adapter.load_policy(Path('assets/neural/inchworm.npz'))
+    wide = scenario.widen_policy(narrow,SimpleNamespace(inchworm_hidden_units=128))
+    assert (narrow.hidden,wide.hidden) == (64,128) and scenario.widen_policy(narrow,SimpleNamespace()) is narrow
+    rng = np.random.default_rng(5)
+    a,b = narrow.initial_state(),wide.initial_state()
+    for _ in range(40):
+        senses = rng.normal(narrow.mean,narrow.scale*2)
+        (logits_a,a),(logits_b,b) = narrow.step(senses,a),wide.step(senses,b)
+        assert all(np.allclose(logits_a[k],logits_b[k],atol=1e-5) for k in logits_a)
+    assert np.abs(b[64:]).max() > 0                    # the new units are alive; the heads just ignore them for now
+
+
+def test_while_leap_trains_crawl_keeps_its_quarter_and_the_forgotten_lessons_keep_being_rehearsed():
+    state = scenario.initial_curriculum(SimpleNamespace(inchworm_start_stage=11))
+    stages = [c['stage'] for i in range(8) for c in scenario.training_cases(i,24,11,curriculum=state)]
+    assert {1,3,7,8,9,11} <= set(stages)
+    assert stages.count(1) >= len(stages)//4 and stages.count(11) >= len(stages)*3//8
+    assert stages.count(8) >= len(stages)//12 and stages.count(9) >= len(stages)//12      # About-face and Gap are rehearsed hardest
+
+
+def test_every_leap_marker_is_out_of_reach_of_a_worm_that_only_reaches():
+    from creatures.inchworm_control import reach_angles
+    from physics.inchworm import InchwormCommand
+    env = scenario.environment(horizon=120.)
+    try:
+        for seed in range(12):
+            env.reset(seed,level=seed%4,stage=11)
+            assert env.start_distance > 60.
+            p,goal = env.worm.worm_physics,env.world.worm_goal
+            for _ in range(60):            # six seconds of reaching with the rear planted and the head aimed at the marker
+                env.step({0:adapter.action_for(InchwormCommand(reach_angles(p,goal),True,False,False),scenario.bend_signs(p))})
+                if env.finished:
+                    break
+            assert not env.success
+    finally:
+        env.close()
+
+
+def far_leap_seeds(count):
+    env = scenario.environment(horizon=120.)
+    try:
+        seeds = []
+        for seed in range(7000,7000+count):
+            env.reset(seed,level=seed%4,stage=11)
+            seeds.append(seed)
+        return seeds
+    finally:
+        env.close()
+
+
+def test_the_scripted_whiplash_leaps_at_far_markers_from_the_wall():
+    env = scenario.environment(horizon=120.,scripted=True)
+    caught = 0
+    try:
+        seeds = far_leap_seeds(10)
+        for seed in seeds:
+            env.reset(seed,level=seed%4,stage=11)
+            while not env.finished:
+                env.step({})
+            caught += env.success
+    finally:
+        env.close()
+    assert caught >= 7
+
+
+def test_the_release_is_paid_for_pointing_at_the_marker_and_a_worm_that_never_lets_go_is_not_paid():
+    def returns(rewards,scripted):
+        env = scenario.environment(horizon=8.,scripted=scripted,rewards=rewards)
+        out = []
+        try:
+            for seed in far_leap_seeds(4):
+                env.reset(seed,level=seed%4,stage=11)
+                while not env.finished:
+                    env.step({} if scripted else {0:adapter.action_for(__import__('physics.inchworm',fromlist=['x']).InchwormCommand((0.,)*5,True,True))})
+                out.append(env.return_total)
+        finally:
+            env.close()
+        return out
+    paid,free = returns({},True),returns({'release_reward':0.},True)
+    assert sum(a > b+.5 for a,b in zip(paid,free)) >= 2          # the scripted release points at the marker
+    assert returns({},False) == returns({'release_reward':0.},False)      # a worm that holds on collects nothing
+
+
+def test_a_leap_is_caught_when_the_body_strikes_the_marker_not_only_the_mouth():
+    env = scenario.environment(horizon=20.)
+    try:
+        env.reset(far_leap_seeds(1)[0],level=0,stage=11)
+        mid = tuple(env.worm.worm_physics.links[2].position)
+        assert env.distance() > scenario.LEAP_CATCH
+        env.world.worm_goal = mid
+        assert math.dist(env.worm.worm_front,mid) > scenario.LEAP_CATCH      # the mouth is nowhere near it...
+        assert env.distance() <= scenario.LEAP_CATCH                         # ...the body is on it
+    finally:
+        env.close()
+
+
+def test_a_good_release_earns_and_an_early_one_costs_more_than_waiting():
+    score = scenario.release_score
+    assert score(0.,1.) == 1. and score(math.radians(10.),1.) == 1.
+    assert score(math.radians(20.),1.) == pytest.approx(.25)
+    assert score(math.radians(30.),1.) == score(math.radians(120.),1.) == -scenario.RELEASE_MISS
+    assert score(0.,.1) == -scenario.RELEASE_MISS                    # letting go with no swing is a miss, however it points
+
+
+def test_the_whiplash_labels_every_state_up_to_the_air_and_none_after():
+    env = scenario.environment(horizon=120.)
+    try:
+        far = far_leap_seeds(1)[0]
+        env.reset(far,level=far%4,stage=11)
+        first = scenario.label_action(env,0,None)
+        assert int(first[-1]) == scenario.PHASES.index('cock') and len(first) == len(adapter.SPEC.heads)+1
+        seen = set()
+        for _ in range(200):
+            label = scenario.label_action(env,0,None)
+            if label is None:
+                break
+            seen.add(scenario.PHASES[int(label[-1])])
+            env.step({0:scenario.teacher_action(env,0,None)})
+        assert {'cock','whip','let-go'} <= seen
+        assert env.whipping and env.worm.worm_physics.grips[1] is None      # then it is in the air, and nothing more is taught
+    finally:
+        env.close()
+
+
+def test_scheduled_sampling_lets_the_expert_lead_leap_episodes_up_to_the_cock_and_then_hands_over():
+    from learning.training import collect
+    policy = random_policy(adapter.SPEC,3,hidden=16,embed=8)
+    env = scenario.environment(horizon=120.)
+    def run(seed,stage,mix):
+        episodes,_,_ = collect(env,policy,seed,dict(level=0,stage=stage),mix=mix,expert=scenario.teacher_action,
+                               handover=scenario.handover,leads=scenario.expert_leads)
+        return episodes[0]['driven']
+    try:
+        led = run(5,11,1.)
+        assert led[0] and not led[-1] and led.index(False) > 0            # the expert acts first, then the policy
+        assert all(led[:led.index(False)]) and not any(led[led.index(False):])      # and never takes back
+        assert not any(run(5,11,0.))                                      # no sampling, no expert
+        assert not any(run(5,1,1.))                                       # a lesson with no expert is the policy's
+        assert [any(run(seed,11,.5)) for seed in range(40)].count(True) in range(8,32)       # about half of the episodes
+    finally:
+        env.close()
+
+
+def test_after_the_handover_the_expert_swings_the_body_and_the_policy_alone_chooses_the_front_grip():
+    from learning.training import collect
+    policy = random_policy(adapter.SPEC,3,hidden=16,embed=8)
+    env = scenario.environment(horizon=120.)
+    front = list(dict(adapter.SPEC.heads)).index('front_grip')
+    try:
+        episodes,_,_ = collect(env,policy,5,dict(level=0,stage=11),mix=1.,expert=scenario.teacher_action,
+                               handover=scenario.handover,leads=scenario.expert_leads,assist=scenario.expert_assist)
+        e = episodes[0]
+        helped = [i for i,(d,on) in enumerate(zip(e['driven'],e['enabled'])) if not d and sum(on) == 1]
+        assert helped and all(e['enabled'][i][front] for i in helped)       # only the release is scored
+    finally:
+        env.close()
+
+
+def test_the_expert_share_falls_linearly_over_the_anneal_and_is_constant_without_one():
+    from learning.run import expert_share
+    assert expert_share(SimpleNamespace(expert_share=.5,expert_anneal=0),500) == .5
+    assert expert_share(SimpleNamespace(expert_share=.5,expert_anneal=200),0) == .5
+    assert expert_share(SimpleNamespace(expert_share=.5,expert_anneal=200),100) == pytest.approx(.25)
+    assert expert_share(SimpleNamespace(expert_share=.5,expert_anneal=200),300) == 0.
+    assert expert_share(SimpleNamespace(),10) == 0.
+
+
+def test_steps_the_expert_took_are_imitated_and_valued_but_never_policy_gradient():
+    import torch
+    from learning.ppo import update_team
+    from learning.training import build_network
+    policy = random_policy(adapter.SPEC,4,hidden=8,embed=4)
+    x,context = np.ones(len(adapter.SPEC.features),np.float32),np.ones(adapter.CRITIC_SIZE,np.float32)
+    heads = list(dict(adapter.SPEC.heads))
+    def episodes(driven):
+        return [dict(x=[x],critic=[context],actions=[(.3,.2,.1,0.,-.2,1,1,0)],alive=[True],driven=[driven],
+                     enabled=[[True]*len(heads)],legal={k:[np.ones(n,bool)] for k,n in adapter.SPEC.heads},rewards=[r],
+                     terminated=True,final_critic=context,teacher=[(.3,.2,.1,0.,-.2,1,1,0,0.)]) for r in (1.,-1.)]
+    def moved(driven,teacher_weight):
+        net = build_network(policy,adapter.CRITIC_SIZE)
+        before = {n:p.detach().clone() for n,p in net.named_parameters()}
+        update_team(net,torch.optim.Adam(net.parameters(),lr=.01),episodes(driven),np.random.default_rng(0),epochs=1,
+                    teacher_weight=teacher_weight,teacher_heads=tuple(heads))
+        return {n:not torch.equal(before[n],p) for n,p in net.named_parameters()}
+    own = moved(False,0.)
+    assert own['heads.rear_grip.weight'] and own['critic.0.weight']
+    led = moved(True,0.)
+    assert not led['heads.rear_grip.weight'] and led['critic.0.weight']        # valued, not policy-gradient
+    assert moved(True,1.)['heads.rear_grip.weight']                           # but imitated, when the labels are on
+
+
+def test_a_checkpoint_from_before_the_aim_features_acts_exactly_as_it_did():
+    old = RecurrentPolicy.load(Path('assets/neural/inchworm.npz'))
+    assert len(old.spec.features) == 83                       # the shipped worm predates the aim features
+    new = adapter.load_policy(Path('assets/neural/inchworm.npz'))
+    assert len(new.spec.features) == len(adapter.FEATURES) and new.spec.features[:83] == old.spec.features
+    rng = np.random.default_rng(2)
+    a,b = old.initial_state(),new.initial_state()
+    for _ in range(20):
+        senses = rng.normal(old.mean,old.scale*2)
+        extra = rng.normal(size=3).astype(np.float32)*3            # whatever the new inputs say, the old worm ignores them
+        (logits_a,a),(logits_b,b) = old.step(senses,a),new.step(np.concatenate([senses,extra]),b)
+        assert all(np.allclose(logits_a[k],logits_b[k],atol=1e-5) for k in logits_a)
+
+
+def test_the_aim_features_tell_a_swinging_body_when_it_points_at_the_marker():
+    env = scenario.environment(horizon=60.)
+    try:
+        env.reset(7000,level=0,stage=11)
+        cos,sin,speed = (adapter.FEATURES.index(n) for n in ('aim_cos','aim_sin','aim_speed'))
+        x = env.reset(7000,level=0,stage=11).observations[0]
+        assert x[speed] == pytest.approx(0.,abs=5.) and np.isfinite(x[[cos,sin,speed]]).all()
+        hits = []
+        while not env.finished:
+            snap = env.step({0:scenario.teacher_action(env,0,None)}).snapshot
+            if not snap.observations:
+                break
+            x = snap.observations[0]
+            if env.whipping and env.worm.worm_physics.grips[1] is None:           # let go: the expert's own test says it points at the marker
+                hits.append((x[cos],abs(x[sin]),x[speed]))
+                break
+        assert hits and hits[0][0] > .9 and hits[0][1] < .5
+    finally:
+        env.close()
+
+
+def test_a_run_that_starts_at_a_later_lesson_is_shown_demonstrations_of_that_lesson_alone():
+    leap = scenario.initial_curriculum(SimpleNamespace(inchworm_start_stage=11))
+    assert {c['stage'] for c in scenario.training_cases(0,40,11,bootstrap=True,curriculum=leap)} == {11}
+    crawl = scenario.initial_curriculum(None)
+    assert {c['stage'] for c in scenario.training_cases(0,40,1,bootstrap=True,curriculum=crawl)} == set(scenario.DEMONSTRATED)
+    pursue = scenario.initial_curriculum(SimpleNamespace(inchworm_start_stage=10))
+    assert {c['stage'] for c in scenario.training_cases(0,40,10,bootstrap=True,curriculum=pursue)} == set(scenario.DEMONSTRATED)   # no scripted pursuit: the usual set
