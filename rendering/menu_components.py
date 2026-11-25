@@ -457,6 +457,41 @@ class Button:
         screen.blit(text_surface, text_rect)
 
 
+def advance_pulse(phase: float, dt: float) -> float:
+    """The button glow's phase after `dt` frames (the game's unit: 1.0 is one frame at 60 fps), kept within one turn."""
+    return (phase + config.BUTTON_GLOW_PULSE_SPEED * dt / 60.0) % (2 * math.pi)
+
+
+def draw_buttons(screen: pygame.Surface, buttons: List[Button], selected_index: int, phase: float) -> None:
+    """Draw a menu's buttons, the one at `selected_index` lit."""
+    for i, button in enumerate(buttons):
+        button.selected = (i == selected_index)
+        button.draw(screen, phase)
+
+
+def selection_text_color(blend: float) -> Tuple[int, int, int]:
+    """The text colour of a selectable item: dim when idle, white when selected, easing between."""
+    return interpolate_color(BUTTON_TEXT_IDLE, config.COLOR_TEXT, blend)
+
+
+class ButtonSet:
+    """The look every selectable menu item shares: one Button per key, so each keeps its own fade."""
+
+    def __init__(self, font: pygame.font.Font):
+        self.font = font
+        self._buttons: Dict[object, Button] = {}
+
+    def draw(self, screen: pygame.Surface, key: object, rect: pygame.Rect, selected: bool, phase: float) -> float:
+        """Draw the item's frame in `rect`; returns its selection blend (0 idle .. 1 selected) for the text on it."""
+        button = self._buttons.get(key)
+        if button is None:
+            button = self._buttons[key] = Button('', rect.center, self.font, width=rect.width, height=rect.height)
+        button.position, button.width, button.height = rect.center, rect.width, rect.height
+        button.selected = selected
+        button.draw(screen, phase)
+        return button._selection_blend or 0.0
+
+
 class AnimatedBackground:
     """Animated background for menus with starfield and particles."""
     
@@ -673,10 +708,7 @@ class ConfirmationDialog:
         
         # Draw buttons
         confirm_button, cancel_button = self._get_buttons()
-        confirm_button.selected = selection_index == 0
-        cancel_button.selected = selection_index == 1
-        confirm_button.draw(self.screen, menu_pulse_phase)
-        cancel_button.draw(self.screen, menu_pulse_phase)
+        draw_buttons(self.screen, [confirm_button, cancel_button], selection_index, menu_pulse_phase)
         
         # Key hints share one row at the bottom instead of crowding each button
         hints_rect = self.hints_rect()

@@ -8,7 +8,7 @@ import config
 from user_settings import COMPETITION_LENGTHS
 from rendering.fonts import get_font
 from rendering.menu_components import (
-    AnimatedBackground, TEXT_DIM, TEXT_LABEL, build_menu_backdrop, build_panel, build_panel_glow, menu_scale,
+    AnimatedBackground, TEXT_DIM, TEXT_LABEL, advance_pulse, build_menu_backdrop, ButtonSet, build_panel, menu_scale, selection_text_color,
     render_hint_row, render_pill, render_title
 )
 
@@ -53,6 +53,7 @@ class MultiplayerMenu:
         self.levels_row = ChoiceRow("LEVELS", lambda: str(game.user_settings.competition_levels), self._next_length)
         self.start_row = ActionRow(lambda: "START GAME", game.start_multiplayer)
         self.selected_index = 0
+        self.phase = 0.0
         self.scale = menu_scale()
         self.menu_background = AnimatedBackground(config.SCREEN_WIDTH, config.SCREEN_HEIGHT)
         self.backdrop = build_menu_backdrop(config.SCREEN_WIDTH, config.SCREEN_HEIGHT)
@@ -60,6 +61,7 @@ class MultiplayerMenu:
         self.group_font = get_font(self._scaled(30), bold=True)
         self.row_font = get_font(self._scaled(32), bold=False)
         self.hints = render_hint_row(get_font(self._scaled(28)), [("ENTER / A", "Select"), ("ESC / B", "Back")])
+        self.buttons = ButtonSet(self.row_font)
 
     def _scaled(self, value: float) -> int:
         return max(1, int(round(value * self.scale)))
@@ -131,19 +133,21 @@ class MultiplayerMenu:
         hints = self.hints.get_rect(midbottom=(center_x, config.SCREEN_HEIGHT - self._scaled(56)))
         return {'title': title, 'rows': rows, 'panel': panel, 'hints': hints}
 
-    def _render_row(self, size: Tuple[int, int], row: ChoiceRow) -> pygame.Surface:
-        panel = build_panel(size, radius=self._scaled(22)).copy()
+    def _render_row(self, size: Tuple[int, int], row: ChoiceRow, blend: float) -> pygame.Surface:
+        """The row's text and value, on a clear surface: the frame is drawn beneath it by the ButtonSet."""
+        content = pygame.Surface(size, pygame.SRCALPHA)
         pad = self._scaled(36)
+        colour = selection_text_color(blend)
         if isinstance(row, ActionRow):
-            label = self.row_font.render(row.read_label(), True, config.COLOR_TEXT)
-            panel.blit(label, label.get_rect(center=(size[0] // 2, size[1] // 2)))
-            return panel
-        label = self.row_font.render(row.label, True, TEXT_DIM)
-        panel.blit(label, label.get_rect(midleft=(pad, size[1] // 2)))
+            label = self.row_font.render(row.read_label(), True, colour)
+            content.blit(label, label.get_rect(center=(size[0] // 2, size[1] // 2)))
+            return content
+        label = self.row_font.render(row.label, True, colour)
+        content.blit(label, label.get_rect(midleft=(pad, size[1] // 2)))
         value = render_pill(self.row_font, row.read(), padding=(self._scaled(18), self._scaled(6)),
                             border=max(1, self._scaled(1.5)))
-        panel.blit(value, value.get_rect(midright=(size[0] - pad, size[1] // 2)))
-        return panel
+        content.blit(value, value.get_rect(midright=(size[0] - pad, size[1] // 2)))
+        return content
 
     def _render_panel(self, size: Tuple[int, int]) -> pygame.Surface:
         panel = build_panel(size, radius=self._scaled(22)).copy()
@@ -166,6 +170,7 @@ class MultiplayerMenu:
 
     def update(self, dt: float) -> None:
         self.menu_background.update(dt)
+        self.phase = advance_pulse(self.phase, dt)
 
     def draw(self) -> None:
         layout = self.layout()
@@ -173,11 +178,8 @@ class MultiplayerMenu:
         self.menu_background.draw(self.screen)
         self.screen.blit(self.title, layout['title'])
         for i, (row, rect) in enumerate(zip(self.rows, layout['rows'])):
-            if i == self.selected_index:
-                spread = self._scaled(22)
-                glow = build_panel_glow(rect.size, radius=self._scaled(22), spread=spread)
-                self.screen.blit(glow, (rect.x - spread, rect.y - spread))
-            self.screen.blit(self._render_row(rect.size, row), rect)
+            blend = self.buttons.draw(self.screen, i, rect, i == self.selected_index, self.phase)
+            self.screen.blit(self._render_row(rect.size, row, blend), rect)
         panel = layout['panel']
         if panel is not None:
             self.screen.blit(self._render_panel(panel.size), panel)

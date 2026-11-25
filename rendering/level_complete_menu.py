@@ -10,7 +10,8 @@ import config
 from rendering.fonts import get_font
 from rendering.enemy_death_portrait import EnemyDeathPortrait
 from rendering.menu_components import (
-    AnimatedBackground, Button, TEXT_LABEL, as_light, build_menu_backdrop, menu_scale, render_hint_row,
+    AnimatedBackground, Button, TEXT_LABEL, advance_pulse, as_light, build_menu_backdrop, draw_buttons, menu_scale,
+    render_hint_row,
     render_title
 )
 from rendering.ui_elements import AnimatedStarRating
@@ -277,9 +278,7 @@ class LevelCompleteMenu:
         if self.level_complete_background:
             self.level_complete_background.update(dt)
         # Update pulse phase for button glow
-        self.menu_pulse_phase += config.BUTTON_GLOW_PULSE_SPEED * dt / 60.0
-        if self.menu_pulse_phase >= 2 * 3.14159:
-            self.menu_pulse_phase -= 2 * 3.14159
+        self.menu_pulse_phase = advance_pulse(self.menu_pulse_phase, dt)
         self._update_failed_squids(dt)
         for portrait in self.complete_portraits:
             portrait.update(dt)
@@ -370,8 +369,7 @@ class LevelCompleteMenu:
                 layout['buttons'].centerx,
                 layout['buttons'].top + button.height // 2 + i * self._scaled(84)
             )
-            button.selected = (i == self.menu_selected_index)
-            button.draw(self.screen, self.menu_pulse_phase)
+        draw_buttons(self.screen, self.menu_buttons, self.menu_selected_index, self.menu_pulse_phase)
 
         hints = self.hints_without_retry if stats_override is not None and level_succeeded else self.hints
         self.screen.blit(hints, hints.get_rect(midbottom=layout['hints'].midbottom))

@@ -5,7 +5,7 @@ import pygame
 import config
 from rendering.fonts import get_font
 from rendering.menu_components import (
-    AnimatedBackground, Button, TEXT_DIM, TEXT_LABEL, build_menu_backdrop,
+    AnimatedBackground, Button, TEXT_DIM, TEXT_LABEL, advance_pulse, build_menu_backdrop,
     menu_scale, render_hint_row, render_title,
 )
 from rendering.stars import draw_star
@@ -92,7 +92,7 @@ class LevelSelectMenu:
 
     def update(self, dt):
         self.background.update(dt)
-        self.phase += config.BUTTON_GLOW_PULSE_SPEED * dt / 60.0
+        self.phase = advance_pulse(self.phase, dt)
 
     def draw(self):
         layout = self.layout()

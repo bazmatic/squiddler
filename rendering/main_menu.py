@@ -10,7 +10,7 @@ import config
 from rendering.fonts import get_font
 from rendering.menu_components import (
     AnimatedBackground, NeonText, Button, BUTTON_ACCENT_START, REFERENCE_HEIGHT, REFERENCE_WIDTH,
-    build_menu_backdrop, menu_scale, render_pill
+    advance_pulse, build_menu_backdrop, draw_buttons, menu_scale, render_pill
 )
 from rendering.visual_effects import create_radial_gradient_surface
 from utils.resource_path import resource_path
@@ -187,9 +187,7 @@ class MainMenu:
             self.menu_title.update(dt)
         self.menu_time += dt / 60.0
         # Update pulse phase for button glow
-        self.menu_pulse_phase += config.BUTTON_GLOW_PULSE_SPEED * dt / 60.0
-        if self.menu_pulse_phase >= 2 * 3.14159:
-            self.menu_pulse_phase -= 2 * 3.14159
+        self.menu_pulse_phase = advance_pulse(self.menu_pulse_phase, dt)
     
     def draw(self) -> None:
         """Draw main menu with animated background and neon effects."""
@@ -208,9 +206,7 @@ class MainMenu:
             self.menu_title.draw(self.screen)
         
         # Draw buttons
-        for i, button in enumerate(self.menu_buttons):
-            button.selected = (i == self.menu_selected_index)
-            button.draw(self.screen, self.menu_pulse_phase)
+        draw_buttons(self.screen, self.menu_buttons, self.menu_selected_index, self.menu_pulse_phase)
         
         # Draw profile badge at the bottom
         if self.profile_name:

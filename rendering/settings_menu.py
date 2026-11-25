@@ -6,7 +6,7 @@ import pygame
 import config
 from rendering.fonts import get_font
 from rendering.menu_components import (
-    AnimatedBackground, TEXT_DIM, TEXT_LABEL, build_menu_backdrop, build_panel, build_panel_glow, menu_scale,
+    AnimatedBackground, TEXT_DIM, TEXT_LABEL, advance_pulse, build_menu_backdrop, ButtonSet, build_panel, menu_scale, selection_text_color,
     render_hint_row, render_pill, render_title
 )
 from user_settings import UserSettings
@@ -58,6 +58,7 @@ class SettingsMenu:
         self.settings = settings
         self.rows = [SettingRow("SOUND", lambda: settings.sound, settings.set_sound)]
         self.selected_index = 0
+        self.phase = 0.0
         self.scale = menu_scale()
         self.menu_background = AnimatedBackground(config.SCREEN_WIDTH, config.SCREEN_HEIGHT)
         self.backdrop = build_menu_backdrop(config.SCREEN_WIDTH, config.SCREEN_HEIGHT)
@@ -67,6 +68,7 @@ class SettingsMenu:
         self.hints = render_hint_row(get_font(self._scaled(28)), [
             ("ENTER / A", "Change"), ("ESC / B", "Back")
         ])
+        self.buttons = ButtonSet(self.row_font)
         self._panels: Optional[List[pygame.Surface]] = None
 
     def _scaled(self, value: float) -> int:
@@ -108,11 +110,11 @@ class SettingsMenu:
         hints = self.hints.get_rect(midbottom=(center_x, config.SCREEN_HEIGHT - self._scaled(56)))
         return {'title': title, 'settings': settings, 'panels': panels, 'hints': hints}
 
-    def _render_setting(self, size: Tuple[int, int], row: SettingRow) -> pygame.Surface:
+    def _render_setting(self, size: Tuple[int, int], row: SettingRow, blend: float) -> pygame.Surface:
         """Render one setting: its label on the left, its current value in a pill on the right."""
-        panel = build_panel(size, radius=self._scaled(22)).copy()
+        panel = pygame.Surface(size, pygame.SRCALPHA)       # the frame is drawn beneath it by the ButtonSet
         pad = self._scaled(36)
-        label = self.row_font.render(row.label, True, TEXT_DIM)
+        label = self.row_font.render(row.label, True, selection_text_color(blend))
         panel.blit(label, label.get_rect(midleft=(pad, size[1] // 2)))
         on = row.read()
         value = render_pill(self.row_font, "ON" if on else "OFF", text_color=ON_TEXT if on else OFF_TEXT,
@@ -141,6 +143,7 @@ class SettingsMenu:
     def update(self, dt: float) -> None:
         """Update background animation."""
         self.menu_background.update(dt)
+        self.phase = advance_pulse(self.phase, dt)
 
     def draw(self) -> None:
         """Draw the settings screen."""
@@ -155,11 +158,8 @@ class SettingsMenu:
         self.menu_background.draw(self.screen)
         self.screen.blit(self.title, layout['title'])
         for i, (row, rect) in enumerate(zip(self.rows, layout['settings'])):
-            if i == self.selected_index:
-                spread = self._scaled(22)
-                glow = build_panel_glow(rect.size, radius=self._scaled(22), spread=spread)
-                self.screen.blit(glow, (rect.x - spread, rect.y - spread))
-            self.screen.blit(self._render_setting(rect.size, row), rect)
+            blend = self.buttons.draw(self.screen, i, rect, i == self.selected_index, self.phase)
+            self.screen.blit(self._render_setting(rect.size, row, blend), rect)
         for panel, rect in zip(self._panels, layout['panels']):
             self.screen.blit(panel, rect)
         self.screen.blit(self.hints, layout['hints'])

@@ -9,10 +9,9 @@ import config
 from rendering.fonts import get_font
 from profiles import Profile, ProfileManager
 from rendering.menu_components import (
-    AnimatedBackground, BUTTON_ACCENT_START, BUTTON_TEXT_IDLE, Button, TEXT_DIM, build_menu_backdrop,
-    menu_scale, render_hint_row, render_pill, render_title
+    AnimatedBackground, BUTTON_ACCENT_START, Button, TEXT_DIM, advance_pulse, build_menu_backdrop,
+    menu_scale, render_hint_row, render_pill, render_title, selection_text_color
 )
-from rendering.visual_effects import interpolate_color
 
 
 class ProfileSelectionMenu:
@@ -276,7 +275,7 @@ class ProfileSelectionMenu:
             button.position = rect.center
             button.selected = index == self.selected_index
             button.draw(self.screen, self.menu_pulse_phase)
-            text_color = interpolate_color(BUTTON_TEXT_IDLE, config.COLOR_TEXT, button._selection_blend or 0.0)
+            text_color = selection_text_color(button._selection_blend or 0.0)
             if self.options[index] == self.CREATE_OPTION:
                 self._draw_create_row(rect, text_color)
             else:
@@ -303,7 +302,5 @@ class ProfileSelectionMenu:
     def update(self, dt: float) -> None:
         """Update menu animations."""
         self.menu_background.update(dt)
-        self.menu_pulse_phase += config.BUTTON_GLOW_PULSE_SPEED * dt / 60.0
-        if self.menu_pulse_phase >= 2 * 3.14159:
-            self.menu_pulse_phase -= 2 * 3.14159
+        self.menu_pulse_phase = advance_pulse(self.menu_pulse_phase, dt)
 

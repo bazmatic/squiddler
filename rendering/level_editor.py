@@ -29,8 +29,9 @@ from policies.exit import OpenAfterTime, TypeCleared
 from physics.obstacle_world import plank_size
 from rendering.gates import draw_gate
 from rendering.fonts import get_font
-from rendering.menu_components import (TEXT_DIM, TEXT_LABEL, AnimatedBackground, build_menu_backdrop, build_panel,
-                                       build_panel_glow, menu_scale, render_hint_row, render_pill, render_title)
+from rendering.menu_components import (TEXT_DIM, TEXT_LABEL, AnimatedBackground, ButtonSet, build_menu_backdrop, build_panel,
+                                       build_panel_glow, menu_scale, render_hint_row, render_pill, render_title,
+                                       selection_text_color)
 
 LEVELS_SHOWN = 31
 REPEAT_DELAY = 0.25          # seconds a cursor key is held before it repeats
@@ -65,9 +66,11 @@ class LevelEditor:
         self.backdrop = build_menu_backdrop(config.SCREEN_WIDTH, config.SCREEN_HEIGHT).convert()
         self.title_font = get_font(self._scaled(64))
         self.tile_font = get_font(self._scaled(40))
+        self.picker_buttons = ButtonSet(self.tile_font)
         self.hint_font = get_font(self._scaled(22))
         self.small_font = get_font(self._scaled(20))
         self.message_font = get_font(self._scaled(30))
+        self.menu_buttons = ButtonSet(self.message_font)
         self.mode = 'picker'
         self.picker_index = 0
         self.with_layout = set()
@@ -452,15 +455,8 @@ class LevelEditor:
             col, row = index % self.PICKER_COLUMNS, index // self.PICKER_COLUMNS
             rect = pygame.Rect(left + col * (size[0] + gap), top + row * (size[1] + gap), *size)
             level = index + 1
-            if index == self.picker_index:
-                glow = build_panel_glow(size, radius=16)
-                self.screen.blit(glow, glow.get_rect(center=rect.center))
-                self.screen.blit(build_panel(size, radius=16), rect)
-                color = (255, 255, 255)
-            else:
-                pygame.draw.rect(self.screen, (22, 20, 44), rect, border_radius=16)
-                pygame.draw.rect(self.screen, (60, 60, 110), rect, 1, border_radius=16)
-                color = TEXT_DIM
+            blend = self.picker_buttons.draw(self.screen, level, rect, index == self.picker_index, self.phase)
+            color = selection_text_color(blend)
             text = self.tile_font.render(str(level), True, color)
             self.screen.blit(text, text.get_rect(center=rect.center))
             if level in self.with_layout:
@@ -619,8 +615,8 @@ class LevelEditor:
         shade = pygame.Surface((config.SCREEN_WIDTH, config.SCREEN_HEIGHT), pygame.SRCALPHA)
         shade.fill((0, 0, 0, 150))
         self.screen.blit(shade, (0, 0))
-        labels = [self.message_font.render(label, True, (255, 255, 255) if index == self.menu_index else TEXT_DIM)
-                  for index, (label, _, _) in enumerate(self.menu_rows())]
+        names = [label for label, _, _ in self.menu_rows()]
+        labels = [self.message_font.render(name, True, TEXT_DIM) for name in names]
         hints = render_hint_row(self.hint_font, [('A', 'choose'), ('B', 'close')])
         row_height = max(label.get_height() for label in labels) + self._scaled(18)
         width = max(max(label.get_width() for label in labels), hints.get_width()) + self._scaled(100)
@@ -633,7 +629,7 @@ class LevelEditor:
         top = rect.top + self._scaled(30)
         for index, label in enumerate(labels):
             row = pygame.Rect(rect.left + self._scaled(24), top + index * row_height, width - self._scaled(48), row_height)
-            if index == self.menu_index:
-                pygame.draw.rect(self.screen, CURSOR_COLOR, row, 2, border_radius=row_height // 2)
+            blend = self.menu_buttons.draw(self.screen, index, row, index == self.menu_index, self.phase)
+            label = self.message_font.render(names[index], True, selection_text_color(blend))
             self.screen.blit(label, label.get_rect(center=row.center))
         self.screen.blit(hints, hints.get_rect(midbottom=(rect.centerx, rect.bottom - self._scaled(20))))
