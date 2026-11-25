@@ -16,6 +16,12 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _never_call_jev(monkeypatch):
+    """No test may reach the paid Jev API: with no key the Jev client is unavailable (PilotUnavailable) instead of live."""
+    monkeypatch.delenv('TYPESAFE_API_KEY', raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _never_touch_the_players_settings_file(tmp_path, monkeypatch):
     """A test that changes a setting must not save it into the player's real settings (mode, sound, Player 2)."""
     import user_settings
