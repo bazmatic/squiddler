@@ -4,11 +4,27 @@ import os
 from pathlib import Path
 
 
+def _routed_policy(paths):
+    """INCHWORM_ROUTER=<walker.npz>,<leaper.npz>: a walker that hands leaps to a leaper (learning/router.py)."""
+    if not paths:
+        return None
+    try:
+        from learning.adapters.inchworm import load_policy
+        from learning.router import RoutedPolicy
+        walker, leaper = (load_policy(Path(path)) for path in paths.split(','))
+        return RoutedPolicy(walker, leaper)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        logging.getLogger(__name__).warning('Inchworm router %s unavailable; using the single policy: %s', paths, exc)
+        return None
+
+
 def driver_for(enc):
     from learning.adapters.inchworm import InchwormDriver, load_policy
     if not hasattr(enc, '_inchworm_policy'):
         if hasattr(enc.world, 'inchworm_policy'):
             enc._inchworm_policy = enc.world.inchworm_policy
+        elif (routed := _routed_policy(os.getenv('INCHWORM_ROUTER'))) is not None:
+            enc._inchworm_policy = routed
         else:
             selected = os.getenv('INCHWORM_POLICY')
             path = Path(selected) if selected else Path(__file__).resolve().parents[1]/'assets/neural/inchworm.npz'

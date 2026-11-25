@@ -71,3 +71,19 @@ The router keeps Crawl, Gap and About-face at the walker's level, and hands over
 is 0.42: above the walker (0.37) by about one standard error, below the leaper (0.54). The goal of Leap near the leaper's
 was not met. The leaper alone is also as good as the walker on the other lessons (Crawl 0.94, Gap 0.85, About-face 0.97)
 on these seeds. No further tuning was done on the held-out seeds, and the game step was not built.
+
+### Second round (same day)
+The reviewer found that the first "held-out" numbers were new seeds on the training arenas; `--seeds heldout` now uses the
+held-out arenas (`HOLDOUT_LEVELS`), and goals beyond the 300 px sight limit are treated as unseen, as in the game. Tuning on
+training seeds found that a 1-decision hop off the wall was handing the worm back to the walker mid-leap: a flight now has to
+last 5 decisions (0.5 s) before a landing hands back (Leap 0.44 to 0.56 on training seeds). A shorter in-reach stall (10 or 5
+decisions) made Leap worse, so the 2 s stall stays. On the held-out arenas, first look (150 trials, 240 for Leap):
+
+| | Crawl | Gap | About-face | Leap |
+|---|---|---|---|---|
+| walker | 0.97 | 0.87 | 0.99 | 0.35 |
+| leaper | 0.93 | 0.82 | 0.98 | 0.54 |
+| router | 0.98 | 0.90 | 0.95 | 0.47 |
+
+The router keeps Crawl and Gap at or above the walker's, About-face 4 points below it, and recovers 12 of the leaper's 19
+Leap points. Judged good enough to play: `INCHWORM_ROUTER=<walker.npz>,<leaper.npz>` makes the game build it.
